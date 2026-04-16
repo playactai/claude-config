@@ -21,7 +21,6 @@ from .qr_verify_base import VerifyBase
 
 
 PHASE = "impl-code"
-WORKFLOW = "executor"
 
 
 class ImplCodeVerify(VerifyBase):

@@ -17,6 +17,7 @@ Arguments:
 
 import argparse
 import sys
+from pathlib import Path
 
 from skills.lib.workflow.prompts import format_step
 
@@ -26,6 +27,12 @@ from skills.lib.workflow.prompts import format_step
 # ============================================================================
 
 MODULE_PATH = "skills.arxiv_to_md.sub_agent"
+
+# sub_agent.py -> arxiv_to_md/ -> skills/ -> scripts/
+# Injected below into the Phase 2 bash heredoc so the sub-agent can import
+# skills.arxiv_to_md.tex_utils. repr() handles backslashes (Windows paths)
+# and embedded quotes; manual single-quote wrapping would break on those.
+SCRIPTS_DIR = str(Path(__file__).resolve().parent.parent.parent)
 
 
 # ============================================================================
@@ -95,7 +102,7 @@ PREPROCESS_INSTRUCTIONS = (
     "```bash\n"
     "python3 << 'EOF'\n"
     "import sys\n"
-    "sys.path.insert(0, '/Users/lmergen/.claude/skills/scripts')\n"
+    "sys.path.insert(0, " + repr(SCRIPTS_DIR) + ")\n"
     "from skills.arxiv_to_md.tex_utils import preprocess_tex\n"
     "\n"
     "result = preprocess_tex('<source_dir>/<main_tex>')\n"

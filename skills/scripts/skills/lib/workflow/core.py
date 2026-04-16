@@ -49,6 +49,7 @@ class Workflow:
         *steps: StepDef,
         entry_point: str | None = None,
         description: str = "",
+        params: dict[str, list[dict]] | None = None,
         validate: bool = True,
     ):
         ids = [s.id for s in steps]
@@ -60,6 +61,7 @@ class Workflow:
         self.steps = {s.id: s for s in steps}
         self._step_order = [s.id for s in steps]
         self.entry_point = entry_point or steps[0].id
+        self._params = params or {}
 
         if validate:
             self._validate()

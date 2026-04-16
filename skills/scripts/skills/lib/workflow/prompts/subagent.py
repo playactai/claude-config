@@ -8,6 +8,7 @@ Three dispatch patterns:
 - roster_dispatch: Parallel agents, shared context + unique tasks, fixed command
 """
 
+import shlex
 from pathlib import Path
 from string import Template
 
@@ -18,6 +19,7 @@ from string import Template
 
 # subagent.py -> prompts -> workflow -> lib -> skills -> scripts
 SKILLS_DIR = Path(__file__).resolve().parent.parent.parent.parent.parent
+_SKILLS_DIR_Q = shlex.quote(str(SKILLS_DIR))
 
 
 # ============================================================================
@@ -43,8 +45,7 @@ MANDATORY INVOKE BLOCK - Copy VERBATIM into the agent's prompt:
 FIRST ACTION REQUIRED: Run this command via Bash tool before any other response.
 Do NOT skip. Do NOT produce analysis first. Execute this command IMMEDIATELY.
 
-Working directory: {working_dir}
-Command: {cmd}
+Command: cd {working_dir} && {cmd}
 ================================================================================
 CRITICAL: Copy the block above EXACTLY. Do not paraphrase or summarize.
 The subagent needs "FIRST ACTION REQUIRED" to know it must run the command."""
@@ -154,8 +155,13 @@ def task_tool_instruction(agent_type: str, model: str | None) -> str:
 
 
 def sub_agent_invoke(cmd: str) -> str:
-    """Tell sub-agent what command to run after spawning."""
-    return SUB_AGENT_INVOKE.format(working_dir=SKILLS_DIR, cmd=cmd)
+    """Tell sub-agent what command to run after spawning.
+
+    working_dir is shlex-quoted so `cd` stays safe if SKILLS_DIR contains
+    whitespace or shell metacharacters. Callers are responsible for
+    pre-quoting any user-controlled substitutions inside `cmd`.
+    """
+    return SUB_AGENT_INVOKE.format(working_dir=_SKILLS_DIR_Q, cmd=cmd)
 
 
 def parallel_constraint(count: int) -> str:

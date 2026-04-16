@@ -1,46 +1,59 @@
 # ast/
 
-Simplified AST module for workflow XML generation.
+Simplified AST for workflow XML generation: three generic node types + three dispatch node types with paired renderers.
 
 ## Files
 
-| File                   | What                                             | When to read                    |
-| ---------------------- | ------------------------------------------------ | ------------------------------- |
-| `nodes.py`             | Node types (TextNode, CodeNode, ElementNode)     | Understanding node structure    |
-| `builder.py`           | Fluent builder API (W.el())                      | Constructing AST nodes          |
-| `renderer.py`          | XMLRenderer and render() function                | Rendering AST to XML output     |
-| `dispatch.py`          | Dispatch node types (Subagent, Template, Roster) | Subagent orchestration patterns |
-| `dispatch_renderer.py` | Render functions for dispatch nodes              | Rendering dispatch XML          |
-| `__init__.py`          | Public API exports                               | Importing AST types             |
+| File                    | What                                                                  | When to read                           |
+| ----------------------- | --------------------------------------------------------------------- | -------------------------------------- |
+| `README.md`             | Architecture, design decisions, invariants, extension guide           | Understanding why flat union + builder |
+| `nodes.py`              | `TextNode`, `CodeNode`, `ElementNode`                                 | Adding/understanding base node types   |
+| `builder.py`            | `W.el(...)` fluent builder API                                        | Constructing AST nodes                 |
+| `renderer.py`           | `XMLRenderer`, `render()`, `render_invoke_after()`                    | Rendering AST to XML output            |
+| `dispatch.py`           | `SubagentDispatchNode`, `TemplateDispatchNode`, `RosterDispatchNode`  | Sub-agent orchestration patterns       |
+| `dispatch_renderer.py`  | Render functions for the three dispatch node types                    | Rendering dispatch XML                 |
+| `__init__.py`           | Public API exports                                                    | Importing AST types and renderers      |
 
 ## Usage
 
 ```python
 from skills.lib.workflow.ast import W, render, XMLRenderer, TextNode
 
-# Build step header
+# Build step header with attributes
 doc = W.el("step_header", TextNode("Title"),
            script="myskill", step="1", total="5").build()
 output = render(doc, XMLRenderer())
 
-# Build current_action block
+# Build current_action block from a list of action strings
 action_nodes = [TextNode(a) for a in actions]
 doc = W.el("current_action", *action_nodes).build()
 
-# Build invoke_after
-doc = W.el("invoke_after", TextNode(next_command)).build()
+# Build invoke_after (rendered via renderer.render_invoke_after)
+# For the generic case the dedicated helper is preferred:
+from skills.lib.workflow.ast import InvokeAfterNode, render_invoke_after
+render_invoke_after(InvokeAfterNode(cmd=next_cmd))
 ```
 
 ## Node Types
 
-| Type          | Purpose                           |
-| ------------- | --------------------------------- |
-| `TextNode`    | Plain text content                |
-| `CodeNode`    | Code block with optional language |
-| `ElementNode` | Generic XML element (via W.el())  |
+Generic nodes (use via `W.el(...)` or directly):
 
-All specialized nodes (HeaderNode, ActionsNode, etc.) were removed. Skills use
-`W.el("tag_name", ...)` for all XML generation.
+| Type          | Purpose                                |
+| ------------- | -------------------------------------- |
+| `TextNode`    | Plain text content (leaf)              |
+| `CodeNode`    | Code block with optional language      |
+| `ElementNode` | Generic XML element (via `W.el(...)`)  |
+
+Specialized nodes with dedicated renderers:
+
+| Type                | Purpose                                                              |
+| ------------------- | -------------------------------------------------------------------- |
+| `FileContentNode`   | Embed file content with CDATA wrapping (`render_file_content`)       |
+| `StepHeaderNode`    | Render `<step_header>` with script/step/category/mode/total attrs    |
+| `CurrentActionNode` | Render `<current_action>` from a list of action strings              |
+| `InvokeAfterNode`   | Render `<invoke_after>` with command or pass/fail branching          |
+
+Legacy nodes removed in the simplification pass: `HeaderNode`, `ActionsNode`, `RawNode`, `CommandNode`, `GuidanceNode`, `RoutingNode`, `TextOutputNode`. Skills add new generic tags via `W.el("tag_name", ...)`; the specialized nodes above remain because they carry structured attributes the generic builder cannot express cleanly.
 
 ## Dispatch Node Types
 
@@ -56,7 +69,7 @@ from skills.lib.workflow.ast import (
     RosterDispatchNode, render_roster_dispatch,
 )
 
-# Template dispatch: $var substituted per-target
+# Template dispatch: $var substituted per-target at render time
 node = TemplateDispatchNode(
     agent_type="general-purpose",
     template="Explore $category in $mode mode",

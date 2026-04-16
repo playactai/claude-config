@@ -3,7 +3,10 @@
 Simplified renderer handling only the core node types: TextNode, CodeNode, ElementNode.
 """
 
+import shlex
 from typing import Protocol
+from xml.sax.saxutils import quoteattr
+
 from skills.lib.workflow.ast.nodes import (
     Node, Document, TextNode, CodeNode, ElementNode, FileContentNode,
     StepHeaderNode, CurrentActionNode, InvokeAfterNode
@@ -83,13 +86,21 @@ class XMLRenderer:
 
         WHY no validation here: __post_init__ validates at construction time.
         Renderer assumes valid node, focuses solely on XML generation.
+
+        WHY shlex.quote + quoteattr: working_dir is embedded in a shell string
+        that the LLM copies verbatim; quoting prevents metacharacter injection
+        from unusual paths. quoteattr escapes the final shell string for safe
+        XML attribute embedding so quotes/angle brackets inside node.cmd do
+        not produce malformed XML. Composition of caller-supplied node.cmd
+        parts remains the caller's responsibility.
         """
+        wd = shlex.quote(node.working_dir)
         if node.cmd is not None:
-            invoke = f'<invoke working-dir="{node.working_dir}" cmd="{node.cmd}" />'
+            invoke = f"<invoke cmd={quoteattr(f'cd {wd} && {node.cmd}')} />"
             return f"<invoke_after>\n{invoke}\n</invoke_after>"
         else:
-            if_pass_invoke = f'<invoke working-dir="{node.working_dir}" cmd="{node.if_pass}" />'
-            if_fail_invoke = f'<invoke working-dir="{node.working_dir}" cmd="{node.if_fail}" />'
+            if_pass_invoke = f"<invoke cmd={quoteattr(f'cd {wd} && {node.if_pass}')} />"
+            if_fail_invoke = f"<invoke cmd={quoteattr(f'cd {wd} && {node.if_fail}')} />"
             return f"<invoke_after>\n  <if_pass>\n    {if_pass_invoke}\n  </if_pass>\n  <if_fail>\n    {if_fail_invoke}\n  </if_fail>\n</invoke_after>"
 
     def _render_node(self, node: Node) -> str:

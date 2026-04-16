@@ -71,6 +71,97 @@ def _translate_plan(state_dir: str) -> str | None:
         print(f"Warning: plan.md translation failed: {e}", file=sys.stderr)
         return None
 
+def _slugify(text: str) -> str:
+    """Convert text to URL-safe slug.
+
+    Lowercase, replace non-alphanumeric with hyphens, collapse consecutive
+    hyphens, strip leading/trailing hyphens. Truncate to 60 characters.
+    Fallback to "plan" when input reduces to empty string.
+
+    ASCII-only: pattern [^a-z0-9] treats non-ASCII characters (e.g., Unicode
+    letters) as non-alphanumeric and replaces them with hyphens.
+
+    Returns slug suitable for YYYY-MM-DD-{slug}.md filename.
+    """
+    import re
+    slug = text.lower()
+    slug = re.sub(r"[^a-z0-9]+", "-", slug)
+    slug = re.sub(r"-+", "-", slug)
+    slug = slug.strip("-")
+    # rstrip after truncation — if [:60] lands on a hyphen, strip the trailing
+    # hyphen so filenames don't become "YYYY-MM-DD-...-.md".
+    slug = slug[:60].rstrip("-") if slug else "plan"
+    return slug or "plan"
+
+
+def _find_repo_root() -> "Path | None":
+    """Walk up from current file to find .git directory or file.
+
+    Supports both regular repos (.git directory) and git worktrees
+    (.git file pointing to parent repo).
+
+    Returns repo root path on success, None if not found.
+    """
+    from pathlib import Path
+    current = Path(__file__).resolve().parent
+    while current != current.parent:
+        git_path = current / ".git"
+        if git_path.is_dir() or git_path.is_file():
+            return current
+        current = current.parent
+    return None
+
+
+def _save_plan_to_docs(state_dir: str) -> "Path | None":
+    """Copy plan.md to docs/plans/YYYY-MM-DD-slug.md.
+
+    Derives slug from plan.json overview.problem, finds repo root,
+    creates docs/plans/ if needed. Appends numeric suffix (-2, -3, ...)
+    if target file already exists.
+
+    Returns output path on success, None on failure.
+    Non-fatal: prints warning to stderr on failure.
+    """
+    import json
+    from pathlib import Path
+
+    try:
+        state_path = Path(state_dir)
+        plan_json = state_path / "plan.json"
+        plan_md = state_path / "plan.md"
+
+        if not plan_md.exists():
+            print("Warning: plan.md not found in state_dir", file=sys.stderr)
+            return None
+
+        plan_data = json.loads(plan_json.read_text())
+        problem = plan_data.get("overview", {}).get("problem", "")
+        slug = _slugify(problem)
+
+        repo_root = _find_repo_root()
+        if not repo_root:
+            print("Warning: repo root not found (.git directory)", file=sys.stderr)
+            return None
+
+        docs_plans = repo_root / "docs" / "plans"
+        docs_plans.mkdir(parents=True, exist_ok=True)
+
+        date_prefix = datetime.now().strftime("%Y-%m-%d")
+        base_name = f"{date_prefix}-{slug}.md"
+        target = docs_plans / base_name
+
+        counter = 2
+        while target.exists():
+            target = docs_plans / f"{date_prefix}-{slug}-{counter}.md"
+            counter += 1
+
+        target.write_text(plan_md.read_text())
+        return target
+    except Exception as e:
+        print(f"Warning: failed to save plan to docs/plans/: {e}", file=sys.stderr)
+        return None
+
+
 _provider = PlannerResourceProvider()
 
 QUESTION_RELAY_INSTRUCTION = SUB_AGENT_QUESTION_FORMAT
@@ -688,7 +779,11 @@ def main():
             plan_path = _translate_plan(args.state_dir)
             if plan_path:
                 print(f"\nPlan rendered to: {plan_path}")
-                print("Copy this file to the user's requested output path.")
+                docs_path = _save_plan_to_docs(args.state_dir)
+                if docs_path:
+                    print(f"Plan saved to: {docs_path}")
+                else:
+                    print("Copy plan.md from state_dir to desired location.")
     else:
         print(result)
 

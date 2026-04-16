@@ -233,6 +233,26 @@ class BoundedInt:
         return iter(range(self.lo, self.hi + 1))
 
 
+@dataclass(frozen=True)
+class ChoiceSet:
+    """Finite choice domain stored as a tuple (hashable for test caching)."""
+
+    choices: tuple
+
+    def __iter__(self):
+        return iter(self.choices)
+
+
+@dataclass(frozen=True)
+class Constant:
+    """Single-value domain; yields exactly one element."""
+
+    value: object
+
+    def __iter__(self):
+        return iter((self.value,))
+
+
 # =============================================================================
 # Question Relay Types
 # =============================================================================

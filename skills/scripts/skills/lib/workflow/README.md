@@ -2,150 +2,109 @@
 
 ## Overview
 
-Framework for skill registration and testing. Skills are defined using the `Workflow` class with `StepDef` instances - a data-driven approach where transitions are explicit data structures.
+Metadata-only workflow framework for skill registration and exhaustive testing. Skills declare their structure as a `Workflow` containing `StepDef` instances. `Workflow` is a data container — steps are introspectable and testable, but execution happens through each skill's own CLI entry point (`format_output() -> print()`), not through a central run loop.
 
 ## Architecture
 
 ```
-Skills Layer (12 modules)
+Skills Layer (~12 modules, each with WORKFLOW = Workflow(...))
        |
        v
-   Workflow API (Workflow/StepDef/Outcome)
+   Workflow API (Workflow / StepDef / Arg)
        |
        v
-Discovery Layer (importlib scanning)
+Discovery Layer (importlib scanning, pull-based)
        |
        v
-Core Framework (types, registry, ResourceProvider)
+Core Framework (metadata types, domain types, testing support)
        |
        v
 CLI / Test Harness
 ```
 
-### Data Flow
+### Data Flow (registration and testing)
+
+```
+CLI / pytest
+      |
+      v
+discover_workflows("skills")    # importlib scan, no side effects
+      |
+      v
+registry: {name -> Workflow}    # uses _module_path for CLI invocation
+      |
+      v
+Workflow._validate()            # entry point in steps, unique step ids
+      |
+      v
+extract_schema(workflow)        # driven by _params + _step_order
+generate_inputs(workflow)       # Cartesian product of domain types
+      |
+      v
+pytest.parametrize + subprocess runs skill CLI per (step, params)
+```
+
+### Data Flow (skill runtime)
 
 ```
 CLI invocation
       |
       v
-discover_workflows() -> scan skills/ -> build registry
+format_output(step, ...)        # skill-owned
       |
       v
-Workflow.run(step_id) -> STEPS[step_id].handler(context)
+print()                         # emits step body + <invoke_after>
       |
       v
-StepOutput (title, actions, next_command)
+LLM reads output, follows <invoke_after> to invoke next step
 ```
 
-Discovery uses importlib scanning to find workflows without executing module-level code. This pull-based approach eliminates import-time side effects and enables isolated testing.
+Discovery uses `importlib.import_module` + `pkgutil.walk_packages` to find `WORKFLOW` constants without executing module-level side effects. This pull-based approach eliminates import-time surprises and keeps testing isolated.
 
 ## Core Types
 
-### Outcome Enum
+### Workflow
 
-Separates "what outcome?" from "where next?" to make transition graphs introspectable as data:
-
-```python
-class Outcome(str, Enum):
-    OK = "ok"           # Success, proceed to next
-    FAIL = "fail"       # Failure, may trigger error handling
-    SKIP = "skip"       # Skip branch (used for mode branching)
-    ITERATE = "iterate" # Continue loop (used for confidence progression)
-    DEFAULT = "_default" # Fallback if specific outcome not mapped
-```
-
-**Why not booleans?** Booleans force transitions into code logic. Outcomes make the transition graph data that can be validated, visualized, and reasoned about.
-
-**Example**: Without Outcome, mode branching requires:
+Collection of steps with validation and optional `_params` metadata for the exhaustive test generator.
 
 ```python
-if mode == "quick":
-    return "step_11"  # Implicit meaning
-else:
-    return "step_5"   # What does this mean? Success? Skip?
+Workflow(
+    name: str,
+    *steps: StepDef,
+    entry_point: str | None = None,   # defaults to first step's id
+    description: str = "",
+    params: dict[str, list[dict]] | None = None,  # step_id -> list of param specs
+    validate: bool = True,
+)
 ```
 
-With Outcome:
+Introspectable attributes:
+
+| Attribute            | Purpose                                               |
+| -------------------- | ----------------------------------------------------- |
+| `name`, `description`| Human-facing identifiers                              |
+| `steps`              | Dict `step_id -> StepDef`                             |
+| `_step_order`        | List of step ids in declaration order (CLI `--step N` indexes this) |
+| `_params`            | Dict `step_id -> list of {name, required, choices, ...}` param specs |
+| `_module_path`       | Set by `discover_workflows` so tests can `python -m` the skill |
+| `entry_point`        | First step to run                                     |
+| `total_steps`        | `len(steps)`                                          |
+
+### StepDef
 
 ```python
-def step_planning(ctx):
-    if ctx.workflow_params["mode"] == "quick":
-        return Outcome.SKIP, {}  # Explicit: skipping this branch
-    return Outcome.OK, {}        # Explicit: proceeding normally
-
-StepDef(id="planning", next={
-    Outcome.OK: "subagent_design",      # Full mode path
-    Outcome.SKIP: "initial_synthesis",  # Quick mode path
-})
+@dataclass(frozen=True)
+class StepDef:
+    id: str
+    title: str
+    actions: list[str]
 ```
 
-The transition graph is now visible in the StepDef, not buried in handler logic.
-
-### StepContext
-
-Runtime state container passed to handlers, enabling stateful iteration:
-
-```python
-@dataclass
-class StepContext:
-    step_id: str                         # Current step identifier
-    workflow_params: dict[str, Any]      # Immutable workflow parameters (--mode, --decision)
-    step_state: dict[str, Any]           # Mutable state (iteration count, confidence level)
-```
-
-**Why separate params and state?**
-
-- `workflow_params`: Set at workflow start, never change (e.g., mode, input paths)
-- `step_state`: Updated by handlers, carries iteration state between steps
-
-**Example - Confidence-driven iteration**:
-
-```python
-def step_investigate(ctx: StepContext) -> tuple[Outcome, dict]:
-    iteration = ctx.step_state.get("iteration", 1)
-    confidence = ctx.workflow_params.get("confidence", "exploring")
-
-    if confidence == "high":
-        return Outcome.OK, {"confidence": confidence}
-    elif iteration >= MAX_ITERATIONS:
-        return Outcome.OK, {"confidence": "capped"}
-    else:
-        return Outcome.ITERATE, {"iteration": iteration + 1}
-
-StepDef(id="investigate", handler=step_investigate,
-        next={Outcome.OK: "formulate", Outcome.ITERATE: "investigate"})
-```
-
-### Handler Signature
-
-Handlers process step logic and return next outcome:
-
-```python
-def handler(ctx: StepContext) -> tuple[Outcome, dict]:
-    # Access workflow parameters (immutable)
-    mode = ctx.workflow_params.get("mode", "full")
-
-    # Access step state (from previous iterations)
-    iteration = ctx.step_state.get("iteration", 1)
-
-    # Perform step logic...
-
-    # Return outcome and updated state
-    return Outcome.OK, {"iteration": iteration + 1}
-```
-
-**Why return state dict?** Handlers are pure functions. Returning state rather than mutating context makes flow explicit and testable.
-
-**Output-only steps**: Steps that just print instructions can use a no-op handler:
-
-```python
-def step_handler(ctx: StepContext) -> tuple[Outcome, dict]:
-    return Outcome.OK, {}
-```
+Minimal metadata. Skills attach behavior in their own `format_output()`; `StepDef` exists so introspection (docs, tests) can enumerate steps without running anything.
 
 ### Arg (Parameter Metadata)
 
-Annotates handler parameters for testing:
+Used by skills that declare per-step CLI parameter metadata so the exhaustive test generator can produce valid inputs.
 
 ```python
 @dataclass(frozen=True)
@@ -158,338 +117,148 @@ class Arg:
     required: bool = False
 ```
 
-**Usage**:
+Skills populate `_params` (typically by passing `params={step_id: [{"name": ..., "required": ..., "choices": ...}, ...]}` to `Workflow(...)`), and `test_generation.py` reads those specs.
+
+### Dispatch (in `types.py`)
 
 ```python
-from typing import Annotated
-
-def step_handler(
-    ctx: StepContext,
-    mode: Annotated[str, Arg(description="Workflow mode", choices=("quick", "full"))] = "full"
-) -> tuple[Outcome, dict]:
-    ...
+@dataclass
+class Dispatch:
+    agent: AgentRole
+    script: str
+    context_vars: dict[str, str] = field(default_factory=dict)
+    free_form: bool = False
 ```
 
-The `Arg` metadata is extracted during workflow validation for testing.
+Value type describing a sub-agent dispatch. Consumed by orchestrator skills that delegate work (QR review, developer, technical-writer). `AgentRole` enumerates the valid targets: QUALITY_REVIEWER, DEVELOPER, TECHNICAL_WRITER, EXPLORE, GENERAL_PURPOSE, ARCHITECT.
 
-### Dispatch vs Callable Handlers
-
-**Callable handler**: Inline Python function (most common)
+### ResourceProvider Protocol (in `types.py`)
 
 ```python
-def step_analyze(ctx: StepContext) -> tuple[Outcome, dict]:
-    # Analysis logic here
-    return Outcome.OK, {}
-
-StepDef(id="analyze", handler=step_analyze, ...)
+class ResourceProvider(Protocol):
+    def get_resource(self, name: str) -> str: ...
+    def get_step_guidance(self, **kwargs) -> dict: ...
 ```
 
-**Dispatch handler**: Delegates to sub-agent script (for QR gates, parallel agents)
-
-```python
-from skills.lib.workflow.types import Dispatch, AgentRole
-
-StepDef(
-    id="qr_completeness",
-    handler=Dispatch(
-        agent=AgentRole.QUALITY_REVIEWER,
-        script="skills.planner.qr.plan_completeness",
-    ),
-    next={Outcome.OK: "implementation", Outcome.FAIL: "revise_plan"}
-)
-```
-
-The `Dispatch` handler tells the orchestrator to:
-
-1. Launch the specified agent with the script
-2. Wait for completion
-3. Map the agent's result to an Outcome
-
-**When to use Dispatch?**
-
-- QR gates (quality reviewer checks)
-- Parallel sub-agent execution
-- Complex sub-workflows that need separate scripts
+Breaks a three-layer import coupling: QR/TW/Dev modules can accept a provider instead of importing `skills.planner.shared.resources` directly, which would create a cycle. The Protocol also enables mock implementations for isolated unit testing.
 
 ## Workflow Validation
 
-`Workflow.__init__` performs 5 validation checks:
+`Workflow.__init__` enforces:
 
-1. **Entry point exists**: The `entry_point` step ID must be in the workflow
-2. **All transition targets exist**: Every target in `next` dicts must be a valid step ID or `None` (terminal)
-3. **At least one terminal step**: At least one step must have `None` in its `next` dict
-4. **All steps reachable**: Every step must be reachable from the entry point (detects orphaned steps)
-5. **Parameter extraction**: Extract `Arg` metadata from handler signatures for testing
+1. **Unique step ids** — no duplicates across the step tuple.
+2. **Entry point exists** — `entry_point` (default: first step id) must be in `steps`.
 
-These checks run at registration time, catching errors early.
-
-## Workflow Example
-
-```python
-from skills.lib.workflow import discover_workflows
-from skills.lib.workflow.core import (
-    Workflow, StepDef, StepContext, Outcome, Arg
-)
-
-def step_handler(ctx: StepContext) -> tuple[Outcome, dict]:
-    return Outcome.OK, {}
-
-WORKFLOW = Workflow(
-    "decision-critic",
-    StepDef(
-        id="extract_structure",
-        title="Extract Structure",
-        actions=[...],
-        handler=step_handler,
-        next={Outcome.OK: "classify_verifiability"},
-    ),
-    StepDef(
-        id="classify_verifiability",
-        title="Classify Verifiability",
-        actions=[...],
-        handler=step_handler,
-        next={Outcome.OK: "generate_questions"},
-    ),
-    # ... remaining steps
-    description="Structured decision criticism workflow",
-)
-
-# Workflow discovery happens via discover_workflows('skills')
-# No registration needed - WORKFLOW constant is read directly
-# Pull-based discovery eliminates import-time side effects (Milestone 1)
-```
-
-Benefits of this architecture:
-
-- Steps and transitions together in data structure
-- Transitions explicit and validatable
-- Workflow structure introspectable and validatable
-- Transition graph introspectable
+These checks run at module load time, so malformed workflows surface as `ValueError` during `discover_workflows()` rather than during testing.
 
 ## Invariants
 
-- **INVARIANT 1**: Every skill entry point defines exactly ONE Workflow
-- **INVARIANT 2**: discover_workflows() finds all Workflows without import errors
-- **INVARIANT 3**: Dispatcher routing produces same output as old if-step chains
-- **INVARIANT 4**: ResourceProvider protocol supports all 5 access patterns (conventions, file I/O, resources, Workflow objects, step data)
-- **INVARIANT 5**: QR iteration blocking severities: iter 1-2 block all; iter 3-4 block MUST/SHOULD; iter 5+ block MUST only
+- Every skill module listed in `tests/conftest.py::SKILL_MODULES` exposes a `WORKFLOW = Workflow(...)` constant at module level.
+- `discover_workflows()` silently skips modules with no `WORKFLOW` attribute; any import error aborts discovery (aggregated report across all failures).
+- `len(workflow._step_order) == workflow.total_steps`; CLI `--step N` corresponds to index N (1-based) in `_step_order`.
+- QR iteration blocking severities (defined in `skills/planner/shared/qr/constants.py`): iterations 1–2 block MUST/SHOULD/COULD; iterations 3–4 block MUST/SHOULD; iteration 5+ blocks MUST only. Progressive de-escalation prevents infinite retry loops on low-severity items.
+- Handler behavior lives in the skill's own `format_output()`, not in `StepDef`. The framework is deliberately metadata-only.
 
 ## Design Decisions
 
-**Why separate Workflow and StepDef?** Workflows are collections; steps are atomic units. Separation allows validation at workflow level (reachability, terminals) while keeping step definitions focused.
+**Why metadata-only (no central execution engine)?** Skills already have CLI-based step invocation (`python3 -m skill --step N`) that works well with the LLM's Bash tool. A central `Workflow.run()` would have to re-route through the same CLI layer or duplicate it; removing it eliminates dead code and a whole class of framework-vs-skill coupling.
 
-**Why frozen dataclasses?** Workflows and StepDefs are immutable specifications. Frozen dataclasses prevent accidental mutation and make them safe to share across threads.
+**Why separate `Workflow` and `StepDef`?** Workflows are collections; steps are atomic. Keeping them separate lets `Workflow.__init__` validate at the collection level (unique ids, entry point) while step definitions stay focused on per-step metadata.
 
-**Why handler callables instead of strings?** Type safety, IDE support, and easier refactoring. Handlers are first-class functions, not magic strings.
+**Why frozen `StepDef` and `Arg`?** They are immutable specifications. Frozen dataclasses prevent accidental mutation and make them safe to share between workflows and between threads.
 
-**Separate CLI entry points**: Running modules as `__main__` causes module identity issues (imported by `__init__.py` vs executed as `__main__`). Separate CLI entry points avoid this.
+**Why `_params` as a dict on the constructor instead of reading handler signatures?** Earlier drafts inspected handler signatures via `inspect` and extracted `Annotated[..., Arg(...)]` metadata. That coupled the framework to a specific handler shape. Accepting `params={step_id: [...]}` directly keeps the framework unopinionated about handlers.
+
+**Why pull-based discovery over registration decorators?** Decorators run module-level side effects on import. Pull-based scanning (`discover_workflows`) finds `WORKFLOW` constants without requiring side effects, enabling isolated unit testing and avoiding circular import chains.
+
+**Separate CLI entry points per skill** (as opposed to one `python -m workflow run <skill>` dispatcher): Running modules as `__main__` causes module identity issues (the module is imported via its qualified name by `__init__.py` but would be re-executed as `__main__` under a central dispatcher). Separate CLI entry points avoid this duplicate-import trap.
 
 ## Tradeoffs
 
-**Idiomatic API vs Minimal**: Higher refactoring scope for consistent architecture across all skills. The think.py pattern proves Workflow/StepDef API works; extending it creates consistency without inventing new abstractions.
+**Idiomatic API vs minimal**: Higher refactoring cost for cross-skill consistency. The deepthink pattern proved that `Workflow`/`StepDef` works; extending it to every skill was worth the churn for the uniformity gain.
 
-**Centralized enums vs Local**: One more place to update for discoverability and shared understanding. Enums (LoopState, DocumentAvailability) make state machines explicit and enable property-based testing.
+**Centralized enums vs local**: One more place to update when adding a state, in exchange for shared vocabulary (`AgentRole`, `LoopState`, `Confidence`) that makes state machines explicit and enables property-based testing across skills.
 
-**Clean break vs Dual-path**: Simpler implementation at cost of no migration period. Refactoring scope is internal (no external callers) so clean break reduces total work and eliminates transition bugs.
+**Clean break vs dual-path**: We chose a clean break when removing the execution engine. No callers outside the repo, so the transition cost was bounded; dual-path would have added maintenance burden with no benefit.
 
-## Common Patterns
+## Exhaustive Testing Framework
 
-### Pattern 1: Linear Workflow
+`tests/test_workflow_steps.py` parametrizes every (step, param-combination) for every registered workflow and runs each via subprocess. Domain types in `types.py` drive the Cartesian product.
 
-```python
-WORKFLOW = Workflow(
-    "skill-name",
-    StepDef(id="step1", title="...", actions=[...],
-            handler=step_handler, next={Outcome.OK: "step2"}),
-    StepDef(id="step2", title="...", actions=[...],
-            handler=step_handler, next={Outcome.OK: "step3"}),
-    StepDef(id="step3", title="...", actions=[...],
-            next={Outcome.OK: None}),  # terminal
-)
+### Data Flow
+
+```
+Workflow objects            Domain types               Generation
+     |                           |                          |
+     v                           v                          v
+workflow._params       BoundedInt / ChoiceSet      extract_schema(workflow)
+workflow._step_order   Constant                    generate_inputs(workflow)
+                                                         |
+                                                         v
+                                         pytest.parametrize + subprocess
 ```
 
-### Pattern 2: Confidence-Driven Iteration
+### Domain Types (in `types.py`)
 
-```python
-def step_investigate(ctx: StepContext) -> tuple[Outcome, dict]:
-    iteration = ctx.step_state.get("iteration", 1)
-    confidence = ctx.workflow_params.get("confidence", "exploring")
+All three are frozen dataclasses implementing `__iter__` for use with `itertools.product`. `frozen=True` enables hashability for pytest param caching.
 
-    if confidence == "high":
-        return Outcome.OK, {"confidence": confidence}
-    elif iteration >= MAX_ITERATIONS:
-        return Outcome.OK, {"confidence": "capped"}
-    else:
-        return Outcome.ITERATE, {"iteration": iteration + 1}
+| Type         | Shape                | Example                                           |
+| ------------ | -------------------- | ------------------------------------------------- |
+| `BoundedInt` | inclusive `[lo, hi]` | `list(BoundedInt(1, 3))` -> `[1, 2, 3]`           |
+| `ChoiceSet`  | tuple of choices     | `list(ChoiceSet(("full", "quick")))` -> `["full", "quick"]` |
+| `Constant`   | single fixed value   | `list(Constant(42))` -> `[42]`                    |
 
-StepDef(id="investigate", handler=step_investigate,
-        next={
-            Outcome.OK: "formulate",       # exit loop
-            Outcome.ITERATE: "investigate"  # continue loop
-        })
-```
+### Why This Structure
 
-### Pattern 3: Mode Branching
+Domain types separate from generation logic:
 
-```python
-def step_planning(ctx: StepContext) -> tuple[Outcome, dict]:
-    mode = ctx.workflow_params.get("mode", "full")
-    if mode == "quick":
-        return Outcome.SKIP, {}
-    return Outcome.OK, {}
+- **Reusable** — the same domain types could drive fuzzing or documentation, not just pytest.
+- **Decoupled** — generation logic depends on workflow structure (step order, params), not domain semantics.
+- **Single test file** adds pytest-specific concerns (param ids, subprocess runner) without mixing them into the core framework.
 
-StepDef(id="planning", handler=step_planning,
-        next={
-            Outcome.OK: "subagent_design",      # full mode
-            Outcome.SKIP: "initial_synthesis",  # quick mode
-        })
-```
+### Key Design Decisions
 
-### Pattern 4: QR Gate
+**Exhaustive vs sampling**: Domains are small (~300–500 total combinations across all workflows). Exhaustive enumeration catches edge combinations that sampling would miss. Sampling would save seconds and risk missed regressions.
 
-```python
-from skills.lib.workflow.types import Dispatch, AgentRole
+**Hardcoded mode-gating**: Only deepthink has a mode parameter (quick mode skips steps 6–11). Introspection machinery for the general case is not justified for a single consumer; `test_generation.py::get_mode_gated_steps` hardcodes the deepthink rule explicitly.
 
-StepDef(
-    id="qr_completeness",
-    title="QR: Plan Completeness",
-    actions=[...],
-    handler=Dispatch(
-        agent=AgentRole.QUALITY_REVIEWER,
-        script="skills.planner.qr.plan_completeness",
-    ),
-    next={
-        Outcome.OK: "implementation",   # QRStatus.PASS -> Outcome.OK
-        Outcome.FAIL: "revise_plan",    # QRStatus.FAIL -> Outcome.FAIL
-    },
-)
-```
-
-### Pattern 5: Hybrid Static/Dynamic Steps (deepthink)
-
-Workflows with mostly static steps and few parameterized steps benefit from a hybrid approach:
-
-```python
-# ============================================================================
-# MESSAGE BUILDERS
-# ============================================================================
-
-def build_dispatch_body() -> str:
-    """Builder functions that dynamic formatters may call."""
-    # ... implementation
-    return dispatch_text
-
-
-# ============================================================================
-# STEP DEFINITIONS
-# ============================================================================
-
-# Static steps: (title, instructions) tuples
-STATIC_STEPS = {
-    1: ("Context Clarification", CONTEXT_CLARIFICATION_INSTRUCTIONS),
-    2: ("Abstraction", ABSTRACTION_INSTRUCTIONS),
-    # ... more static steps
-}
-
-
-# Dynamic formatter functions - defined BEFORE DYNAMIC_STEPS dict
-def _format_step_9(mode: str, confidence: str, iteration: int) -> tuple[str, str]:
-    """Dynamic step that calls a builder function."""
-    return ("Dispatch", build_dispatch_body())
-
-
-def _format_step_13(mode: str, confidence: str, iteration: int) -> tuple[str, str]:
-    """Dynamic step with parameterized title and body."""
-    suffix = " -> Complete" if confidence == "certain" else ""
-    title = f"Iterative Refinement (Iteration {iteration}){suffix}"
-    body = INSTRUCTIONS.format(iteration=iteration, max_iter=MAX_ITERATIONS)
-    return (title, body)
-
-
-# Dynamic steps dict - references functions defined above
-DYNAMIC_STEPS = {
-    9: _format_step_9,
-    13: _format_step_13,
-}
-
-
-# ============================================================================
-# OUTPUT FORMATTING
-# ============================================================================
-
-def format_output(step: int, mode: str, confidence: str, iteration: int) -> str:
-    """Callable dispatch: static lookup or dynamic function call."""
-    if step in STATIC_STEPS:
-        title, instructions = STATIC_STEPS[step]
-    elif step in DYNAMIC_STEPS:
-        title, instructions = DYNAMIC_STEPS[step](mode, confidence, iteration)
-    else:
-        return f"ERROR: Invalid step {step}"
-
-    next_cmd = build_next_command(step, mode, confidence, iteration)
-    return format_step(instructions, next_cmd or "", title=f"WORKFLOW - {title}")
-```
-
-**Ordering constraint (book pattern)**: Dynamic formatter functions that call MESSAGE BUILDERS must appear AFTER MESSAGE BUILDERS. The DYNAMIC_STEPS dictionary must appear AFTER all `_format_step_*` functions it references.
-
-Use this pattern when:
-
-- Many steps share the same structure (title + constant body)
-- Few steps need parameters for title or body construction
-- Parameters are uniform across all dynamic steps
-
-Benefits:
-
-- Compact representation for static steps (one line per step)
-- Clear, readable functions for dynamic steps
-- Single dispatch point in `format_output()`
-- Follows "book pattern" (all references resolve to definitions above)
+**`_params` keyed by step_id (string), not step number**: `_step_order` supplies the authoritative index mapping for CLI invocation. Keying param specs by string id keeps them stable if steps are reordered.
 
 ## Question Relay Protocol
 
-Sub-agents can request user clarification via the main agent. The protocol is
-pure prompt coordination -- no Python interception.
+Sub-agents can request user clarification via the main agent. The protocol is pure prompt coordination — no Python interception.
 
 ### Design Decisions
 
-**Task Reinvocation (not Resume)**: When a sub-agent yields with questions,
-the orchestrator REINVOKES it fresh (new Task, no resume parameter) after
-getting user answers. The sub-agent saves state to plan.json before yielding,
-then reads it back after reinvocation. This was chosen over resume because:
+**Reinvocation over resume**: When a sub-agent yields with questions, the orchestrator REINVOKES it fresh (new Task, no resume parameter) after getting user answers. The sub-agent saves state to `plan.json` before yielding and reads it back after reinvocation. This was chosen over resume because:
 
-- Resume semantics are unreliable (0 tokens, 0 tool uses failures)
-- State file reading is explicit and auditable
-- Clean slate avoids stale context issues
-- Sub-agent scripts can detect continuation (plan.json exists)
+- Resume semantics are unreliable (0-token / 0-tool-use failures observed in the field).
+- State file reading is explicit and auditable.
+- Clean slate avoids stale context issues.
+- Sub-agent scripts can detect continuation by checking whether `plan.json` exists.
 
-**Questions-only output**: When a sub-agent needs clarification, it emits ONLY
-the `<needs_user_input>` XML block. Nothing else. This makes detection
-unambiguous -- no heuristic parsing of natural language.
+**Questions-only output**: When a sub-agent needs clarification, it emits ONLY the `<needs_user_input>` XML block — nothing else. This makes detection unambiguous (no heuristic parsing of natural language).
 
-**Explicit XML markers**: We use structured XML tags rather than detecting
-question marks in prose. This prevents false positives from rhetorical questions
-in analysis output.
+**Explicit XML markers**: Structured tags rather than question-mark detection prevent false positives from rhetorical questions in analysis output.
 
-**Max 3 questions, 2-3 options**: Constraints match AskUserQuestion tool schema.
-Batching reduces round-trips. Options should be distinct and actionable.
+**Max 3 questions, 2–3 options each**: Matches the `AskUserQuestion` tool schema. Batching reduces round-trips. Options must be distinct and actionable.
 
-**State saving before yield**: Sub-agents MUST save all progress to plan.json
-before emitting `<needs_user_input>`. The reinvoked instance reads this state.
+**State saving before yield**: Sub-agents MUST persist all progress before emitting `<needs_user_input>`. The reinvoked instance has no in-memory continuity and reads `plan.json` fresh.
 
 ### Flow
 
-1. Sub-agent saves current state to plan.json
-2. Sub-agent emits `<needs_user_input>` XML as entire response
-3. Main agent extracts questions, calls AskUserQuestion
-4. Main agent REINVOKES sub-agent fresh with answers and STATE_DIR
-5. New sub-agent instance reads plan.json, continues from saved state
+1. Sub-agent saves current state to `plan.json`.
+2. Sub-agent emits `<needs_user_input>` XML as its entire response.
+3. Main agent extracts questions, calls `AskUserQuestion`.
+4. Main agent reinvokes the sub-agent fresh with answers and `STATE_DIR`.
+5. New sub-agent instance reads `plan.json` and continues from saved state.
 
-### Constants
+### Relevant Constants (`constants.py`)
 
-| Constant                    | Purpose                                  |
-| --------------------------- | ---------------------------------------- |
-| `SUB_AGENT_QUESTION_FORMAT` | Tells sub-agent how to emit questions    |
-| `QUESTION_RELAY_HANDLER`    | Tells main agent how to detect and relay |
+| Constant                    | Purpose                                      |
+| --------------------------- | -------------------------------------------- |
+| `SUB_AGENT_QUESTION_FORMAT` | Tells sub-agent how to emit questions        |
+| `QUESTION_RELAY_HANDLER`    | Tells main agent how to detect and relay     |
 
 ### Integration
 
@@ -498,123 +267,21 @@ For dispatch steps that support question relay:
 ```python
 from skills.lib.workflow.constants import QUESTION_RELAY_HANDLER
 
-# In format_output or step handler for dispatch steps:
 if step_info.get("supports_questions"):
     actions.append(QUESTION_RELAY_HANDLER)
 ```
 
-For sub-agent scripts that may ask questions:
-
-```python
-from skills.lib.workflow.constants import SUB_AGENT_QUESTION_FORMAT
-
-# In step 1 guidance:
-actions.append(SUB_AGENT_QUESTION_FORMAT)
-```
-
-## Invariants
-
-- Every skill module appears in `SKILL_MODULES` in `tests/conftest.py`
-- Workflow validation must pass (entry point exists, all transitions valid, at least one terminal, all steps reachable)
-- Handler signatures must match `(ctx: StepContext) -> tuple[Outcome, dict]` or be a `Dispatch` instance
-- `next` dict keys must be `Outcome` enum values
-- `next` dict values must be valid step IDs or `None` (terminal)
-
-## Exhaustive Testing Framework
-
-Exhaustive testing framework generates all valid parameter combinations for workflow steps, using typed domain abstractions to represent parameter spaces.
-
-### Architecture
-
-```
-Workflow AST          Domain Types           Test Generation
-     |                     |                       |
-     v                     v                       v
-+----------+        +-------------+         +--------------+
-| Workflow |  --->  | BoundedInt  |  --->   | generate_    |
-| _params  |        | ChoiceSet   |         | test_inputs  |
-| _step_   |        | Constant    |         +--------------+
-|  order   |        +-------------+                |
-+----------+                                       v
-                                           +-------------+
-                                           | pytest      |
-                                           | parametrize |
-                                           +-------------+
-```
-
-### Why This Structure
-
-Domain types separate from generation logic:
-
-- Domains are reusable (could drive fuzzing, documentation)
-- Generation logic depends on workflow structure, not domain semantics
-- Test file adds pytest-specific concerns
-
-### Data Flow
-
-1. Import skills -> Workflow objects registered
-2. extract_schema(workflow) -> {step: {param: Domain}}
-3. generate_inputs(workflow) -> Iterator[dict] (Cartesian product)
-4. pytest.parametrize -> test cases with IDs
-5. run_skill_invocation(workflow, params) -> subprocess exit code
-
-### Key Design Decisions
-
-**Exhaustive vs sampling**: Domains are small (5 iterations x 5 confidences x 2 modes = ~300-500 total). Exhaustive enumeration is tractable and provides complete coverage. Sampling would miss edge combinations.
-
-**Hardcoded mode-gating**: Only deepthink has mode parameter (quick mode skips steps 6-11). Introspection complexity not justified for single case. Explicit hardcoding is clearer and maintainable.
-
-**Iteration detection**: Step.next dict contains Outcome.ITERATE for self-looping steps. Direct check without heuristics works for all current and future iterating workflows.
-
-**Step-index mapping**: \_params keyed by step_id (string) not step number. \_step_order provides authoritative index for CLI invocation.
-
-### Invariants
-
-- Each test case must have unique ID (workflow-step-params combo)
-- Conditional params only apply to applicable steps (iteration only at iterating steps)
-- Mode-gated steps skipped when mode value gates them out
-- step param always present (1 to total_steps)
-- total_steps always matches workflow.total_steps
-- Workflow.\_step_order must provide authoritative step index mapping: len(\_step_order) == total_steps and indices correspond to CLI --step values
-
-### Domain Types
-
-Located in types.py:
-
-**BoundedInt**: Integer domain with inclusive bounds [lo, hi]
-
-```python
-list(BoundedInt(1, 5))  # [1, 2, 3, 4, 5]
-```
-
-**ChoiceSet**: Discrete choice domain
-
-```python
-list(ChoiceSet(("full", "quick")))  # ["full", "quick"]
-```
-
-**Constant**: Single-value domain
-
-```python
-list(Constant(42))  # [42]
-```
-
-All implement **iter** for use with itertools.product. frozen=True enables hashability for pytest param caching.
+For sub-agent scripts that may ask questions, include `SUB_AGENT_QUESTION_FORMAT` in step 1 guidance.
 
 ## Testing
 
 All tests use pytest. Run from `skills/scripts/`:
 
 ```bash
-# Run all tests
-pytest tests/ -v
-
-# Test specific workflow
-pytest tests/ -k deepthink -v
-
-# Test categories
-pytest tests/test_workflow_import.py -v     # Import tests
-pytest tests/test_workflow_structure.py -v  # Structure validation
-pytest tests/test_workflow_steps.py -v      # Step invocability (exhaustive)
-pytest tests/test_domain_types.py -v        # Domain type unit tests
+pytest tests/ -v                         # everything
+pytest tests/ -k deepthink -v            # one workflow
+pytest tests/test_workflow_import.py -v  # imports only
+pytest tests/test_workflow_structure.py -v  # structure validation
+pytest tests/test_workflow_steps.py -v   # exhaustive step invocability
+pytest tests/test_domain_types.py -v     # domain type units
 ```

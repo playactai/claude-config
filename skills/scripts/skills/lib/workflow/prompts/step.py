@@ -3,12 +3,14 @@
 format_step() is the sole assembler. invoke_after logic is internal.
 """
 
+import shlex
 from pathlib import Path
 
 # SKILLS_DIR calculation matches subagent.py pattern: both modules are in
 # skills/lib/workflow/prompts/, so .parent.parent.parent.parent.parent
 # traverses: prompts/ -> workflow/ -> lib/ -> skills/ -> scripts/
 SKILLS_DIR = Path(__file__).resolve().parent.parent.parent.parent.parent
+_SKILLS_DIR_Q = shlex.quote(str(SKILLS_DIR))
 
 
 def format_step(body: str, next_cmd: str = "", title: str = "",
@@ -32,11 +34,12 @@ def format_step(body: str, next_cmd: str = "", title: str = "",
     if if_pass and if_fail:
         # Branching invoke for QR gate routing: the LLM chooses based on
         # aggregated QR outcome (all pass vs any fail).
+        # SKILLS_DIR is shlex-quoted so paths with spaces/metachars stay safe.
         invoke = (
             f"NEXT STEP (MANDATORY -- execute exactly one):\n"
             f"    Working directory: {SKILLS_DIR}\n"
-            f"    ALL agents returned PASS  ->  {if_pass}\n"
-            f"    ANY agent returned FAIL   ->  {if_fail}\n\n"
+            f"    ALL agents returned PASS  ->  cd {_SKILLS_DIR_Q} && {if_pass}\n"
+            f"    ANY agent returned FAIL   ->  cd {_SKILLS_DIR_Q} && {if_fail}\n\n"
             f"This is a mechanical routing decision. Do not interpret, summarize, "
             f"or assess the results.\n"
             f"Count PASS vs FAIL, then execute the matching command."
@@ -45,11 +48,11 @@ def format_step(body: str, next_cmd: str = "", title: str = "",
 
     elif next_cmd:
         # Working directory is explicit because CLI execution context varies.
-        # Command is literal shell invocation for next step.
+        # Command is self-contained with cd prefix to avoid working directory issues.
         invoke = (
             f"NEXT STEP:\n"
             f"    Working directory: {SKILLS_DIR}\n"
-            f"    Command: {next_cmd}\n\n"
+            f"    Command: cd {_SKILLS_DIR_Q} && {next_cmd}\n\n"
             f"Execute this command now."
         )
         return f"{body}\n\n{invoke}"

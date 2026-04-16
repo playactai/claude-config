@@ -4,6 +4,7 @@ Single implementation eliminates ~150 lines of duplicated gate logic.
 Both planner.py and executor.py call this with their MODULE_PATH.
 """
 
+import shlex
 from dataclasses import dataclass
 
 from skills.lib.workflow.prompts.step import format_step
@@ -87,9 +88,9 @@ def build_gate_output(
     if qr.passed:
         next_cmd = f"python3 -m {module_path} --step {pass_step}"
         if state_dir:
-            next_cmd += f" --state-dir {state_dir}"
+            next_cmd += f" --state-dir {shlex.quote(state_dir)}"
     else:
-        next_cmd = f"python3 -m {module_path} --step {work_step} --state-dir {state_dir}"
+        next_cmd = f"python3 -m {module_path} --step {work_step} --state-dir {shlex.quote(state_dir)}"
 
     return GateResult(
         output=format_step(body, next_cmd, title=title),

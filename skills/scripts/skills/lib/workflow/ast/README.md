@@ -1,36 +1,38 @@
 # AST Module
 
-Type-safe AST representation for workflow output with builder API and pluggable renderers.
+Type-safe AST representation for workflow output with a fluent builder API and pluggable renderers.
 
 ## Architecture
 
 ```
-Skills (26 call sites)
+Skill step handlers  (26+ call sites)
        |
        v
 +------------------+
 | Builder API      |
-| W.header()       |
-| W.text_output()  |
+| W.el(tag, ...)   |
 +------------------+
        |
        v
-+----------------------------------------+
-|              AST Nodes                 |
-| TextNode | HeaderNode | DispatchNode   |
-| CodeNode | ActionsNode | RoutingNode   |
-| RawNode  | CommandNode | GuidanceNode  |
-| ElementNode | TextOutputNode           |
-+----------------------------------------+
++-------------------------------------------+
+|               AST Nodes                   |
+|                                           |
+|  Base:    TextNode | CodeNode | Element-  |
+|                                     Node  |
+|  Dispatch: SubagentDispatchNode |         |
+|            TemplateDispatchNode |         |
+|            RosterDispatchNode             |
++-------------------------------------------+
        |
        v
-+------------------+     +------------------+
-| XMLRenderer      |     | PlainTextRenderer|
-| (primary)        |     | (future)         |
-+------------------+     +------------------+
-       |
-       v
-    str output
++------------------+     +--------------------+
+| XMLRenderer      |     | Dispatch renderers |
+| (generic XML)    |     | (one per node type)|
++------------------+     +--------------------+
+       |                          |
+       +------------+-------------+
+                    v
+                str output
 ```
 
 ## Data Flow
@@ -38,92 +40,93 @@ Skills (26 call sites)
 ```
 Skill step handler
        |
-       | calls W.header(script="x", step=1, total=5)
+       | W.el("step_header", TextNode("Title"), script="x", step="1")
        v
-ASTBuilder accumulates nodes
+ASTBuilder accumulates ElementNodes
        |
-       | .build() returns Document
+       | .build() returns Document (or .node() returns the single root ElementNode)
        v
-Document(children=[HeaderNode, ActionsNode, ...])
+Document(children=[ElementNode("step_header", ...), ...])
        |
        | render(doc, XMLRenderer())
        v
-XMLRenderer.render() matches each node type
-       |
-       | recursively renders children
+XMLRenderer._render_node() matches each node type,
+renders attributes + children recursively
        v
-"<step_header script='x' step='1' total='5'>...</step_header>"
+"<step_header script='x' step='1'>Title</step_header>"
 ```
+
+Dispatch nodes use dedicated renderers (`render_subagent_dispatch`, `render_template_dispatch`, `render_roster_dispatch`) because their output includes richer structures than generic XML: PARALLEL EXECUTION constraints, SHARED CONTEXT sections, per-agent task blocks, and IMMEDIATELY-invoke directives.
 
 ## Why This Structure
 
 ### Module Organization
 
-- **nodes.py**: Node definitions isolated from construction logic. Enables importing types without builder dependency.
-- **builder.py**: Fluent API separate from types. Builder can evolve (add convenience methods) without changing node structure.
-- **renderer.py**: Rendering decoupled from AST. Multiple renderers (XML, plain text, JSON) implement same interface.
-- **(deleted) compat.py**: Was transitional shim during migration. Removed after all skills migrated to W.\* builder API.
+- **nodes.py**: Node definitions isolated from construction logic. Importing a node type does not drag in the builder.
+- **builder.py**: `W.el(tag, *children, **attrs)` is the single fluent method. Earlier drafts had `W.header()`, `W.text_output()`, etc., which collapsed into `W.el()` once every caller converged on it.
+- **renderer.py**: Generic XML rendering decoupled from the AST. A future renderer (plain text, JSON) can live alongside without touching node definitions.
+- **dispatch.py + dispatch_renderer.py**: Dispatch nodes and their renderers are separated from the generic renderer because their output is fundamentally richer (multi-section parallel-agent blocks) and does not fit the generic tag-with-attributes-and-children shape.
 
 ### Design Choices
 
-**Frozen Dataclasses**: Immutability aligns with FP style, prevents accidental mutation, and enables safe sharing of nodes between renders and caching.
+**Three base node types only**: `TextNode`, `CodeNode`, `ElementNode`. Earlier iterations had per-concept classes (HeaderNode, ActionsNode, CommandNode, RoutingNode, GuidanceNode, RawNode, TextOutputNode). Those collapsed into `ElementNode` once all skills used `W.el("tag_name", ...)` with free-form tags and attributes. Fewer classes means fewer places to update when conventions evolve; the tag is a string, not a type.
 
-**Flat Union**: Workflow output is sequential composition (Header + Actions + Command), not nested prose. Flat union with `children: list[Node]` matches actual patterns better than layered inline/block distinction.
+**Frozen dataclasses**: Immutability aligns with FP style, prevents accidental mutation, and enables safe sharing of nodes between renders and caching.
 
-**Separate Dataclass Per Type**: Type-safe field access with IDE autocomplete. More explicit than shared attrs dict. Standard Python pattern for discriminated unions.
+**Flat union (`children: list[Node]`)**: Workflow output is sequential composition (header + body + invoke), not nested prose. A flat list matches the actual patterns better than a layered inline/block distinction.
 
-**Builder API**: Direct construction requires knowing field names and types. Builder provides fluent API with autocomplete, reducing cognitive load for skill authors.
+**Separate dataclass per node type**: Type-safe field access with IDE autocomplete. More explicit than a shared attrs dict. Standard Python pattern for discriminated unions.
 
-**Immutable Builder Pattern**: Each builder method returns NEW builder instance with accumulated node. No mutable state shared between calls. Functional style aligns with user preference for clean FP.
+**Builder API**: Direct `ElementNode(...)` construction requires knowing field names and types. `W.el(...)` provides fluent syntax with autocomplete, reducing cognitive load for skill authors.
 
-**External render() Function**: Separation of concerns - Document doesn't need to know about renderers. Easier to add new renderers without modifying Document class. Multiple dispatch without coupling nodes to renderer interface.
+**Immutable builder pattern**: Each `W.el(...)` call returns a NEW `ASTBuilder` instance with the accumulated node. No shared mutable state between calls.
+
+**External `render()` function**: Separation of concerns — `Document` does not need to know about renderers. Easier to add new renderers without modifying the Document class. Multiple dispatch without coupling nodes to a renderer interface.
 
 ## Invariants
 
-Core invariants enforced by the AST module:
-
 1. **Node types are frozen dataclasses**: Immutable after construction. No field mutation allowed.
-2. **Node = Union of 11 dataclass types**: Discriminated by class type, not field. Match statement provides exhaustiveness.
-3. **children is always list[Node], never None**: Empty list for leaf nodes. Simplifies rendering logic.
-4. **RawNode.content is never empty**: Use TextNode for intentional empty strings. RawNode is escape hatch for unstructured content.
-5. **Renderer must handle all 11 node types**: Match exhaustiveness enforced via assertNever pattern.
-6. **Builder methods return NEW builder instances**: Immutable chain. Final .build() returns Document.
+2. **`ElementNode.children` is always `list[Node]`**, never `None`. Leaf elements carry an empty list.
+3. **`XMLRenderer` must handle every node type** reachable from the public API. `_render_node()` uses `match` for exhaustiveness.
+4. **Builder methods return NEW builder instances**. Final `.build()` returns a `Document`; `.node()` returns the single accumulated node when there is exactly one.
+5. **Invoke commands in dispatch output are self-contained**: `cd {working_dir} && {cmd}`. Sub-agent Bash tools sometimes ignore a separate `working-dir` attribute, so the cd must be in the command itself.
+
+## Dispatch Node Semantics
+
+| Type                   | Pattern | Use case                                     |
+| ---------------------- | ------- | -------------------------------------------- |
+| `SubagentDispatchNode` | Single  | Sequential workflows (plan -> dev -> QR)     |
+| `TemplateDispatchNode` | SIMD    | Same template, N targets ($var substitution) |
+| `RosterDispatchNode`   | MIMD    | Shared context, unique prompts per agent     |
+
+`TemplateDispatchNode` expands `$var` placeholders per target at render time, so the sub-agent sees only final prompts — no runtime substitution. `RosterDispatchNode` takes a list of unique task strings and a single shared context block.
 
 ## Tradeoffs
 
 ### Flat union vs typed children
 
-**Chose**: Flat `children: list[Node]` over `children: list[InlineNode]`.
-
-**Why**: Loses compile-time nesting enforcement but simplifies API. Workflow output is sequential composition, not nested prose. Runtime validation can catch invalid nesting if needed.
+**Chose**: Flat `children: list[Node]` over typed `list[InlineNode]`.
+**Why**: Loses compile-time nesting enforcement but simplifies the API. Workflow output is sequential composition, not nested prose. Runtime validation can catch invalid nesting if it ever becomes a problem.
 
 ### Builder vs direct construction
 
-**Chose**: Builder adds indirection but improves ergonomics.
+**Chose**: Builder adds one layer of indirection but improves ergonomics.
+**Why**: Skill authors write `W.el("step_header", TextNode(...), step="1")`, not `ElementNode(tag="step_header", attrs={"step": "1"}, children=[...])`. Autocomplete + fluent chaining reduces cognitive load.
 
-**Why**: Skill authors use `W.header()` not `HeaderNode(type=NodeType.HEADER, ...)`. Fluent API with autocomplete reduces cognitive load. Direct construction exposes implementation details.
+### One `W.el()` vs many `W.header()` / `W.text_output()` / ...
 
-### Compatibility shim vs immediate migration
-
-**Chose**: Shim adds temporary code but enables gradual rollout.
-
-**Why**: Worth the short-term complexity for risk reduction. Strangler Fig pattern isolates risk per-skill. No coordinated deployment required. Big bang rewrite would affect all 26 call sites simultaneously.
-
-## RawNode Escape Hatch
-
-RawNode distinguishes "couldn't structure this" from intentional text (TextNode). Tracking `raw_nodes/total_nodes` ratio identifies when AST needs extension.
-
-**Threshold**: Extend AST if >20% of nodes are RawNode. This signals a design gap where new node types are needed.
+**Chose**: Single `W.el(tag, ...)` method.
+**Why**: The specialized builder methods existed transitionally. Once every caller converged on `W.el()`, keeping the specialized methods was pure maintenance cost — a tag change required updating both the builder and every caller. Free-form tags also mean the AST does not need to know about skill-specific vocabulary.
 
 ## Extending the AST
 
-To add a new node type:
+To add a new element type:
 
-1. Add frozen dataclass to `nodes.py` with typed fields
-2. Add to `Node` union type
-3. Add builder method to `ASTBuilder` in `builder.py`
-4. Add render method to `XMLRenderer` in `renderer.py`
-5. Add case to `_render_node()` match statement
-6. Update tests to cover new node type for exhaustiveness
+1. Prefer `W.el("new_tag", ...)` — `ElementNode` supports arbitrary tags and attributes.
+2. If the rendering shape is fundamentally different (richer than generic tag-children-attrs), add:
+   - A frozen dataclass to `nodes.py` (for base nodes) or `dispatch.py` (for dispatch nodes).
+   - A builder helper or argument shape if needed.
+   - A `render_*` function in the matching renderer module.
+   - A case in `XMLRenderer._render_node()` if the type flows through the generic renderer.
 
-The match statement will catch missing cases at runtime if a case is not handled.
+The match statement catches missing cases at runtime if a case is not handled.

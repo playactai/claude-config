@@ -2,21 +2,25 @@
 
 ## Overview
 
-Quality Review modules perform validation with severity-based blocking thresholds. Each module validates specific aspects of plans or implementations at designated workflow gates.
+Quality Review modules perform validation with severity-based blocking thresholds. Each workflow phase has a decompose/verify pair: decompose generates verification items, verify executes them (single-item mode for parallel dispatch). `qr_verify_base.py` holds the shared VerifyBase ABC so each phase module only declares the phase name and its per-item guidance. `exec_reconcile.py` handles the separate concern of checking whether existing code already satisfies plan milestones.
 
 ## Modules
 
-**plan_completeness.py**: Validates plan structure, milestone definitions, and acceptance criteria completeness.
+**Plan-phase QR** (orchestrator: `planner.py`):
 
-**plan_code.py**: Reviews code diffs for correctness, edge cases, and implementation quality.
+- `plan_design_qr_decompose.py` / `plan_design_qr_verify.py`: Validate plan.json structure, milestone definitions, acceptance criteria, and design-mode code-quality dimensions.
+- `plan_code_qr_decompose.py` / `plan_code_qr_verify.py`: Review proposed code diffs for correctness, edge cases, and code-mode quality.
+- `plan_docs_qr_decompose.py` / `plan_docs_qr_verify.py`: Verify planned documentation completeness and alignment with the planned implementation.
 
-**plan_docs.py**: Verifies documentation completeness, clarity, and alignment with implementation.
+**Executor-phase QR** (orchestrator: `executor.py`):
 
-**post_impl_code.py**: Post-implementation code validation against plan specifications.
+- `impl_code_qr_decompose.py` / `impl_code_qr_verify.py`: Post-implementation code validation against plan specifications.
+- `impl_docs_qr_decompose.py` / `impl_docs_qr_verify.py`: Post-implementation documentation review for accuracy and completeness.
 
-**post_impl_doc.py**: Post-implementation documentation review for accuracy and completeness.
+**Supporting:**
 
-**reconciliation.py**: Verifies plan matches implementation, ensures all milestones delivered.
+- `qr_verify_base.py`: `VerifyBase` ABC implementing the shared dynamic verify workflow (1 context step + 2 steps per item [analyze/confirm] + 1 summary step; total = 2 + 2*N for N items). Each phase subclass only overrides `get_verification_guidance()`.
+- `exec_reconcile.py`: Checks whether existing code already satisfies a milestone, so the executor can skip milestones whose work is already done.
 
 ## QA State Tracking Integration
 

@@ -1,12 +1,21 @@
 """AST node types for workflow output representation.
 
-Simplified AST with only the nodes actually used by skills:
+Simplified AST with generic and specialized nodes:
+
+Generic (composed via W.el()):
 - TextNode: Plain text content
 - CodeNode: Code blocks with optional language
-- ElementNode: Generic XML element (used via W.el())
+- ElementNode: Generic XML element
 
-All specialized nodes (HeaderNode, ActionsNode, etc.) were removed because
-skills use W.el("tag_name", ...) pattern exclusively.
+Specialized (dedicated renderers for structured attributes):
+- FileContentNode: File content with CDATA wrapping
+- StepHeaderNode: <step_header> with script/step/category/mode/total
+- CurrentActionNode: <current_action> from a list of action strings
+- InvokeAfterNode: <invoke_after> with single command or pass/fail branching
+
+Legacy nodes removed (use W.el("tag_name", ...) for these):
+HeaderNode, ActionsNode, RawNode, CommandNode, GuidanceNode, RoutingNode,
+TextOutputNode.
 """
 
 from dataclasses import dataclass

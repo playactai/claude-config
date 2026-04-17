@@ -492,16 +492,54 @@ Start: python3 -m {verify_script} --step 1 --state-dir {state_dir} $qr_item_flag
     return handler
 
 
+def _all_milestones_doc_only(state_dir: str) -> bool:
+    """Return True when every milestone in plan.json is documentation-only.
+
+    Used by step 6 (plan-design gate) to skip plan-code (steps 7-10) for
+    pure documentation plans. Routing through plan-code runs QR-Code checks
+    (context lines, format rules, test coverage) against prose, which never
+    converges and produces infinite fix loops.
+
+    Returns False on any read/parse failure or when milestones list is empty
+    so behaviour stays conservative (goes through plan-code) when in doubt.
+    """
+    import json
+    from pathlib import Path
+
+    try:
+        plan_path = Path(state_dir) / "plan.json"
+        plan_data = json.loads(plan_path.read_text())
+        milestones = plan_data.get("milestones", [])
+        if not milestones:
+            return False
+        return all(m.get("is_documentation_only", False) for m in milestones)
+    except (OSError, json.JSONDecodeError):
+        return False
+
+
 def qr_route_step(title, phase, work_step, pass_step, pass_message, fix_target=None):
     """Steps 6, 10, 14: Route based on aggregated QR results.
 
     PASS: delete qr file, proceed to pass_step
     FAIL: loop to work_step (fix mode detected via qr-{phase}.json inspection)
+
+    Step 6 has doc-only fast-path: when all milestones are is_documentation_only,
+    a PASS routes to step 11 (plan-docs-work) instead of step 7 (plan-code-work)
+    because code phase QR never converges on prose.
     """
     def handler(ctx):
         qr = ctx["qr"]
         state_dir = ctx.get("state_dir", "")
         step = ctx["step"]
+
+        effective_pass_step = pass_step
+        effective_pass_message = pass_message
+        if step == 6 and state_dir and _all_milestones_doc_only(state_dir):
+            effective_pass_step = 11
+            effective_pass_message = (
+                "All milestones are documentation-only. "
+                "Skipping plan-code phase. Proceed to step 11 (plan-docs-work)."
+            )
 
         return build_gate_output(
             module_path=MODULE_PATH,
@@ -510,8 +548,8 @@ def qr_route_step(title, phase, work_step, pass_step, pass_message, fix_target=N
             qr=qr,
             step=step,
             work_step=work_step,
-            pass_step=pass_step,
-            pass_message=pass_message,
+            pass_step=effective_pass_step,
+            pass_message=effective_pass_message,
             fix_target=fix_target,
             state_dir=state_dir,
         )

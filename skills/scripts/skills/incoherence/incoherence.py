@@ -166,7 +166,7 @@ def format_incoherence_output(step, phase, agent_type, guidance, thoughts=""):
     parts.append(render_step_header(StepHeaderNode(
         title=title,
         script="incoherence",
-        step=str(step),
+        step=step,
     )))
     parts.append("")
 

@@ -4,6 +4,7 @@ Handles argument parsing and mode script entry points.
 """
 
 import argparse
+import sys
 from pathlib import Path
 from typing import Callable
 
@@ -108,6 +109,13 @@ def mode_main(
         }
     else:
         guidance_dict = guidance
+
+    # Router scripts signal invalid input by returning {"error": msg}.
+    # Without this check, the downstream guidance_dict["title"]/["actions"]
+    # lookups raise KeyError with a traceback instead of a clean exit.
+    if isinstance(guidance_dict, dict) and "error" in guidance_dict:
+        print(f"Error: {guidance_dict['error']}", file=sys.stderr)
+        sys.exit(1)
 
     # Build body from actions list
     body_parts = []

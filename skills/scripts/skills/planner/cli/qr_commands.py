@@ -87,6 +87,7 @@ def update_item(ctx: QRContext, item_id: str, status: str, finding: str | None =
         idx, item = _find_item(qr_state, item_id)
         if idx < 0:
             raise ValueError(f"Item {item_id} not found in qr-{ctx.phase}.json")
+        assert item is not None
 
         current_status = item.get("status", "TODO")
         if current_status in TERMINAL_STATUSES:
@@ -190,6 +191,7 @@ def assign_group(ctx: QRContext, item_id: str, group_id: str) -> dict:
         idx, item = _find_item(qr_state, item_id)
         if idx < 0:
             raise ValueError(f"Item {item_id} not found in qr-{ctx.phase}.json")
+        assert item is not None
 
         item["group_id"] = group_id
         qr_state["items"][idx] = item

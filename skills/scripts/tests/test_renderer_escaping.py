@@ -87,8 +87,12 @@ class TestInvokeAfterEscaping:
         )
         rendered = render_invoke_after(node)
         root = ET.fromstring(rendered)
-        if_pass = root.find("if_pass/invoke").get("cmd")
-        if_fail = root.find("if_fail/invoke").get("cmd")
+        if_pass_elem = root.find("if_pass/invoke")
+        if_fail_elem = root.find("if_fail/invoke")
+        assert if_pass_elem is not None
+        assert if_fail_elem is not None
+        if_pass = if_pass_elem.get("cmd", "")
+        if_fail = if_fail_elem.get("cmd", "")
         assert 'x --msg "pass"' in if_pass
         assert 'y --msg "fail"' in if_fail
 

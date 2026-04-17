@@ -9,7 +9,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal, cast
 
 if TYPE_CHECKING:
     from ..shared.schema import Plan
@@ -322,7 +322,10 @@ def set_diagram(ctx: PlanContext, type: str, scope: str, title: str, id: str | N
         dg = next((d for d in plan.diagram_graphs if d.id == id), None)
         if not dg:
             raise ValueError(f"Diagram {id} not found")
-        dg.type = type
+        valid_types = ("architecture", "state", "sequence", "dataflow")
+        if type not in valid_types:
+            raise ValueError(f"Invalid diagram type: {type}")
+        dg.type = cast(Literal["architecture", "state", "sequence", "dataflow"], type)
         dg.scope = scope
         dg.title = title
         operation = "updated"

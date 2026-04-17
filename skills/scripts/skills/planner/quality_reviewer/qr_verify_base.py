@@ -29,6 +29,7 @@ Invariants:
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from typing import ClassVar
 
 from skills.planner.shared.qr.phases import get_phase_config
 from skills.planner.shared.qr.utils import (
@@ -50,7 +51,7 @@ class VerifyBase(ABC):
     2. Override get_verification_guidance() with phase-specific verification instructions
     """
 
-    PHASE: str = None  # Override in subclass
+    PHASE: ClassVar[str] = ""  # Override in subclass
 
     def __init__(self):
         if not self.PHASE:
@@ -122,8 +123,10 @@ class VerifyBase(ABC):
         if step_type == "CONTEXT":
             return self._step_context(state_dir, module_path, items, total_steps)
         elif step_type == "ANALYZE":
+            assert item_idx is not None
             return self._step_analyze(state_dir, module_path, items, item_idx, total_steps)
         elif step_type == "CONFIRM":
+            assert item_idx is not None
             return self._step_confirm(state_dir, module_path, items, item_idx, total_steps)
         elif step_type == "SUMMARY":
             return self._step_summary(state_dir, module_path, items, total_steps)
@@ -134,6 +137,7 @@ class VerifyBase(ABC):
         self, state_dir: str, module_path: str, item_ids: list[str], total_steps: int
     ) -> dict:
         """Step 1: Load conventions, phase rules, context.json, plan.json. List all items."""
+        assert self.PHASE is not None
         state_dir_arg = f" --state-dir {state_dir}"
         item_flags = " ".join(f"--qr-item {id}" for id in item_ids)
 
@@ -188,6 +192,7 @@ class VerifyBase(ABC):
         self, state_dir: str, module_path: str, item_ids: list[str], item_idx: int, total_steps: int
     ) -> dict:
         """ANALYZE step: Explore codebase if needed, analyze item, form preliminary conclusion."""
+        assert self.PHASE is not None
         state_dir_arg = f" --state-dir {state_dir}"
         item_flags = " ".join(f"--qr-item {id}" for id in item_ids)
         current_step = 2 + (item_idx * 2)  # ANALYZE is first of the pair
@@ -239,6 +244,7 @@ class VerifyBase(ABC):
         self, state_dir: str, module_path: str, item_ids: list[str], item_idx: int, total_steps: int
     ) -> dict:
         """CONFIRM step: Verify confidence, record result via cli/qr.py."""
+        assert self.PHASE is not None
         state_dir_arg = f" --state-dir {state_dir}"
         item_flags = " ".join(f"--qr-item {id}" for id in item_ids)
         current_step = 2 + (item_idx * 2) + 1  # CONFIRM is second of the pair

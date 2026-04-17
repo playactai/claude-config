@@ -76,7 +76,7 @@ def _extract_global_params(workflow: Workflow) -> dict:
 
     Returns dict with step and optionally mode domains.
     """
-    global_params = {
+    global_params: dict[str, BoundedInt | ChoiceSet] = {
         "step": BoundedInt(1, workflow.total_steps),
     }
 

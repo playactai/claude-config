@@ -499,7 +499,7 @@ def format_step_10() -> str:
 # =============================================================================
 
 
-def format_output(step: int, state_dir: str, qr_status: str, reconciliation_check: bool) -> str:
+def format_output(step: int, state_dir: str, qr_status: str | None, reconciliation_check: bool) -> str:
     """Format output for display."""
 
     # Derive QR state from on-disk qr-{phase}.json (planner.py does the same).

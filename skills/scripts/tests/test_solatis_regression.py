@@ -18,6 +18,8 @@ from pathlib import Path
 
 import pytest
 
+from skills.planner.shared.gates import GateResult
+
 SCRIPTS_DIR = Path(__file__).parent.parent
 
 
@@ -224,7 +226,7 @@ def test_issue_23_step6_routes_doc_only_to_step_11(tmp_path):
 
     result = format_output(step=6, qr_status="pass", state_dir=str(tmp_path))
     # format_output returns GateResult for gate steps
-    output = result.output if hasattr(result, "output") else result
+    output = result.output if isinstance(result, GateResult) else result
     assert "--step 11" in output
     assert "plan-docs" in output.lower() or "step 11" in output
 
@@ -242,6 +244,6 @@ def test_issue_23_step6_routes_code_plan_to_step_7(tmp_path):
     )
 
     result = format_output(step=6, qr_status="pass", state_dir=str(tmp_path))
-    output = result.output if hasattr(result, "output") else result
+    output = result.output if isinstance(result, GateResult) else result
     assert "--step 7" in output
     assert "--step 11" not in output

@@ -5,7 +5,7 @@ Pull-based discovery eliminates import-time side effects.
 
 from __future__ import annotations
 
-import importlib.util
+import importlib
 import pkgutil
 from typing import TYPE_CHECKING
 

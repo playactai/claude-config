@@ -237,7 +237,7 @@ def load_context_block(context_file: str | None) -> list[str]:
         return []  # Graceful fallback
 
 
-def render_context_file(context_file: str) -> str:
+def render_context_file(context_file: str | Path) -> str:
     """Load and format context.json for sub-agent consumption.
 
     WHY logical name: LLM sees "context.json" (semantic) not

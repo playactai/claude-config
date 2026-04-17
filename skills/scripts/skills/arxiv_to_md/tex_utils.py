@@ -1,4 +1,4 @@
-"""Pure Python TeX preprocessing utilities.
+r"""Pure Python TeX preprocessing utilities.
 
 Handles \input{} expansion and encoding normalization without external tools.
 """

@@ -36,6 +36,7 @@ import os
 import sys
 import tempfile
 from pathlib import Path
+from typing import NoReturn
 
 from . import qr_commands
 from .dispatch import batch as batch_dispatch
@@ -58,7 +59,7 @@ REQUIRES_FINDING = frozenset({"FAIL"})
 FORBIDS_FINDING = frozenset({"PASS"})
 
 
-def error_exit(msg: str, code: int = 1):
+def error_exit(msg: str, code: int = 1) -> NoReturn:
     """Print error in XML format and exit."""
     print(f"""<qr_cli_error>
   <message>{msg}</message>
@@ -188,6 +189,7 @@ def cmd_update_item(state_dir: str, phase: str, args: list[str]):
         idx, item = find_item(qr_state, item_id)
         if idx < 0:
             error_exit(f"Item {item_id} not found in qr-{phase}.json")
+        assert item is not None
 
         current_status = item.get("status", "TODO")
         validate_transition(current_status, status, item_id)
@@ -325,6 +327,7 @@ def cmd_assign_group(state_dir: str, phase: str, args: list[str]):
         idx, item = find_item(qr_state, item_id)
         if idx < 0:
             error_exit(f"Item {item_id} not found in qr-{phase}.json")
+        assert item is not None
 
         item["group_id"] = group_id
         qr_state["items"][idx] = item

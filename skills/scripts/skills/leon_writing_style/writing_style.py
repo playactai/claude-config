@@ -1064,7 +1064,7 @@ def format_output(step: int, guidance: dict, thoughts: str) -> str:
             StepHeaderNode(
                 title=title,
                 script="leon_writing_style",
-                step=str(step),
+                step=step,
             )
         )
     )

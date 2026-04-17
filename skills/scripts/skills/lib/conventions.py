@@ -16,7 +16,7 @@ from pathlib import Path
 
 from skills.lib.io import read_text_or_exit
 
-_REGISTRY_CACHE = None
+_registry_cache: dict | None = None
 
 
 def get_convention(name: str) -> str:
@@ -123,7 +123,7 @@ def _parse_indent_4_items(
 
 
 def _parse_indent_6_phase_items(
-    content: str, current_role: str, current_key: str, current_phase: str, result: dict
+    content: str, current_role: str, current_key: str, current_phase: str | None, result: dict
 ) -> None:
     """Handle phase-specific and mode-specific list items (indent 6)."""
     if (
@@ -165,7 +165,7 @@ def _validate_parsed_structure(result: dict) -> None:
 def _parse_yaml_simple(text: str) -> dict:
     """Simple YAML parser for registry (subset of YAML needed for our structure)."""
     try:
-        import yaml
+        import yaml  # pyright: ignore[reportMissingModuleSource]
 
         result = yaml.safe_load(text)
         _validate_parsed_structure(result)
@@ -202,11 +202,11 @@ def _parse_yaml_simple(text: str) -> dict:
 
 def get_registry() -> dict:
     """Load role-convention registry (cached)."""
-    global _REGISTRY_CACHE
-    if _REGISTRY_CACHE is None:
+    global _registry_cache
+    if _registry_cache is None:
         registry_path = Path(__file__).resolve().parents[4] / "conventions" / "REGISTRY.yaml"
-        _REGISTRY_CACHE = _parse_yaml_simple(registry_path.read_text())
-    return _REGISTRY_CACHE
+        _registry_cache = _parse_yaml_simple(registry_path.read_text())
+    return _registry_cache
 
 
 def get_conventions_for_role(

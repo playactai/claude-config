@@ -5,6 +5,7 @@ Usage: python3 -m skills.planner.cli.plan --state-dir <dir> <command> [args]
 Role-based scope enforcement via PLAN_AGENT_ROLE env var.
 All writes are validated and atomic (write to .tmp, rename).
 CAS versioning: updates require --version matching current entity version.
+Pydantic is a required dependency (pydantic>=2.0 in pyproject.toml).
 """
 
 from __future__ import annotations
@@ -15,53 +16,29 @@ import os
 import sys
 from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import TYPE_CHECKING, ClassVar
+from typing import ClassVar, Literal, NoReturn, cast
 
+from ..shared.schema import (
+    CodeChange,
+    CodeIntent,
+    Decision,
+    DiagramEdge,
+    DiagramGraph,
+    DiagramNode,
+    Docstring,
+    FunctionBlock,
+    InlineComment,
+    Milestone,
+    Overview,
+    Plan,
+    ReadmeEntry,
+)
 from . import plan_commands
 from .dispatch import batch as batch_dispatch
 from .dispatch import discover_methods, list_methods
 from .output import EntityResult, VersionMismatchError, exit_with_version_error, print_entity_result
 
-PYDANTIC_AVAILABLE = False
-Plan = None  # Will be set if pydantic available
-
-if TYPE_CHECKING:
-    from ..shared.schema import (
-        CodeChange,
-        CodeIntent,
-        Decision,
-        DiagramEdge,
-        DiagramGraph,
-        DiagramNode,
-        Docstring,
-        FunctionBlock,
-        InlineComment,
-        Milestone,
-        Overview,
-        Plan,
-        ReadmeEntry,
-    )
-
-try:
-    from ..shared.schema import (
-        CodeChange,
-        CodeIntent,
-        Decision,
-        DiagramEdge,
-        DiagramGraph,
-        DiagramNode,
-        Docstring,
-        FunctionBlock,
-        InlineComment,
-        Milestone,
-        Overview,
-        Plan,
-        ReadmeEntry,
-    )
-
-    PYDANTIC_AVAILABLE = True
-except ImportError:
-    pass
+PYDANTIC_AVAILABLE = True
 
 
 # =============================================================================
@@ -106,20 +83,20 @@ def check_role(command: str) -> str | None:
 # =============================================================================
 
 
-_STATE_DIR: Path | None = None
+_state_dir: Path | None = None
 
 
 def get_state_dir() -> Path:
     """Return state directory. Must call set_state_dir() first."""
-    if _STATE_DIR is None:
+    if _state_dir is None:
         error_exit("--state-dir required")
-    return _STATE_DIR
+    return _state_dir
 
 
 def set_state_dir(path: str) -> None:
     """Set global state directory."""
-    global _STATE_DIR
-    _STATE_DIR = Path(path)
+    global _state_dir
+    _state_dir = Path(path)
 
 
 def get_plan_path(state_dir: Path) -> Path:
@@ -131,7 +108,7 @@ def get_plan_path(state_dir: Path) -> Path:
 # =============================================================================
 
 
-def error_exit(msg: str, code: int = 1):
+def error_exit(msg: str, code: int = 1) -> NoReturn:
     """Print error in XML format and exit."""
     print(f"""<validation_error>
   <message>{msg}</message>
@@ -139,7 +116,7 @@ def error_exit(msg: str, code: int = 1):
     sys.exit(code)
 
 
-def validation_error(location: str, expected: str, actual: str, action: str):
+def validation_error(location: str, expected: str, actual: str, action: str) -> NoReturn:
     """Print detailed validation error."""
     print(f"""<validation_error>
   <location>{location}</location>
@@ -251,9 +228,9 @@ class InitCommand(Command):
     role = "architect"
 
     @classmethod
-    def add_arguments(cls, p: argparse.ArgumentParser) -> None:
-        p.add_argument("--task", required=True, help="Task description")
-        p.add_argument("--title", default="Untitled Plan", help="Plan title")
+    def add_arguments(cls, parser: argparse.ArgumentParser) -> None:
+        parser.add_argument("--task", required=True, help="Task description")
+        parser.add_argument("--title", default="Untitled Plan", help="Plan title")
 
     @classmethod
     def run(cls, args: argparse.Namespace) -> None:
@@ -282,15 +259,15 @@ class SetMilestoneCommand(Command):
     role = "architect"
 
     @classmethod
-    def add_arguments(cls, p: argparse.ArgumentParser) -> None:
-        p.add_argument("--id", help="Milestone ID (omit for create)")
-        p.add_argument("--version", type=int, help="Current version (required for update)")
-        p.add_argument("--name", help="Milestone name (required for create)")
-        p.add_argument("--files", help="Comma-separated file paths")
-        p.add_argument("--flags", help="Comma-separated flags")
-        p.add_argument("--requirements", help="Comma-separated requirements")
-        p.add_argument("--acceptance-criteria", help="Comma-separated acceptance criteria")
-        p.add_argument("--tests", help="Comma-separated test specs")
+    def add_arguments(cls, parser: argparse.ArgumentParser) -> None:
+        parser.add_argument("--id", help="Milestone ID (omit for create)")
+        parser.add_argument("--version", type=int, help="Current version (required for update)")
+        parser.add_argument("--name", help="Milestone name (required for create)")
+        parser.add_argument("--files", help="Comma-separated file paths")
+        parser.add_argument("--flags", help="Comma-separated flags")
+        parser.add_argument("--requirements", help="Comma-separated requirements")
+        parser.add_argument("--acceptance-criteria", help="Comma-separated acceptance criteria")
+        parser.add_argument("--tests", help="Comma-separated test specs")
 
     @classmethod
     def run(cls, args: argparse.Namespace) -> None:
@@ -378,14 +355,14 @@ class SetIntentCommand(Command):
     role = "architect"
 
     @classmethod
-    def add_arguments(cls, p: argparse.ArgumentParser) -> None:
-        p.add_argument("--id", help="Intent ID (omit for create)")
-        p.add_argument("--version", type=int, help="Current version (required for update)")
-        p.add_argument("--milestone", required=True, help="Parent milestone ID")
-        p.add_argument("--file", help="Target file path (required for create)")
-        p.add_argument("--function", help="Target function name")
-        p.add_argument("--behavior", help="Behavioral description (required for create)")
-        p.add_argument("--decision-refs", help="Comma-separated decision IDs")
+    def add_arguments(cls, parser: argparse.ArgumentParser) -> None:
+        parser.add_argument("--id", help="Intent ID (omit for create)")
+        parser.add_argument("--version", type=int, help="Current version (required for update)")
+        parser.add_argument("--milestone", required=True, help="Parent milestone ID")
+        parser.add_argument("--file", help="Target file path (required for create)")
+        parser.add_argument("--function", help="Target function name")
+        parser.add_argument("--behavior", help="Behavioral description (required for create)")
+        parser.add_argument("--decision-refs", help="Comma-separated decision IDs")
 
     @classmethod
     def run(cls, args: argparse.Namespace) -> None:
@@ -476,11 +453,11 @@ class SetDecisionCommand(Command):
     role = "architect"
 
     @classmethod
-    def add_arguments(cls, p: argparse.ArgumentParser) -> None:
-        p.add_argument("--id", help="Decision ID (omit for create)")
-        p.add_argument("--version", type=int, help="Current version (required for update)")
-        p.add_argument("--decision", help="Decision text (required for create)")
-        p.add_argument("--reasoning", help="Reasoning chain (required for create)")
+    def add_arguments(cls, parser: argparse.ArgumentParser) -> None:
+        parser.add_argument("--id", help="Decision ID (omit for create)")
+        parser.add_argument("--version", type=int, help="Current version (required for update)")
+        parser.add_argument("--decision", help="Decision text (required for create)")
+        parser.add_argument("--reasoning", help="Reasoning chain (required for create)")
 
     @classmethod
     def run(cls, args: argparse.Namespace) -> None:
@@ -529,7 +506,7 @@ class SetDecisionCommand(Command):
                 id=did,
                 version=1,
                 decision=args.decision,
-                reasoning=args.reasoning,
+                reasoning_chain=args.reasoning,
             )
             plan.planning_context.decisions.append(dl)
 
@@ -543,15 +520,15 @@ class SetDiagramCommand(Command):
     role = "architect"
 
     @classmethod
-    def add_arguments(cls, p: argparse.ArgumentParser) -> None:
-        p.add_argument("--id", help="Diagram ID (omit for create)")
-        p.add_argument(
+    def add_arguments(cls, parser: argparse.ArgumentParser) -> None:
+        parser.add_argument("--id", help="Diagram ID (omit for create)")
+        parser.add_argument(
             "--type", required=True, choices=["architecture", "state", "sequence", "dataflow"]
         )
-        p.add_argument(
+        parser.add_argument(
             "--scope", required=True, help="'overview' | 'invisible_knowledge' | 'milestone:M-XXX'"
         )
-        p.add_argument("--title", required=True)
+        parser.add_argument("--title", required=True)
 
     @classmethod
     def run(cls, args: argparse.Namespace) -> None:
@@ -562,7 +539,8 @@ class SetDiagramCommand(Command):
             dg = next((d for d in plan.diagram_graphs if d.id == args.id), None)
             if not dg:
                 error_exit(f"Diagram {args.id} not found")
-            dg.type = args.type
+            assert dg is not None
+            dg.type = cast(Literal["architecture", "state", "sequence", "dataflow"], args.type)
             dg.scope = args.scope
             dg.title = args.title
             operation = "updated"
@@ -583,11 +561,11 @@ class AddDiagramNodeCommand(Command):
     role = "architect"
 
     @classmethod
-    def add_arguments(cls, p: argparse.ArgumentParser) -> None:
-        p.add_argument("--diagram", required=True, help="Diagram ID")
-        p.add_argument("--node-id", required=True, help="Node ID within diagram")
-        p.add_argument("--label", required=True)
-        p.add_argument("--type", help="Node type (free-form)")
+    def add_arguments(cls, parser: argparse.ArgumentParser) -> None:
+        parser.add_argument("--diagram", required=True, help="Diagram ID")
+        parser.add_argument("--node-id", required=True, help="Node ID within diagram")
+        parser.add_argument("--label", required=True)
+        parser.add_argument("--type", help="Node type (free-form)")
 
     @classmethod
     def run(cls, args: argparse.Namespace) -> None:
@@ -614,12 +592,12 @@ class AddDiagramEdgeCommand(Command):
     role = "architect"
 
     @classmethod
-    def add_arguments(cls, p: argparse.ArgumentParser) -> None:
-        p.add_argument("--diagram", required=True, help="Diagram ID")
-        p.add_argument("--source", required=True, help="Source node ID")
-        p.add_argument("--target", required=True, help="Target node ID")
-        p.add_argument("--label", required=True, help="Edge label")
-        p.add_argument("--protocol", help="Protocol (free-form)")
+    def add_arguments(cls, parser: argparse.ArgumentParser) -> None:
+        parser.add_argument("--diagram", required=True, help="Diagram ID")
+        parser.add_argument("--source", required=True, help="Source node ID")
+        parser.add_argument("--target", required=True, help="Target node ID")
+        parser.add_argument("--label", required=True, help="Edge label")
+        parser.add_argument("--protocol", help="Protocol (free-form)")
 
     @classmethod
     def run(cls, args: argparse.Namespace) -> None:
@@ -655,14 +633,14 @@ class SetChangeCommand(Command):
     role = "developer"
 
     @classmethod
-    def add_arguments(cls, p: argparse.ArgumentParser) -> None:
-        p.add_argument("--id", help="Change ID (omit for create)")
-        p.add_argument("--version", type=int, help="Current version (required for update)")
-        p.add_argument("--milestone", required=True, help="Parent milestone ID")
-        p.add_argument("--intent-ref", help="Intent ID this implements")
-        p.add_argument("--file", help="Changed file path (required for create)")
-        p.add_argument("--diff", help="Diff content (required for create)")
-        p.add_argument("--comments", help="Change-level comments")
+    def add_arguments(cls, parser: argparse.ArgumentParser) -> None:
+        parser.add_argument("--id", help="Change ID (omit for create)")
+        parser.add_argument("--version", type=int, help="Current version (required for update)")
+        parser.add_argument("--milestone", required=True, help="Parent milestone ID")
+        parser.add_argument("--intent-ref", help="Intent ID this implements")
+        parser.add_argument("--file", help="Changed file path (required for create)")
+        parser.add_argument("--diff", help="Diff content (required for create)")
+        parser.add_argument("--comments", help="Change-level comments")
 
     @classmethod
     def run(cls, args: argparse.Namespace) -> None:
@@ -765,21 +743,21 @@ class SetDocCommand(Command):
     role = "tw"
 
     @classmethod
-    def add_arguments(cls, p: argparse.ArgumentParser) -> None:
-        p.add_argument("--milestone", required=True, help="Parent milestone ID")
-        p.add_argument(
+    def add_arguments(cls, parser: argparse.ArgumentParser) -> None:
+        parser.add_argument("--milestone", required=True, help="Parent milestone ID")
+        parser.add_argument(
             "--type",
             required=True,
             choices=["module", "docstring", "function_block", "inline"],
             help="Documentation type",
         )
-        p.add_argument("--content-file", required=True, help="Path to content file")
-        p.add_argument("--function", help="Function name (for docstring or function_block type)")
-        p.add_argument("--location", help="Location spec (for inline type)")
-        p.add_argument(
+        parser.add_argument("--content-file", required=True, help="Path to content file")
+        parser.add_argument("--function", help="Function name (for docstring or function_block type)")
+        parser.add_argument("--location", help="Location spec (for inline type)")
+        parser.add_argument(
             "--decision-ref", help="Decision ID reference (for function_block/inline type)"
         )
-        p.add_argument("--source", help="Source provenance (for function_block/inline type)")
+        parser.add_argument("--source", help="Source provenance (for function_block/inline type)")
 
     @classmethod
     def run(cls, args: argparse.Namespace) -> None:
@@ -857,9 +835,9 @@ class SetReadmeCommand(Command):
     role = "tw"
 
     @classmethod
-    def add_arguments(cls, p: argparse.ArgumentParser) -> None:
-        p.add_argument("--path", required=True, help="Directory path for README.md")
-        p.add_argument("--content-file", required=True, help="Path to content file")
+    def add_arguments(cls, parser: argparse.ArgumentParser) -> None:
+        parser.add_argument("--path", required=True, help="Directory path for README.md")
+        parser.add_argument("--content-file", required=True, help="Path to content file")
 
     @classmethod
     def run(cls, args: argparse.Namespace) -> None:
@@ -891,9 +869,9 @@ class SetDiagramRenderCommand(Command):
     role = "tw"
 
     @classmethod
-    def add_arguments(cls, p: argparse.ArgumentParser) -> None:
-        p.add_argument("--diagram", required=True, help="Diagram ID")
-        p.add_argument("--content-file", required=True, help="Path to ASCII content")
+    def add_arguments(cls, parser: argparse.ArgumentParser) -> None:
+        parser.add_argument("--diagram", required=True, help="Diagram ID")
+        parser.add_argument("--content-file", required=True, help="Path to ASCII content")
 
     @classmethod
     def run(cls, args: argparse.Namespace) -> None:
@@ -923,10 +901,10 @@ class SetDocDiffCommand(Command):
     role = "tw"
 
     @classmethod
-    def add_arguments(cls, p: argparse.ArgumentParser) -> None:
-        p.add_argument("--change", required=True, help="CodeChange ID (CC-M-XXX-YYY)")
-        p.add_argument("--version", type=int, required=True, help="Current version for CAS")
-        p.add_argument("--content-file", required=True, help="Path to unified diff file")
+    def add_arguments(cls, parser: argparse.ArgumentParser) -> None:
+        parser.add_argument("--change", required=True, help="CodeChange ID (CC-M-XXX-YYY)")
+        parser.add_argument("--version", type=int, required=True, help="Current version for CAS")
+        parser.add_argument("--content-file", required=True, help="Path to unified diff file")
 
     @classmethod
     def run(cls, args: argparse.Namespace) -> None:
@@ -965,10 +943,10 @@ class CreateDocChangeCommand(Command):
     role = "tw"
 
     @classmethod
-    def add_arguments(cls, p: argparse.ArgumentParser) -> None:
-        p.add_argument("--milestone", required=True, help="Parent milestone ID")
-        p.add_argument("--file", required=True, help="File path (e.g., path/README.md)")
-        p.add_argument("--content-file", required=True, help="Path to unified diff file")
+    def add_arguments(cls, parser: argparse.ArgumentParser) -> None:
+        parser.add_argument("--milestone", required=True, help="Parent milestone ID")
+        parser.add_argument("--file", required=True, help="File path (e.g., path/README.md)")
+        parser.add_argument("--content-file", required=True, help="Path to unified diff file")
 
     @classmethod
     def run(cls, args: argparse.Namespace) -> None:
@@ -1268,8 +1246,8 @@ class ValidateCommand(Command):
     role = "qr"
 
     @classmethod
-    def add_arguments(cls, p: argparse.ArgumentParser) -> None:
-        p.add_argument(
+    def add_arguments(cls, parser: argparse.ArgumentParser) -> None:
+        parser.add_argument(
             "--phase",
             required=True,
             choices=["plan-design", "plan-code", "plan-docs"],
@@ -1310,7 +1288,7 @@ class ListMilestonesCommand(Command):
     role = None
 
     @classmethod
-    def add_arguments(cls, p: argparse.ArgumentParser) -> None:
+    def add_arguments(cls, parser: argparse.ArgumentParser) -> None:
         pass
 
     @classmethod
@@ -1327,8 +1305,8 @@ class ListIntentsCommand(Command):
     role = None
 
     @classmethod
-    def add_arguments(cls, p: argparse.ArgumentParser) -> None:
-        p.add_argument("milestone_id", help="Milestone ID")
+    def add_arguments(cls, parser: argparse.ArgumentParser) -> None:
+        parser.add_argument("milestone_id", help="Milestone ID")
 
     @classmethod
     def run(cls, args: argparse.Namespace) -> None:
@@ -1350,8 +1328,8 @@ class ListChangesCommand(Command):
     role = None
 
     @classmethod
-    def add_arguments(cls, p: argparse.ArgumentParser) -> None:
-        p.add_argument("milestone_id", help="Milestone ID")
+    def add_arguments(cls, parser: argparse.ArgumentParser) -> None:
+        parser.add_argument("milestone_id", help="Milestone ID")
 
     @classmethod
     def run(cls, args: argparse.Namespace) -> None:
@@ -1373,7 +1351,7 @@ class ListDecisionsCommand(Command):
     role = None
 
     @classmethod
-    def add_arguments(cls, p: argparse.ArgumentParser) -> None:
+    def add_arguments(cls, parser: argparse.ArgumentParser) -> None:
         pass
 
     @classmethod
@@ -1443,9 +1421,6 @@ def build_parser() -> argparse.ArgumentParser:
 
 def cli(args: list[str] | None = None):
     """Main CLI entrypoint."""
-    if not PYDANTIC_AVAILABLE:
-        error_exit("pydantic v2 required. Install with: pip install pydantic>=2.0")
-
     parser = build_parser()
     parsed = parser.parse_args(args)
 

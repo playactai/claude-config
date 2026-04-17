@@ -1,13 +1,14 @@
 """Schema definitions and validation for planner state files.
 
 Authoritative source for: context.json, plan.json, qr-{phase}.json schemas.
-Pydantic is optional -- validation degrades gracefully if unavailable.
+Pydantic is a required dependency (pydantic>=2.0 in pyproject.toml).
 """
 
 import json
-import sys
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import Literal
+
+from pydantic import BaseModel, Field
 
 # QR item defaults for defensive access when reading malformed data
 QA_ITEM_DEFAULTS = {
@@ -30,29 +31,14 @@ QA_ITEM_ALL_FIELDS = QA_ITEM_REQUIRED_FIELDS | QA_ITEM_OPTIONAL_FIELDS
 # Valid severity values (per conventions/severity.md)
 VALID_SEVERITIES = frozenset({"MUST", "SHOULD", "COULD"})
 
-PYDANTIC_AVAILABLE = False
-
-if TYPE_CHECKING:
-    from typing import Literal
-
-    from pydantic import BaseModel, Field
-
-try:
-    from typing import Literal
-
-    from pydantic import BaseModel, Field
-
-    PYDANTIC_AVAILABLE = True
-except ImportError:
-    # Graceful degradation: validation functions return empty error lists
-    print("warning: pydantic not installed, schema validation disabled", file=sys.stderr)
+PYDANTIC_AVAILABLE = True
 
 
 # =============================================================================
 # Context Schema (context.json)
 # =============================================================================
 
-if PYDANTIC_AVAILABLE:
+if True:
 
     class Context(BaseModel):
         """Context captured in step 2 for sub-agent handover.
@@ -75,7 +61,7 @@ if PYDANTIC_AVAILABLE:
 # Plan Schema (plan.json)
 # =============================================================================
 
-if PYDANTIC_AVAILABLE:
+if True:
 
     class Decision(BaseModel):
         """Architectural or design decision with CAS versioning."""
@@ -415,7 +401,7 @@ if PYDANTIC_AVAILABLE:
 # QR Schema (qr-{phase}.json)
 # =============================================================================
 
-if PYDANTIC_AVAILABLE:
+if True:
 
     class QRItem(BaseModel):
         """Single QR verification item."""
@@ -474,17 +460,13 @@ class SchemaValidationError(Exception):
 
 
 # Schema registry: filename -> (model_class, post_validate_fn or None)
-_SCHEMA_REGISTRY = {}
+def _plan_post_validate(plan: Plan) -> list[str]:
+    return plan.validate_refs()
 
-if PYDANTIC_AVAILABLE:
-
-    def _plan_post_validate(plan: Plan) -> list[str]:
-        return plan.validate_refs()
-
-    _SCHEMA_REGISTRY = {
-        "context.json": (Context, None),
-        "plan.json": (Plan, _plan_post_validate),
-    }
+_schema_registry: dict = {
+    "context.json": (Context, None),
+    "plan.json": (Plan, _plan_post_validate),
+}
 
 
 def validate_state(state_dir: str) -> None:
@@ -493,12 +475,9 @@ def validate_state(state_dir: str) -> None:
     Raises SchemaValidationError on first validation failure.
     Call at start of every planner/executor step and after CLI mutations.
     """
-    if not PYDANTIC_AVAILABLE:
-        return
-
     state_path = Path(state_dir)
 
-    for filename, (model, post_validate) in _SCHEMA_REGISTRY.items():
+    for filename, (model, post_validate) in _schema_registry.items():
         path = state_path / filename
         if not path.exists():
             continue
@@ -526,51 +505,38 @@ def validate_state(state_dir: str) -> None:
 # Exports
 # =============================================================================
 
-if PYDANTIC_AVAILABLE:
-    __all__ = [
-        "PYDANTIC_AVAILABLE",
-        "QA_ITEM_ALL_FIELDS",
-        # QR constants
-        "QA_ITEM_DEFAULTS",
-        "QA_ITEM_OPTIONAL_FIELDS",
-        "QA_ITEM_REQUIRED_FIELDS",
-        "QA_ITEM_SCHEMA_TEMPLATE",
-        "CodeChange",
-        "CodeIntent",
-        # Models
-        "Context",
-        "Decision",
-        "DiagramEdge",
-        "DiagramGraph",
-        "DiagramNode",
-        "Docstring",
-        "Documentation",
-        "FunctionBlock",
-        "InlineComment",
-        "InvisibleKnowledge",
-        "Milestone",
-        "Overview",
-        "Plan",
-        "PlanningContext",
-        "QRFile",
-        "QRItem",
-        "ReadmeEntry",
-        "RejectedAlternative",
-        "Risk",
-        "SchemaValidationError",
-        "Wave",
-        "get_qa_state_schema_example",
-        "validate_state",
-    ]
-else:
-    __all__ = [
-        "PYDANTIC_AVAILABLE",
-        "QA_ITEM_ALL_FIELDS",
-        "QA_ITEM_DEFAULTS",
-        "QA_ITEM_OPTIONAL_FIELDS",
-        "QA_ITEM_REQUIRED_FIELDS",
-        "QA_ITEM_SCHEMA_TEMPLATE",
-        "SchemaValidationError",
-        "get_qa_state_schema_example",
-        "validate_state",
-    ]
+__all__ = [
+    "PYDANTIC_AVAILABLE",
+    "QA_ITEM_ALL_FIELDS",
+    # QR constants
+    "QA_ITEM_DEFAULTS",
+    "QA_ITEM_OPTIONAL_FIELDS",
+    "QA_ITEM_REQUIRED_FIELDS",
+    "QA_ITEM_SCHEMA_TEMPLATE",
+    "CodeChange",
+    "CodeIntent",
+    # Models
+    "Context",
+    "Decision",
+    "DiagramEdge",
+    "DiagramGraph",
+    "DiagramNode",
+    "Docstring",
+    "Documentation",
+    "FunctionBlock",
+    "InlineComment",
+    "InvisibleKnowledge",
+    "Milestone",
+    "Overview",
+    "Plan",
+    "PlanningContext",
+    "QRFile",
+    "QRItem",
+    "ReadmeEntry",
+    "RejectedAlternative",
+    "Risk",
+    "SchemaValidationError",
+    "Wave",
+    "get_qa_state_schema_example",
+    "validate_state",
+]

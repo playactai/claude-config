@@ -932,6 +932,9 @@ def build_next_command(step: int, scope: str | None, categories: list[str] | Non
     if step == 1:
         return f"{base} --step 2 --scope <determined-scope>"
 
+    if scope is None:
+        return None
+
     total = SCOPE_TOTAL_STEPS[scope]
     if step >= total:
         return None

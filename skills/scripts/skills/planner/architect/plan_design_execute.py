@@ -41,6 +41,7 @@ def get_step_guidance(step: int, module_path: str | None = None, **kwargs) -> di
     if step == 1:
         state_dir = kwargs.get("state_dir")
         validate_state_dir_requirement(step, state_dir)
+        assert isinstance(state_dir, str)
         context_file = get_context_path(state_dir)
         context_display = render_context_file(context_file)
 

@@ -5,10 +5,11 @@ No decorators needed - write a function, it becomes a method.
 """
 
 import inspect
+from collections.abc import Callable
 from typing import Any
 
 
-def discover_methods(module) -> dict[str, callable]:
+def discover_methods(module) -> dict[str, Callable[..., Any]]:
     """Find all public functions with 'ctx' as first parameter.
 
     Convention: function_name -> method-name (underscores to hyphens)

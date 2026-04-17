@@ -92,14 +92,14 @@ def mode_main(
     )
 
     # Handle both dict and dataclass (GuidanceResult) returns
-    if hasattr(guidance, "__dataclass_fields__"):
+    if isinstance(guidance, dict):
+        guidance_dict = guidance
+    else:
         guidance_dict = {
             "title": guidance.title,
             "actions": guidance.actions,
             "next": guidance.next_command,
         }
-    else:
-        guidance_dict = guidance
 
     # Router scripts signal invalid input by returning {"error": msg}.
     # Without this check, the downstream guidance_dict["title"]/["actions"]

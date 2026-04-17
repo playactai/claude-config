@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import sys
 from dataclasses import dataclass
+from typing import NoReturn
 
 
 @dataclass
@@ -46,7 +47,7 @@ class VersionMismatchError(Exception):
         self.current_json = current_json
 
 
-def exit_with_version_error(err: VersionMismatchError) -> None:
+def exit_with_version_error(err: VersionMismatchError) -> NoReturn:
     """Print version mismatch and exit process.
 
     Provides agent with latest state so it can integrate changes and retry.

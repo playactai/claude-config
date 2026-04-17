@@ -6,6 +6,7 @@ Public API for workflow types, formatters, registration, and testing.
 from .core import Arg, StepDef, Workflow
 from .discovery import discover_workflows
 from .types import (
+    PHASE_TO_MODE,
     AgentRole,
     BranchRouting,
     Confidence,
@@ -13,27 +14,26 @@ from .types import (
     LinearRouting,
     Mode,
     Phase,
-    PHASE_TO_MODE,
     Routing,
     TerminalRouting,
 )
 
 __all__ = [
-    # Core types
-    "Workflow",
-    "StepDef",
-    "Arg",
-    "discover_workflows",
+    "PHASE_TO_MODE",
     # Domain types
     "AgentRole",
-    "Confidence",
-    "LinearRouting",
+    "Arg",
     "BranchRouting",
-    "TerminalRouting",
-    "Routing",
+    "Confidence",
     "Dispatch",
+    "LinearRouting",
+    "Mode",
     # Code quality document types
     "Phase",
-    "Mode",
-    "PHASE_TO_MODE",
+    "Routing",
+    "StepDef",
+    "TerminalRouting",
+    # Core types
+    "Workflow",
+    "discover_workflows",
 ]

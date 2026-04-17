@@ -37,10 +37,10 @@ import sys
 import tempfile
 from pathlib import Path
 
-from .output import EntityResult, print_entity_result
 from . import qr_commands
-from .dispatch import discover_methods, batch as batch_dispatch, list_methods
-
+from .dispatch import batch as batch_dispatch
+from .dispatch import discover_methods, list_methods
+from .output import EntityResult, print_entity_result
 
 # Valid status values (match QAItemStatus enum)
 VALID_STATUSES = frozenset({"PASS", "FAIL"})
@@ -89,13 +89,9 @@ def save_qr_state_atomic(state_dir: str, phase: str, qr_state: dict):
     qr_path = get_qr_path(state_dir, phase)
 
     # Create tempfile in same directory as target
-    fd, tmp_path = tempfile.mkstemp(
-        dir=state_dir,
-        prefix=f"qr-{phase}.",
-        suffix=".tmp"
-    )
+    fd, tmp_path = tempfile.mkstemp(dir=state_dir, prefix=f"qr-{phase}.", suffix=".tmp")
     try:
-        with os.fdopen(fd, 'w') as f:
+        with os.fdopen(fd, "w") as f:
             json.dump(qr_state, f, indent=2)
         # Atomic rename
         os.rename(tmp_path, qr_path)
@@ -138,7 +134,9 @@ def cmd_update_item(state_dir: str, phase: str, args: list[str]):
     Uses file locking to prevent concurrent write corruption.
     """
     if not args:
-        error_exit("Usage: update-item <id> --status <PASS|FAIL> [--finding <text>] [--severity <MUST|SHOULD|COULD>]")
+        error_exit(
+            "Usage: update-item <id> --status <PASS|FAIL> [--finding <text>] [--severity <MUST|SHOULD|COULD>]"
+        )
 
     item_id = args[0]
     status = None
@@ -213,11 +211,7 @@ def cmd_update_item(state_dir: str, phase: str, args: list[str]):
         # Lock released when f closes
 
     # Structured output matching plan.py format
-    print_entity_result(EntityResult(
-        id=item_id,
-        version=item["version"],
-        operation="updated"
-    ))
+    print_entity_result(EntityResult(id=item_id, version=item["version"], operation="updated"))
 
 
 def cmd_get_item(state_dir: str, phase: str, args: list[str]):
@@ -318,9 +312,11 @@ def cmd_assign_group(state_dir: str, phase: str, args: list[str]):
     if not qr_path.exists():
         error_exit(f"QR state file not found: {qr_path}")
 
-    valid_prefixes = ('umbrella', 'parent-', 'component-', 'concern-', 'affinity-')
-    if not (group_id == 'umbrella' or any(group_id.startswith(p) for p in valid_prefixes[1:])):
-        error_exit(f"Invalid group_id '{group_id}'. Must be 'umbrella' or start with: parent-, component-, concern-, affinity-")
+    valid_prefixes = ("umbrella", "parent-", "component-", "concern-", "affinity-")
+    if not (group_id == "umbrella" or any(group_id.startswith(p) for p in valid_prefixes[1:])):
+        error_exit(
+            f"Invalid group_id '{group_id}'. Must be 'umbrella' or start with: parent-, component-, concern-, affinity-"
+        )
 
     with open(qr_path, "r+") as f:
         fcntl.flock(f.fileno(), fcntl.LOCK_EX)
@@ -334,11 +330,9 @@ def cmd_assign_group(state_dir: str, phase: str, args: list[str]):
         qr_state["items"][idx] = item
         save_qr_state_atomic(state_dir, phase, qr_state)
 
-    print_entity_result(EntityResult(
-        id=item_id,
-        version=item.get("version", 1),
-        operation="updated"
-    ))
+    print_entity_result(
+        EntityResult(id=item_id, version=item.get("version", 1), operation="updated")
+    )
 
 
 COMMANDS = {
@@ -350,13 +344,15 @@ COMMANDS = {
 }
 
 
-def cli(args: list[str] = None):
+def cli(args: list[str] | None = None):
     """Main CLI entrypoint."""
     if args is None:
         args = sys.argv[1:]
 
     if not args:
-        print("Usage: python3 -m skills.planner.cli.qr --state-dir <dir> --qr-phase <phase> <command> [args]")
+        print(
+            "Usage: python3 -m skills.planner.cli.qr --state-dir <dir> --qr-phase <phase> <command> [args]"
+        )
         print("")
         print("Global options:")
         print("  --state-dir <dir>   State directory (required)")

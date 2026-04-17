@@ -16,14 +16,12 @@ could trigger failures.
 from __future__ import annotations
 
 import itertools
-
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from skills.lib.workflow.core import Workflow
 
-from skills.lib.workflow.types import BoundedInt, ChoiceSet, Confidence, Constant
-
+from skills.lib.workflow.types import BoundedInt, ChoiceSet, Confidence
 
 # Hardcoded iterating step indices per workflow
 # These were previously detected via Outcome.ITERATE in step.next

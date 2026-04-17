@@ -18,7 +18,6 @@ import sys
 
 from skills.lib.workflow.prompts import format_step
 
-
 # ============================================================================
 # CONFIGURATION
 # ============================================================================
@@ -51,7 +50,7 @@ ORIENT_INSTRUCTIONS = (
     "  Focus: [your focus area]\n"
     "  Entry Points:\n"
     "    - src/auth/login.py (main entry)\n"
-    "    - [3-8 files, or \"No matches found\"]\n"
+    '    - [3-8 files, or "No matches found"]\n'
     "  Scope Estimate: N files\n"
     "```"
 )
@@ -123,19 +122,19 @@ REPORT_INSTRUCTIONS = (
     "Summary: [1-2 sentence overview]\n"
     "\n"
     "Structure:\n"
-    "  [Key components and their roles, or \"No clear component structure identified\"]\n"
+    '  [Key components and their roles, or "No clear component structure identified"]\n'
     "\n"
     "Patterns:\n"
-    "  [Observed architectural/code patterns, or \"No significant patterns observed\"]\n"
+    '  [Observed architectural/code patterns, or "No significant patterns observed"]\n'
     "\n"
     "Flows:\n"
-    "  [Data/request flow through the system, or \"Data flow not traced\"]\n"
+    '  [Data/request flow through the system, or "Data flow not traced"]\n'
     "\n"
     "Decisions:\n"
-    "  [Technology/design choices with rationale, or \"No explicit design decisions found\"]\n"
+    '  [Technology/design choices with rationale, or "No explicit design decisions found"]\n'
     "\n"
     "Gaps:\n"
-    "  [Areas that remain unclear, or \"Focus area may not exist in codebase\"]\n"
+    '  [Areas that remain unclear, or "Focus area may not exist in codebase"]\n'
     "```\n"
     "\n"
     "COMPLETE - Return exploration report to orchestrator."

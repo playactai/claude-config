@@ -15,10 +15,11 @@ import shlex
 import xml.etree.ElementTree as ET
 
 import pytest
-from hypothesis import given, strategies as st
+from hypothesis import given
+from hypothesis import strategies as st
 
 from skills.lib.workflow.ast.nodes import InvokeAfterNode
-from skills.lib.workflow.ast.renderer import XMLRenderer, render_invoke_after
+from skills.lib.workflow.ast.renderer import render_invoke_after
 from skills.lib.workflow.prompts.step import SKILLS_DIR, format_step
 from skills.lib.workflow.prompts.subagent import sub_agent_invoke
 
@@ -51,8 +52,8 @@ class TestInvokeAfterEscaping:
     def test_escapes_angle_brackets_in_cmd(self):
         """The live incoherence.py:198 trigger: --thoughts "<ACCUMULATED_CONTEXT>"."""
         node = InvokeAfterNode(
-            cmd='python3 -m skills.incoherence.incoherence --step-number 2 '
-                '--thoughts "<ACCUMULATED_CONTEXT>"'
+            cmd="python3 -m skills.incoherence.incoherence --step-number 2 "
+            '--thoughts "<ACCUMULATED_CONTEXT>"'
         )
         rendered = render_invoke_after(node)
         cmd = _cmd_attr(rendered)
@@ -139,7 +140,10 @@ class TestIncoherenceRoundTrip:
 
         guidance = incoherence.STEPS[1]
         out = incoherence.format_incoherence_output(
-            step=1, phase="detection", agent_type="parent", guidance=guidance,
+            step=1,
+            phase="detection",
+            agent_type="parent",
+            guidance=guidance,
         )
         # Step 1 mentions "<invoke_after>" inside the xml_format_mandate prose,
         # so match the last real element by scanning from the last opening tag.

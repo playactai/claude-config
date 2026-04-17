@@ -11,15 +11,14 @@ For first-time documentation, see exec_docs_execute.py.
 Router (exec_docs.py) dispatches to appropriate script.
 """
 
-from skills.planner.shared.constraints import format_state_banner
 from skills.lib.conventions import get_convention
-from skills.planner.shared.resources import validate_state_dir_requirement
+from skills.planner.shared.constraints import format_state_banner
 from skills.planner.shared.qr.utils import (
-    load_qr_state,
     format_failed_items_for_fix,
     get_qr_iteration,
+    load_qr_state,
 )
-
+from skills.planner.shared.resources import validate_state_dir_requirement
 
 STEPS = {
     1: "Load QR Failures",
@@ -28,8 +27,7 @@ STEPS = {
 }
 
 
-def get_step_guidance(
-    step: int) -> dict:
+def get_step_guidance(step: int, module_path: str | None = None, **kwargs) -> dict:
     """Return guidance for the given step."""
     MODULE_PATH = module_path or "skills.planner.technical_writer.exec_docs_qr_fix"
     state_dir = kwargs.get("state_dir", "")
@@ -55,7 +53,9 @@ def get_step_guidance(
                 "",
                 "Doc QR found issues in documentation.",
                 "",
-                failed_items_block if failed_items_block else "Read QR report from: STATE_DIR/qr-impl-docs.json",
+                failed_items_block
+                if failed_items_block
+                else "Read QR report from: STATE_DIR/qr-impl-docs.json",
                 "",
                 "For EACH failed item:",
                 "  1. Read the 'finding' field to understand the issue",

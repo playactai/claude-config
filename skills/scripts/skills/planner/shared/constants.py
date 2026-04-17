@@ -43,4 +43,6 @@ def validate_step_count(steps_dict: dict, expected_total: int, workflow_name: st
     """
     actual = len(steps_dict)
     if actual != expected_total:
-        raise ValueError(f"{workflow_name}: STEPS has {actual} entries but {expected_total} expected")
+        raise ValueError(
+            f"{workflow_name}: STEPS has {actual} entries but {expected_total} expected"
+        )

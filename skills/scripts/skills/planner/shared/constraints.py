@@ -3,7 +3,6 @@
 Constants for static constraints, functions for parameterized output.
 """
 
-
 ORCHESTRATOR_CONSTRAINT = (
     "You are the ORCHESTRATOR. You delegate, you never implement.\n"
     "Your agents are highly capable. Trust them with ANY issue.\n"

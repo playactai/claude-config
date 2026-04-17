@@ -11,7 +11,7 @@ W.el(tag, *children, **attrs) is the primary method. All specialized builder
 methods were removed because skills use W.el() exclusively.
 """
 
-from skills.lib.workflow.ast.nodes import Node, Document, ElementNode
+from skills.lib.workflow.ast.nodes import Document, ElementNode, Node
 
 
 class ASTBuilder:
@@ -29,7 +29,7 @@ class ASTBuilder:
         """Initialize builder with optional accumulated nodes."""
         self._nodes = nodes if nodes is not None else []
 
-    def el(self, tag: str, *children: Node, **attrs: str) -> 'ASTBuilder':
+    def el(self, tag: str, *children: Node, **attrs: str) -> "ASTBuilder":
         """Add element node and return new builder.
 
         Args:
@@ -37,7 +37,7 @@ class ASTBuilder:
             *children: Child nodes (varargs)
             **attrs: Element attributes (kwargs)
         """
-        return ASTBuilder(self._nodes + [ElementNode(tag, attrs, list(children))])
+        return ASTBuilder([*self._nodes, ElementNode(tag, attrs, list(children))])
 
     def build(self) -> Document:
         """Collect accumulated nodes into Document."""

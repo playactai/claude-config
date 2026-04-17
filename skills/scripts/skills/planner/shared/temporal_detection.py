@@ -10,12 +10,14 @@ defines the criteria once and provides formatters for each use case.
 
 from dataclasses import dataclass
 
+
 @dataclass
 class DetectionQuestion:
     id: str
     text: str
     signals: list[str]
     action: str  # DELETE, TRANSFORM, EXTRACT
+
 
 # WHY these 5 specific detection questions:
 # These represent the exhaustive taxonomy of temporal contamination patterns.
@@ -45,33 +47,34 @@ TEMPORAL_DETECTION_QUESTIONS = [
         id="CHANGE_RELATIVE",
         text="Does it describe an action taken?",
         signals=["Added", "Replaced", "Now uses"],
-        action="TRANSFORM to timeless present"
+        action="TRANSFORM to timeless present",
     ),
     DetectionQuestion(
         id="BASELINE_REFERENCE",
         text="Does it compare to removed code?",
         signals=["Instead of", "Previously", "Replaces"],
-        action="TRANSFORM to timeless present"
+        action="TRANSFORM to timeless present",
     ),
     DetectionQuestion(
         id="LOCATION_DIRECTIVE",
         text="Does it describe WHERE to put code?",
         signals=["After", "Before", "Insert"],
-        action="DELETE (diff encodes location)"
+        action="DELETE (diff encodes location)",
     ),
     DetectionQuestion(
         id="PLANNING_ARTIFACT",
         text="Does it describe future intent?",
         signals=["TODO", "Will", "Planned"],
-        action="DELETE or REFRAME as current constraint"
+        action="DELETE or REFRAME as current constraint",
     ),
     DetectionQuestion(
         id="INTENT_LEAKAGE",
         text="Does it describe author's choice?",
         signals=["intentionally", "deliberately", "chose"],
-        action="EXTRACT technical justification"
+        action="EXTRACT technical justification",
     ),
 ]
+
 
 def format_as_xml() -> str:
     """Format detection questions as XML for QR agents."""
@@ -79,8 +82,9 @@ def format_as_xml() -> str:
     for q in TEMPORAL_DETECTION_QUESTIONS:
         signals = ", ".join(f"'{s}'" for s in q.signals)
         lines.append(f'  <question id="{q.id}" text="{q.text} Signal: {signals}" />')
-    lines.append('</detection_questions>')
+    lines.append("</detection_questions>")
     return "\n".join(lines)
+
 
 def format_as_prose() -> str:
     """Format detection questions as prose for TW agents."""
@@ -88,6 +92,7 @@ def format_as_prose() -> str:
     for i, q in enumerate(TEMPORAL_DETECTION_QUESTIONS, 1):
         lines.append(f"  {i}. {q.text} ({q.id.lower().replace('_', ' ')})")
     return "\n".join(lines)
+
 
 def format_actions() -> str:
     """Format recommended actions for each detection type."""

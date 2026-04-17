@@ -16,21 +16,23 @@ import sys
 from pathlib import Path
 
 from skills.lib.workflow.ast import (
-    W, XMLRenderer, render, TextNode,
-    StepHeaderNode, CurrentActionNode, InvokeAfterNode,
-    render_step_header, render_current_action, render_invoke_after,
+    CurrentActionNode,
+    InvokeAfterNode,
+    StepHeaderNode,
+    W,
+    XMLRenderer,
+    render,
+    render_current_action,
+    render_invoke_after,
+    render_step_header,
 )
-from skills.lib.workflow.types import FlatCommand
-
 
 MODULE_PATH = "skills.refactor.explore"
 TOTAL_STEPS = 5
 
 # Path to conventions/code-quality/ directory
 CONVENTIONS_DIR = (
-    Path(__file__).resolve().parent.parent.parent.parent.parent
-    / "conventions"
-    / "code-quality"
+    Path(__file__).resolve().parent.parent.parent.parent.parent / "conventions" / "code-quality"
 )
 
 
@@ -67,7 +69,9 @@ def load_category_block(category_ref: str, mode: str = "code") -> str:
         if sep:
             inner, sep, _ = after.partition(close_tag)
             if sep:
-                category_block = category_block.replace(f"{mode_tag}{inner}{close_tag}", inner.strip())
+                category_block = category_block.replace(
+                    f"{mode_tag}{inner}{close_tag}", inner.strip()
+                )
 
     for tag in ["<design-mode>", "</design-mode>", "<code-mode>", "</code-mode>"]:
         category_block = category_block.replace(tag, "")
@@ -80,10 +84,14 @@ def load_category_block(category_ref: str, mode: str = "code") -> str:
 # =============================================================================
 
 
-def format_next_step(step: int, category_ref: str, mode: str = "code", scope: str | None = None) -> str:
+def format_next_step(
+    step: int, category_ref: str, mode: str = "code", scope: str | None = None
+) -> str:
     """Format the invoke-after block for next step."""
     scope_arg = f" --scope {shlex.quote(scope)}" if scope else ""
-    cmd = f"python3 -m {MODULE_PATH} --step {step} --category {category_ref} --mode {mode}{scope_arg}"
+    cmd = (
+        f"python3 -m {MODULE_PATH} --step {step} --category {category_ref} --mode {mode}{scope_arg}"
+    )
     return render_invoke_after(InvokeAfterNode(cmd=cmd))
 
 
@@ -117,17 +125,21 @@ def format_step_1(category_ref: str, mode: str = "code", scope: str | None = Non
         "     Note: camelCase vs snake_case, common suffixes (Service, Handler, etc.)",
         "",
         "OUTPUT (required):",
-        '<domain_context>',
-        '  <language>primary language</language>',
-        '  <frameworks>framework1, framework2</frameworks>',
-        '  <conventions>naming patterns observed</conventions>',
-        '</domain_context>',
+        "<domain_context>",
+        "  <language>primary language</language>",
+        "  <frameworks>framework1, framework2</frameworks>",
+        "  <conventions>naming patterns observed</conventions>",
+        "</domain_context>",
         "",
         "Keep this brief. Accuracy matters more than completeness.",
     ]
 
     parts = [
-        render_step_header(StepHeaderNode(title="Domain Context", script="explore", step=1, category=category_ref, mode=mode)),
+        render_step_header(
+            StepHeaderNode(
+                title="Domain Context", script="explore", step=1, category=category_ref, mode=mode
+            )
+        ),
         "",
         render(W.el("xml_mandate").build(), XMLRenderer()),
         "",
@@ -180,20 +192,28 @@ def format_step_2(category_ref: str, mode: str = "code", scope: str | None = Non
         "If no additional patterns emerge, proceed with listed ones.",
         "",
         "OUTPUT (required):",
-        '<principle_analysis>',
-        '  <principle>the core principle in one sentence</principle>',
-        '  <detection_question>what to ask about each code fragment</detection_question>',
-        '  <threshold>when to flag vs ignore</threshold>',
-        '  <violation_patterns>',
+        "<principle_analysis>",
+        "  <principle>the core principle in one sentence</principle>",
+        "  <detection_question>what to ask about each code fragment</detection_question>",
+        "  <threshold>when to flag vs ignore</threshold>",
+        "  <violation_patterns>",
         '    <pattern source="listed">pattern from category definition</pattern>',
         '    <pattern source="generated">project-specific pattern you identified</pattern>',
-        '    <!-- include all patterns: listed + generated -->',
-        '  </violation_patterns>',
-        '</principle_analysis>',
+        "    <!-- include all patterns: listed + generated -->",
+        "  </violation_patterns>",
+        "</principle_analysis>",
     ]
 
     parts = [
-        render_step_header(StepHeaderNode(title="Principle + Violations", script="explore", step=2, category=category_ref, mode=mode)),
+        render_step_header(
+            StepHeaderNode(
+                title="Principle + Violations",
+                script="explore",
+                step=2,
+                category=category_ref,
+                mode=mode,
+            )
+        ),
         "",
         render_current_action(CurrentActionNode(actions)),
         "",
@@ -230,17 +250,25 @@ def format_step_3(category_ref: str, mode: str = "code", scope: str | None = Non
         "  React: 'Container, Provider, HOC, utils'",
         "",
         "OUTPUT (required):",
-        '<search_patterns>',
+        "<search_patterns>",
         '  <pattern reason="why this indicates the smell">regex_or_literal</pattern>',
         '  <pattern reason="...">...</pattern>',
-        '  <!-- 5-10 patterns, project-specific -->',
-        '</search_patterns>',
+        "  <!-- 5-10 patterns, project-specific -->",
+        "</search_patterns>",
         "",
         "These patterns will be used for Grep in Step 4.",
     ]
 
     parts = [
-        render_step_header(StepHeaderNode(title="Pattern Generation", script="explore", step=3, category=category_ref, mode=mode)),
+        render_step_header(
+            StepHeaderNode(
+                title="Pattern Generation",
+                script="explore",
+                step=3,
+                category=category_ref,
+                mode=mode,
+            )
+        ),
         "",
         render_current_action(CurrentActionNode(actions)),
         "",
@@ -321,8 +349,8 @@ def format_step_4(category_ref: str, mode: str = "code", scope: str | None = Non
         '    Grep with output_mode="count" to get total occurrences',
         "",
         "  Record:",
-        '    - exact_count: Number returned by Grep count',
-        '    - verification_cmd: The grep pattern used (for independent verification)',
+        "    - exact_count: Number returned by Grep count",
+        "    - verification_cmd: The grep pattern used (for independent verification)",
         "",
         "CALIBRATION:",
         "",
@@ -331,23 +359,27 @@ def format_step_4(category_ref: str, mode: str = "code", scope: str | None = Non
         "  - Apply the <threshold> from Step 2 - if exception applies, don't flag.",
         "",
         "OUTPUT (required):",
-        '<findings>',
+        "<findings>",
         '  <finding location="file:line-range">',
         '    <evidence lines="N">quoted code (2-5 lines, preserve indentation)</evidence>',
-        '    <issue>what violates the principle</issue>',
+        "    <issue>what violates the principle</issue>",
         '    <occurrences count="N" verification="grep pattern to reproduce">',
         '      file2:line, file3:line OR "unique - single occurrence"',
-        '    </occurrences>',
-        '    <impact>what breaks/degrades if unfixed (one sentence)</impact>',
-        '  </finding>',
-        '  <!-- repeat for each finding -->',
-        '</findings>',
+        "    </occurrences>",
+        "    <impact>what breaks/degrades if unfixed (one sentence)</impact>",
+        "  </finding>",
+        "  <!-- repeat for each finding -->",
+        "</findings>",
         "",
         "Document findings. Do NOT propose solutions yet.",
     ]
 
     parts = [
-        render_step_header(StepHeaderNode(title="Search", script="explore", step=4, category=category_ref, mode=mode)),
+        render_step_header(
+            StepHeaderNode(
+                title="Search", script="explore", step=4, category=category_ref, mode=mode
+            )
+        ),
         "",
         render_current_action(CurrentActionNode(actions)),
         "",
@@ -421,21 +453,21 @@ def format_step_5(category_ref: str, mode: str = "code", scope: str | None = Non
         '<smell_report category="$CATEGORY_NAME" mode="$MODE" severity="high|medium|low|none" count="N">',
         '  <finding location="file:line-range" severity="high|medium|low">',
         '    <evidence lines="N">',
-        '      quoted code (2-5 lines, preserve exact indentation)',
-        '    </evidence>',
-        '    <issue>what is wrong (one sentence, be specific)</issue>',
-        '    <impact>',
-        '      WHY fix this? One of:',
+        "      quoted code (2-5 lines, preserve exact indentation)",
+        "    </evidence>",
+        "    <issue>what is wrong (one sentence, be specific)</issue>",
+        "    <impact>",
+        "      WHY fix this? One of:",
         '      - "Blocks X" (prevents something)',
         '      - "Degrades X" (makes something worse)',
         '      - "Risks X" (could cause harm)',
-        '    </impact>',
+        "    </impact>",
         '    <occurrences count="N" verification="grep -r PATTERN path/">',
-        '      Codebase-wide count. Verification command must reproduce the count.',
-        '    </occurrences>',
-        '  </finding>',
-        '  <!-- repeat for each finding -->',
-        '</smell_report>',
+        "      Codebase-wide count. Verification command must reproduce the count.",
+        "    </occurrences>",
+        "  </finding>",
+        "  <!-- repeat for each finding -->",
+        "</smell_report>",
         "",
         "EVIDENCE REQUIREMENTS (findings without these are INVALID):",
         "  1. <evidence> must quote actual code, not describe it",
@@ -450,13 +482,17 @@ def format_step_5(category_ref: str, mode: str = "code", scope: str | None = Non
         "  NONE: No issues found (empty findings)",
         "",
         "Extract $CATEGORY_NAME from the ## heading in the category block.",
-        f'Use MODE: {mode}',
+        f"Use MODE: {mode}",
         "",
         "OUTPUT your smell_report now.",
     ]
 
     parts = [
-        render_step_header(StepHeaderNode(title="Synthesis", script="explore", step=5, category=category_ref, mode=mode)),
+        render_step_header(
+            StepHeaderNode(
+                title="Synthesis", script="explore", step=5, category=category_ref, mode=mode
+            )
+        ),
         "",
         render_current_action(CurrentActionNode(actions)),
         "",
@@ -470,7 +506,9 @@ def format_step_5(category_ref: str, mode: str = "code", scope: str | None = Non
 # =============================================================================
 
 
-def format_output(step: int, category_ref: str, mode: str = "code", scope: str | None = None) -> str:
+def format_output(
+    step: int, category_ref: str, mode: str = "code", scope: str | None = None
+) -> str:
     """Route to appropriate step formatter."""
     formatters = {
         1: format_step_1,
@@ -521,7 +559,7 @@ def main():
     if args.step < 1:
         sys.exit("ERROR: --step must be >= 1")
     if args.step > 5:
-        sys.exit(f"ERROR: --step cannot exceed 5")
+        sys.exit("ERROR: --step cannot exceed 5")
 
     if ":" not in args.category or "-" not in args.category.split(":")[1]:
         sys.exit("ERROR: --category must be in format file.md:start-end")

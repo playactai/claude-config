@@ -14,7 +14,6 @@ Router (exec_implement.py) dispatches to appropriate script.
 
 from skills.planner.shared.constraints import format_state_banner
 
-
 STEPS = {
     1: "Implementation Planning",
     2: "Execute Current Wave",
@@ -23,8 +22,7 @@ STEPS = {
 }
 
 
-def get_step_guidance(
-    step: int, module_path: str = None, **kwargs) -> dict:
+def get_step_guidance(step: int, module_path: str | None = None, **kwargs) -> dict:
     """Return guidance for the given step."""
     MODULE_PATH = module_path or "skills.planner.developer.exec_implement_execute"
     state_dir = kwargs.get("state_dir", "")

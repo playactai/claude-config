@@ -22,7 +22,6 @@ import sys
 
 from skills.lib.workflow.prompts import format_step, template_dispatch
 
-
 # ============================================================================
 # CONFIGURATION
 # ============================================================================
@@ -72,7 +71,7 @@ MODE1_TEMPLATE = (
     "\n"
     "arXiv ID: $ARXIV_ID\n"
     "\n"
-    "Start: <invoke working-dir=\".claude/skills/scripts\" cmd=\"python3 -m skills.arxiv_to_md.sub_agent --step 1 --arxiv-id $ARXIV_ID\" />\n"
+    'Start: <invoke working-dir=".claude/skills/scripts" cmd="python3 -m skills.arxiv_to_md.sub_agent --step 1 --arxiv-id $ARXIV_ID" />\n'
     "\n"
     "<expected_output>\n"
     "Sub-agent responds with ONLY:\n"
@@ -140,7 +139,7 @@ MODE2_TEMPLATE = (
     "arXiv ID: $ARXIV_ID\n"
     "Destination: $DEST_FILE\n"
     "\n"
-    "Start: <invoke working-dir=\".claude/skills/scripts\" cmd=\"python3 -m skills.arxiv_to_md.sub_agent --step 1 --arxiv-id $ARXIV_ID --dest-file '$DEST_FILE'\" />\n"
+    'Start: <invoke working-dir=".claude/skills/scripts" cmd="python3 -m skills.arxiv_to_md.sub_agent --step 1 --arxiv-id $ARXIV_ID --dest-file \'$DEST_FILE\'" />\n'
     "\n"
     "<expected_output>\n"
     "Sub-agent responds with ONLY:\n"
@@ -204,7 +203,7 @@ FINALIZE_INSTRUCTIONS = (
     "   c) Replace ? ; : with ' - ' (space-dash-space)\n"
     "      'Foo: Bar Baz' -> 'Foo - Bar Baz'\n"
     "      'What? Why; How:' -> 'What - Why - How -'\n"
-    "   d) Remove characters unsafe for filenames: / \\ < > | \" *\n"
+    '   d) Remove characters unsafe for filenames: / \\ < > | " *\n'
     "   e) Collapse multiple spaces to single space\n"
     "   f) Trim leading/trailing whitespace\n"
     "   g) Concatenate: '<date> <title>.md'\n"
@@ -266,7 +265,7 @@ def build_mode1_dispatch() -> str:
         agent_type="general-purpose",
         template=MODE1_TEMPLATE,
         targets=[{"ARXIV_ID": "EXAMPLE"}],
-        command=f'python3 -m {SUBAGENT_MODULE_PATH} --step 1 --arxiv-id $ARXIV_ID',
+        command=f"python3 -m {SUBAGENT_MODULE_PATH} --step 1 --arxiv-id $ARXIV_ID",
         model="opus",
         instruction="Launch one sub-agent per arXiv ID.\nUse a SINGLE message with multiple Task tool calls.\n\nThese markdown files become the scientific basis for downstream work.\nCost of error amplifies: subpar markdown -> subpar knowledge.",
     )
@@ -278,7 +277,7 @@ def build_mode2_dispatch() -> str:
         agent_type="general-purpose",
         template=MODE2_TEMPLATE,
         targets=[{"ARXIV_ID": "EXAMPLE", "DEST_FILE": "EXAMPLE"}],
-        command=f'python3 -m {SUBAGENT_MODULE_PATH} --step 1 --arxiv-id $ARXIV_ID --dest-file \'$DEST_FILE\'',
+        command=f"python3 -m {SUBAGENT_MODULE_PATH} --step 1 --arxiv-id $ARXIV_ID --dest-file '$DEST_FILE'",
         model="opus",
         instruction="Launch one sub-agent per arXiv ID.\nUse a SINGLE message with multiple Task tool calls.\n\nThese markdown files become the scientific basis for downstream work.\nCost of error amplifies: subpar markdown -> subpar knowledge.",
     )
@@ -288,7 +287,8 @@ def build_discover_body() -> str:
     """Build step 1 body with both dispatch modes."""
     return (
         DISCOVER_INSTRUCTIONS
-        + build_mode1_dispatch() + "\n"
+        + build_mode1_dispatch()
+        + "\n"
         + MODE2_DISCOVERY_INSTRUCTIONS
         + build_mode2_dispatch()
     )
@@ -296,13 +296,11 @@ def build_discover_body() -> str:
 
 def build_next_command(step: int) -> str | None:
     """Build invoke command for next step."""
-    if step == 1:
-        return f'python3 -m {MODULE_PATH} --step 2'
-    elif step == 2:
-        return f'python3 -m {MODULE_PATH} --step 3'
-    elif step == 3:
+    next_step_map = {1: 2, 2: 3}
+    next_step = next_step_map.get(step)
+    if next_step is None:
         return None
-    return None
+    return f"python3 -m {MODULE_PATH} --step {next_step}"
 
 
 # ============================================================================

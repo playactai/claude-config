@@ -18,43 +18,42 @@ This pattern is applied consistently across:
 """
 
 # Re-export from resources
-from .resources import (
-    get_resource,
-    get_mode_script_path,
-    get_exhaustiveness_prompt,
-)
-
 # Re-export from domain (planner-specific guidance types)
 from .domain import (
-    GuidanceResult,
-    FlatCommand,
     BranchCommand,
+    FlatCommand,
+    GuidanceResult,
     NextCommand,
+)
+from .resources import (
+    get_exhaustiveness_prompt,
+    get_mode_script_path,
+    get_resource,
 )
 
 # Re-export from routing
 from .routing import (
     WORK_PHASES,
     detect_qr_state,
-    route_work_phase,
-    get_work_phase_config,
     get_all_work_phases,
+    get_work_phase_config,
+    route_work_phase,
 )
 
 __all__ = [
-    # Resources
-    "get_resource",
-    "get_mode_script_path",
-    "get_exhaustiveness_prompt",
-    # Domain types (planner-specific)
-    "GuidanceResult",
-    "FlatCommand",
-    "BranchCommand",
-    "NextCommand",
     # Routing
     "WORK_PHASES",
+    "BranchCommand",
+    "FlatCommand",
+    # Domain types (planner-specific)
+    "GuidanceResult",
+    "NextCommand",
     "detect_qr_state",
-    "route_work_phase",
-    "get_work_phase_config",
     "get_all_work_phases",
+    "get_exhaustiveness_prompt",
+    "get_mode_script_path",
+    # Resources
+    "get_resource",
+    "get_work_phase_config",
+    "route_work_phase",
 ]

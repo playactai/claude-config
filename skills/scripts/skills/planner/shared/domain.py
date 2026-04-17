@@ -10,11 +10,20 @@ from enum import Enum
 
 # Re-export command routing types from lib (backwards compatibility)
 from skills.lib.workflow.types import (
-    FlatCommand,
     BranchCommand,
+    FlatCommand,
     NextCommand,
 )
 
+__all__ = [
+    "CATEGORY_SEVERITY",
+    "BranchCommand",
+    "FlatCommand",
+    "GuidanceResult",
+    "IssueCategory",
+    "NextCommand",
+    "Severity",
+]
 
 # =============================================================================
 # Step Guidance
@@ -44,9 +53,9 @@ class GuidanceResult:
 
 
 class Severity(Enum):
-    MUST = "MUST"       # Unrecoverable if missed
-    SHOULD = "SHOULD"   # Maintainability debt
-    COULD = "COULD"     # Auto-fixable
+    MUST = "MUST"  # Unrecoverable if missed
+    SHOULD = "SHOULD"  # Maintainability debt
+    COULD = "COULD"  # Auto-fixable
 
 
 class IssueCategory(Enum):
@@ -55,6 +64,7 @@ class IssueCategory(Enum):
     Severity mappings are defined in CATEGORY_SEVERITY dict below.
     Do not add severity comments here - they drift from the actual mapping.
     """
+
     DECISION_LOG_MISSING = "DECISION_LOG_MISSING"
     POLICY_UNJUSTIFIED = "POLICY_UNJUSTIFIED"
     IK_TRANSFER_FAILURE = "IK_TRANSFER_FAILURE"

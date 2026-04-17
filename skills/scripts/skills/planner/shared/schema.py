@@ -3,8 +3,9 @@
 Authoritative source for: context.json, plan.json, qr-{phase}.json schemas.
 Pydantic is optional -- validation degrades gracefully if unavailable.
 """
-import sys
+
 import json
+import sys
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -32,12 +33,15 @@ VALID_SEVERITIES = frozenset({"MUST", "SHOULD", "COULD"})
 PYDANTIC_AVAILABLE = False
 
 if TYPE_CHECKING:
-    from pydantic import BaseModel, Field
     from typing import Literal
 
+    from pydantic import BaseModel, Field
+
 try:
-    from pydantic import BaseModel, Field, ValidationError
     from typing import Literal
+
+    from pydantic import BaseModel, Field
+
     PYDANTIC_AVAILABLE = True
 except ImportError:
     # Graceful degradation: validation functions return empty error lists
@@ -49,12 +53,14 @@ except ImportError:
 # =============================================================================
 
 if PYDANTIC_AVAILABLE:
+
     class Context(BaseModel):
         """Context captured in step 2 for sub-agent handover.
 
         Schema per INTENT.md lines 23-35. All fields are string arrays.
         Empty arrays acceptable; omitting fields is not.
         """
+
         task_spec: list[str]
         constraints: list[str]
         entry_points: list[str]
@@ -70,8 +76,10 @@ if PYDANTIC_AVAILABLE:
 # =============================================================================
 
 if PYDANTIC_AVAILABLE:
+
     class Decision(BaseModel):
         """Architectural or design decision with CAS versioning."""
+
         id: str  # DL-001 format
         version: int = 1  # CAS optimistic locking: increment on update
         decision: str
@@ -85,6 +93,7 @@ if PYDANTIC_AVAILABLE:
 
         id required by validate_refs() for error message clarity.
         """
+
         id: str
         alternative: str
         rejection_reason: str
@@ -95,6 +104,7 @@ if PYDANTIC_AVAILABLE:
 
         id required by validate_refs() for error message clarity.
         """
+
         id: str
         risk: str
         mitigation: str
@@ -103,6 +113,7 @@ if PYDANTIC_AVAILABLE:
 
     class PlanningContext(BaseModel):
         """Planning context container."""
+
         decisions: list[Decision] = Field(default_factory=list, alias="decision_log")
         rejected_alternatives: list[RejectedAlternative] = Field(default_factory=list)
         constraints: list[str] = Field(default_factory=list)  # INTENT.md line 67: string[]
@@ -113,18 +124,21 @@ if PYDANTIC_AVAILABLE:
 
     class InvisibleKnowledge(BaseModel):
         """Knowledge for future LLM sessions."""
+
         system: str = ""
         invariants: list[str] = Field(default_factory=list)
         tradeoffs: list[str] = Field(default_factory=list)
 
     class DiagramNode(BaseModel):
         """Node in a diagram graph."""
+
         id: str
         label: str
         type: str | None = None
 
     class DiagramEdge(BaseModel):
         """Edge connecting two nodes."""
+
         source: str
         target: str
         label: str
@@ -132,6 +146,7 @@ if PYDANTIC_AVAILABLE:
 
     class DiagramGraph(BaseModel):
         """Architecture diagram as graph IR with optional ASCII render."""
+
         id: str
         type: Literal["architecture", "state", "sequence", "dataflow"]
         scope: str
@@ -142,6 +157,7 @@ if PYDANTIC_AVAILABLE:
 
     class CodeIntent(BaseModel):
         """Behavioral description for Developer to implement."""
+
         id: str  # CI-001 format
         version: int = 1  # CAS optimistic locking: increment on update
         file: str
@@ -151,6 +167,7 @@ if PYDANTIC_AVAILABLE:
 
     class CodeChange(BaseModel):
         """Concrete code change implementing an intent."""
+
         id: str  # CC-M-001-001 format
         version: int = 1  # CAS optimistic locking: increment on update
         intent_ref: str | None = None  # CI-XXX or null for doc-only changes (READMEs)
@@ -161,6 +178,7 @@ if PYDANTIC_AVAILABLE:
 
     class Docstring(BaseModel):
         """Function docstring spec."""
+
         function: str
         docstring: str
 
@@ -170,6 +188,7 @@ if PYDANTIC_AVAILABLE:
         Covers design rationale, architecture context, system interaction
         -- not just algorithms. Convention: documentation.md Tier 2.
         """
+
         function: str  # function name
         comment: str
         decision_ref: str | None = None
@@ -177,6 +196,7 @@ if PYDANTIC_AVAILABLE:
 
     class InlineComment(BaseModel):
         """Inline WHY comment (Tier 1)."""
+
         location: str  # function:line format
         comment: str
         decision_ref: str | None = None  # Optional DL-XXX cross-reference
@@ -189,6 +209,7 @@ if PYDANTIC_AVAILABLE:
         disconnects documentation from code locations. Kept for backwards
         compatibility with existing plans.
         """
+
         module_comment: str | None = None
         docstrings: list[Docstring] = Field(default_factory=list)
         function_blocks: list[FunctionBlock] = Field(default_factory=list)
@@ -200,11 +221,13 @@ if PYDANTIC_AVAILABLE:
         DEPRECATED: Use CodeChange with empty diff and doc_diff for README.
         Kept for backwards compatibility with existing plans.
         """
+
         path: str  # directory path for README.md
         content: str
 
     class Milestone(BaseModel):
         """Single implementation milestone."""
+
         id: str  # M-001 format
         version: int = 1  # CAS optimistic locking: increment on update
         number: int
@@ -222,11 +245,13 @@ if PYDANTIC_AVAILABLE:
 
     class Wave(BaseModel):
         """Execution wave grouping milestones."""
+
         id: str  # W-001 format
         milestones: list[str]  # M-XXX IDs for parallel execution
 
     class Overview(BaseModel):
         """Plan overview."""
+
         problem: str
         approach: str
 
@@ -236,8 +261,11 @@ if PYDANTIC_AVAILABLE:
         No schema_version field: state files are ephemeral (single planning session).
         Schema versioning adds complexity without benefit for short-lived artifacts.
         """
-        plan_id: str = Field(default_factory=lambda: str(__import__('uuid').uuid4()))
-        created_at: str = Field(default_factory=lambda: __import__('datetime').datetime.utcnow().isoformat())
+
+        plan_id: str = Field(default_factory=lambda: str(__import__("uuid").uuid4()))
+        created_at: str = Field(
+            default_factory=lambda: __import__("datetime").datetime.utcnow().isoformat()
+        )
         frozen_at: str | None = None  # Timestamp when plan execution began
 
         overview: Overview
@@ -339,7 +367,9 @@ if PYDANTIC_AVAILABLE:
                     if not self.get_milestone(mid):
                         errors.append(f"diagram {dg.id} scope references unknown milestone '{mid}'")
                 else:
-                    errors.append(f"diagram {dg.id} has invalid scope '{dg.scope}' (must be 'overview', 'invisible_knowledge', or 'milestone:M-XXX')")
+                    errors.append(
+                        f"diagram {dg.id} has invalid scope '{dg.scope}' (must be 'overview', 'invisible_knowledge', or 'milestone:M-XXX')"
+                    )
 
             return errors
 
@@ -369,19 +399,15 @@ if PYDANTIC_AVAILABLE:
                     for cc in ms.code_changes:
                         # Every code_change with diff should have doc_diff
                         if cc.diff and not cc.doc_diff:
-                            errors.append(
-                                f"{cc.id}: has code diff but no doc_diff"
-                            )
+                            errors.append(f"{cc.id}: has code diff but no doc_diff")
                         # doc_diff must be valid unified diff format if present
-                        if cc.doc_diff and not cc.doc_diff.strip().startswith(('---', '@@', 'diff')):
-                            errors.append(
-                                f"{cc.id}: doc_diff must be valid unified diff format"
-                            )
+                        if cc.doc_diff and not cc.doc_diff.strip().startswith(
+                            ("---", "@@", "diff")
+                        ):
+                            errors.append(f"{cc.id}: doc_diff must be valid unified diff format")
                         # At least one must be non-empty
                         if not cc.diff and not cc.doc_diff:
-                            errors.append(
-                                f"{cc.id}: must have diff or doc_diff (both empty)"
-                            )
+                            errors.append(f"{cc.id}: must have diff or doc_diff (both empty)")
             return errors
 
 
@@ -390,8 +416,10 @@ if PYDANTIC_AVAILABLE:
 # =============================================================================
 
 if PYDANTIC_AVAILABLE:
+
     class QRItem(BaseModel):
         """Single QR verification item."""
+
         id: str
         scope: str
         check: str
@@ -404,6 +432,7 @@ if PYDANTIC_AVAILABLE:
 
     class QRFile(BaseModel):
         """qr-{phase}.json file structure."""
+
         phase: str
         iteration: int = 1
         items: list[QRItem] = Field(default_factory=list)
@@ -413,14 +442,14 @@ if PYDANTIC_AVAILABLE:
 # QR Schema Helpers (moved from shared/qr/schema.py)
 # =============================================================================
 
-QA_ITEM_SCHEMA_TEMPLATE = '''{
+QA_ITEM_SCHEMA_TEMPLATE = """{
   "id": "{id_example}",
   "scope": "*" or "file:path:lines",
   "check": "Description of what was checked",
   "status": "TODO",
   "version": 1,
   "finding": null
-}'''
+}"""
 
 
 def get_qa_state_schema_example(phase: str, id_prefix: str = "qa") -> str:
@@ -437,8 +466,10 @@ def get_qa_state_schema_example(phase: str, id_prefix: str = "qa") -> str:
 # Validation Functions
 # =============================================================================
 
+
 class SchemaValidationError(Exception):
     """Raised when state files fail schema validation."""
+
     pass
 
 
@@ -446,6 +477,7 @@ class SchemaValidationError(Exception):
 _SCHEMA_REGISTRY = {}
 
 if PYDANTIC_AVAILABLE:
+
     def _plan_post_validate(plan: Plan) -> list[str]:
         return plan.validate_refs()
 
@@ -480,14 +512,14 @@ def validate_state(state_dir: str) -> None:
         except SchemaValidationError:
             raise
         except Exception as e:
-            raise SchemaValidationError(f"{filename}: {e}")
+            raise SchemaValidationError(f"{filename}: {e}") from e
 
     for path in state_path.glob("qr-*.json"):
         try:
             data = json.loads(path.read_text())
             QRFile.model_validate(data)
         except Exception as e:
-            raise SchemaValidationError(f"{path.name}: {e}")
+            raise SchemaValidationError(f"{path.name}: {e}") from e
 
 
 # =============================================================================
@@ -497,24 +529,48 @@ def validate_state(state_dir: str) -> None:
 if PYDANTIC_AVAILABLE:
     __all__ = [
         "PYDANTIC_AVAILABLE",
-        "SchemaValidationError",
-        "validate_state",
+        "QA_ITEM_ALL_FIELDS",
         # QR constants
-        "QA_ITEM_DEFAULTS", "QA_ITEM_REQUIRED_FIELDS", "QA_ITEM_OPTIONAL_FIELDS",
-        "QA_ITEM_ALL_FIELDS", "QA_ITEM_SCHEMA_TEMPLATE", "get_qa_state_schema_example",
+        "QA_ITEM_DEFAULTS",
+        "QA_ITEM_OPTIONAL_FIELDS",
+        "QA_ITEM_REQUIRED_FIELDS",
+        "QA_ITEM_SCHEMA_TEMPLATE",
+        "CodeChange",
+        "CodeIntent",
         # Models
-        "Context", "Plan", "Overview", "Milestone", "CodeIntent", "CodeChange",
-        "Decision", "Risk", "RejectedAlternative", "Wave",
-        "PlanningContext", "InvisibleKnowledge",
-        "Documentation", "Docstring", "FunctionBlock", "InlineComment", "ReadmeEntry",
-        "DiagramNode", "DiagramEdge", "DiagramGraph",
-        "QRItem", "QRFile",
+        "Context",
+        "Decision",
+        "DiagramEdge",
+        "DiagramGraph",
+        "DiagramNode",
+        "Docstring",
+        "Documentation",
+        "FunctionBlock",
+        "InlineComment",
+        "InvisibleKnowledge",
+        "Milestone",
+        "Overview",
+        "Plan",
+        "PlanningContext",
+        "QRFile",
+        "QRItem",
+        "ReadmeEntry",
+        "RejectedAlternative",
+        "Risk",
+        "SchemaValidationError",
+        "Wave",
+        "get_qa_state_schema_example",
+        "validate_state",
     ]
 else:
     __all__ = [
         "PYDANTIC_AVAILABLE",
+        "QA_ITEM_ALL_FIELDS",
+        "QA_ITEM_DEFAULTS",
+        "QA_ITEM_OPTIONAL_FIELDS",
+        "QA_ITEM_REQUIRED_FIELDS",
+        "QA_ITEM_SCHEMA_TEMPLATE",
         "SchemaValidationError",
+        "get_qa_state_schema_example",
         "validate_state",
-        "QA_ITEM_DEFAULTS", "QA_ITEM_REQUIRED_FIELDS", "QA_ITEM_OPTIONAL_FIELDS",
-        "QA_ITEM_ALL_FIELDS", "QA_ITEM_SCHEMA_TEMPLATE", "get_qa_state_schema_example",
     ]

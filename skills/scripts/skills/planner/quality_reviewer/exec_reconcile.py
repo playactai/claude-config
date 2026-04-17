@@ -180,7 +180,7 @@ STEP_HANDLERS = {
 }
 
 
-def get_step_guidance(step: int, module_path: str = None, **kwargs) -> dict:
+def get_step_guidance(step: int, module_path: str | None = None, **kwargs) -> dict:
     """Return guidance for the given step.
 
     Args:
@@ -189,7 +189,7 @@ def get_step_guidance(step: int, module_path: str = None, **kwargs) -> dict:
         **kwargs: Additional context (milestone number)
     """
     total_steps = len(STEPS)
-    milestone = kwargs.get("milestone", "N")
+    kwargs.get("milestone", "N")
 
     step_info = STEPS.get(step, {})
     handler = STEP_HANDLERS.get(step)
@@ -206,11 +206,15 @@ def get_step_guidance(step: int, module_path: str = None, **kwargs) -> dict:
 
 if __name__ == "__main__":
     from skills.lib.workflow.cli import mode_main
+
     mode_main(
         __file__,
         get_step_guidance,
         "QR Reconciliation - Verify if milestone work is complete",
         extra_args=[
-            (["--milestone"], {"type": int, "required": True, "help": "Milestone number to reconcile"})
-        ]
+            (
+                ["--milestone"],
+                {"type": int, "required": True, "help": "Milestone number to reconcile"},
+            )
+        ],
     )

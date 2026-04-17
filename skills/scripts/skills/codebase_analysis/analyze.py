@@ -16,7 +16,6 @@ import sys
 
 from skills.lib.workflow.prompts import format_step, roster_dispatch
 
-
 # ============================================================================
 # CONFIGURATION
 # ============================================================================
@@ -206,7 +205,7 @@ def build_survey_body() -> str:
     2. Generates 2-5 focus areas
     3. Dispatches agents in parallel with actual script invocation
     """
-    invoke_cmd = f'python3 -m {SUBAGENT_MODULE_PATH} --step 1'
+    invoke_cmd = f"python3 -m {SUBAGENT_MODULE_PATH} --step 1"
 
     dispatch_text = roster_dispatch(
         agent_type="general-purpose",
@@ -215,10 +214,10 @@ def build_survey_body() -> str:
         shared_context=DISPATCH_CONTEXT,
         model="haiku",
         instruction="Determine 2-5 focus areas from SCOPE analysis. "
-                    "Each agent's unique task is its focus area description. "
-                    "The focus area goes in the agent's prompt text, NOT as a CLI arg. "
-                    "The subagent script refers to 'your focus area' -- "
-                    "the agent knows it from prompt context.",
+        "Each agent's unique task is its focus area description. "
+        "The focus area goes in the agent's prompt text, NOT as a CLI arg. "
+        "The subagent script refers to 'your focus area' -- "
+        "the agent knows it from prompt context.",
     )
 
     return f"{dispatch_text}\n\n{SURVEY_DISPATCH_GUIDANCE}\n\n{SURVEY_PROCESSING_INSTRUCTIONS}"
@@ -235,16 +234,16 @@ _SURVEY_BODY = build_survey_body()
 
 def build_next_command(step: int, confidence: str, iteration: int) -> str | None:
     """Build the invoke command for the next step."""
-    base_cmd = f'python3 -m {MODULE_PATH}'
+    base_cmd = f"python3 -m {MODULE_PATH}"
 
     if step == 1:
-        return f'{base_cmd} --step 2'
+        return f"{base_cmd} --step 2"
     if step == 2:
-        return f'{base_cmd} --step 3 --iteration 1 --confidence exploring'
+        return f"{base_cmd} --step 3 --iteration 1 --confidence exploring"
     if step == 3:
         if confidence == "certain" or iteration >= MAX_DEEPEN_ITERATIONS:
-            return f'{base_cmd} --step 4'
-        return f'{base_cmd} --step 3 --iteration {iteration + 1} --confidence {{exploring|low|medium|high|certain}}'
+            return f"{base_cmd} --step 4"
+        return f"{base_cmd} --step 3 --iteration {iteration + 1} --confidence {{exploring|low|medium|high|certain}}"
     if step == 4:
         return None
     return None
@@ -271,7 +270,10 @@ def _format_step_3(confidence: str, iteration: int) -> tuple[str, str]:
             f"Maximum DEEPEN iterations reached ({iteration}/{MAX_DEEPEN_ITERATIONS}).\n\n"
             "FORCE transition to SYNTHESIZE.",
         )
-    return (f"Deepen (Iteration {iteration} of {MAX_DEEPEN_ITERATIONS})", build_deepen_body(iteration))
+    return (
+        f"Deepen (Iteration {iteration} of {MAX_DEEPEN_ITERATIONS})",
+        build_deepen_body(iteration),
+    )
 
 
 DYNAMIC_STEPS = {

@@ -3,6 +3,7 @@
 import ast
 import sys
 from pathlib import Path
+
 from skills.lib.conventions import get_registry, validate_convention_access
 
 
@@ -11,10 +12,14 @@ def extract_convention_calls(script_path: Path) -> list[tuple[str, int]]:
     tree = ast.parse(script_path.read_text())
     calls = []
     for node in ast.walk(tree):
-        if isinstance(node, ast.Call):
-            if isinstance(node.func, ast.Name) and node.func.id == "get_convention":
-                if node.args and isinstance(node.args[0], ast.Constant):
-                    calls.append((node.args[0].value, node.lineno))
+        if (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "get_convention"
+            and node.args
+            and isinstance(node.args[0], ast.Constant)
+        ):
+            calls.append((node.args[0].value, node.lineno))
     return calls
 
 
@@ -33,7 +38,7 @@ def infer_role_from_path(script_path: Path) -> str:
 
 
 def main():
-    registry = get_registry()
+    get_registry()
     skills_dir = Path(__file__).parent / "skills"
     errors = []
 
@@ -43,7 +48,9 @@ def main():
 
         for convention, lineno in calls:
             if not validate_convention_access(role, convention):
-                errors.append(f"{script}:{lineno} - {role} accessing {convention} (not in registry)")
+                errors.append(
+                    f"{script}:{lineno} - {role} accessing {convention} (not in registry)"
+                )
 
     if errors:
         print("Convention registry violations:")

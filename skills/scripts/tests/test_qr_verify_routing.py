@@ -4,8 +4,6 @@ Tests the dynamic step calculation: total_steps = 1 + (2 * num_items) + 1
 Step 1 is CONTEXT, steps 2..2N+1 alternate ANALYZE/CONFIRM, final step is SUMMARY.
 """
 
-import pytest
-
 
 def get_step_type(step: int, num_items: int) -> tuple[str, int | None]:
     """Standalone copy of _get_step_type for testing without VerifyBase."""
@@ -105,7 +103,7 @@ class TestStepTypeInvariants:
         for n in range(1, 10):
             seen_indices = set()
             for step in range(2, get_total_steps(n)):
-                step_type, idx = get_step_type(step, n)
+                _step_type, idx = get_step_type(step, n)
                 if idx is not None:
                     seen_indices.add(idx)
             assert seen_indices == set(range(n)), f"Failed for n={n}"

@@ -26,7 +26,6 @@ import sys
 
 from skills.lib.workflow.prompts import format_step, roster_dispatch
 
-
 # ============================================================================
 # CONFIGURATION
 # ============================================================================
@@ -878,7 +877,7 @@ FORMATTING_INSTRUCTIONS = (
 
 def build_dispatch_body() -> str:
     """Build DISPATCH instructions with roster_dispatch()."""
-    invoke_cmd = f'python3 -m {SUBAGENT_MODULE_PATH} --step 1'
+    invoke_cmd = f"python3 -m {SUBAGENT_MODULE_PATH} --step 1"
 
     dispatch_text = roster_dispatch(
         agent_type="general-purpose",
@@ -894,37 +893,37 @@ def build_dispatch_body() -> str:
 
 def build_next_command(step: int, mode: str, confidence: str, iteration: int) -> str | None:
     """Build invoke command for next step."""
-    base = f'python3 -m {MODULE_PATH}'
+    base = f"python3 -m {MODULE_PATH}"
 
     if step == 1:
-        return f'{base} --step 2'
+        return f"{base} --step 2"
     elif step == 2:
-        return f'{base} --step 3'
+        return f"{base} --step 3"
     elif step == 3:
-        return f'{base} --step 4'
+        return f"{base} --step 4"
     elif step == 4:
-        return f'{base} --step 5'
+        return f"{base} --step 5"
     elif step == 5:
-        return f'If FULL: {base} --step 6 --mode full\nIf QUICK: {base} --step 12 --mode quick'
+        return f"If FULL: {base} --step 6 --mode full\nIf QUICK: {base} --step 12 --mode quick"
     elif step == 6:
-        return f'{base} --step 7 --mode {mode}'
+        return f"{base} --step 7 --mode {mode}"
     elif step == 7:
-        return f'{base} --step 8 --mode {mode}'
+        return f"{base} --step 8 --mode {mode}"
     elif step == 8:
-        return f'{base} --step 9 --mode {mode}'
+        return f"{base} --step 9 --mode {mode}"
     elif step == 9:
-        return f'{base} --step 10 --mode {mode}'
+        return f"{base} --step 10 --mode {mode}"
     elif step == 10:
-        return f'{base} --step 11 --mode {mode}'
+        return f"{base} --step 11 --mode {mode}"
     elif step == 11:
-        return f'{base} --step 12 --mode {mode}'
+        return f"{base} --step 12 --mode {mode}"
     elif step == 12:
-        return f'{base} --step 13 --confidence <your_confidence> --iteration 1 --mode {mode}'
+        return f"{base} --step 13 --confidence <your_confidence> --iteration 1 --mode {mode}"
     elif step == 13:
         if confidence == "certain" or iteration >= MAX_ITERATIONS:
-            return f'{base} --step 14 --confidence {confidence} --mode {mode}'
+            return f"{base} --step 14 --confidence {confidence} --mode {mode}"
         else:
-            return f'{base} --step 13 --confidence <your_confidence> --iteration {iteration + 1} --mode {mode}'
+            return f"{base} --step 13 --confidence <your_confidence> --iteration {iteration + 1} --mode {mode}"
     elif step == 14:
         return None
 

@@ -16,7 +16,6 @@ Router (exec_docs.py) dispatches to appropriate script.
 
 from skills.planner.shared.constraints import format_state_banner
 
-
 STEPS = {
     1: "Task Description",
     2: "Extract Plan Information",
@@ -27,8 +26,7 @@ STEPS = {
 }
 
 
-def get_step_guidance(
-    step: int, module_path: str = None, **kwargs) -> dict:
+def get_step_guidance(step: int, module_path: str | None = None, **kwargs) -> dict:
     """Return guidance for the given step."""
     MODULE_PATH = module_path or "skills.planner.technical_writer.exec_docs_execute"
     state_dir = kwargs.get("state_dir", "")

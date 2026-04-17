@@ -1,10 +1,9 @@
 """Tests for workflow structural validity."""
 
 import pytest
+from conftest import EXCLUDED
 
 from skills.lib.workflow import discover_workflows
-
-from conftest import EXCLUDED
 
 
 def _registered_workflows():

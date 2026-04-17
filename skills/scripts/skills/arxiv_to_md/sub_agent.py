@@ -21,7 +21,6 @@ from pathlib import Path
 
 from skills.lib.workflow.prompts import format_step
 
-
 # ============================================================================
 # CONFIGURATION
 # ============================================================================
@@ -273,11 +272,7 @@ def build_next_command(step: int, arxiv_id: str, dest_file: str | None) -> str |
     if step >= 6:
         return None
 
-    cmd_parts = [
-        "python3 -m", MODULE_PATH,
-        f"--step {step + 1}",
-        f"--arxiv-id {arxiv_id}"
-    ]
+    cmd_parts = ["python3 -m", MODULE_PATH, f"--step {step + 1}", f"--arxiv-id {arxiv_id}"]
     if dest_file:
         cmd_parts.append(f"--dest-file {dest_file}")
 

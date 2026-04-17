@@ -4,11 +4,11 @@ Code quality documents use HTML comments for metadata and XML tags for mode-spec
 content. This module provides stdlib-only parsing for phase-aware content extraction.
 """
 
+import re
 from dataclasses import dataclass
 from pathlib import Path
-import re
 
-from .types import Phase, Mode, PHASE_TO_MODE
+from .types import PHASE_TO_MODE, Mode, Phase
 
 
 @dataclass
@@ -20,6 +20,7 @@ class ExtractedContent:
         mode_guidance: Mode-specific guidance from <design-mode> or <code-mode>
         categories: List of (name, content) tuples for numbered categories
     """
+
     primer: str
     mode_guidance: str
     categories: list[tuple[str, str]]
@@ -50,11 +51,7 @@ def extract_content(doc_path: Path, phase: Phase) -> ExtractedContent | None:
     mode_guidance = _extract_mode_content(content, mode)
     categories = _extract_categories(content)
 
-    return ExtractedContent(
-        primer=primer,
-        mode_guidance=mode_guidance,
-        categories=categories
-    )
+    return ExtractedContent(primer=primer, mode_guidance=mode_guidance, categories=categories)
 
 
 def _extract_applicable_phases(content: str) -> list[str]:
@@ -68,12 +65,12 @@ def _extract_applicable_phases(content: str) -> list[str]:
     Returns:
         List of phase names (empty if comment not found)
     """
-    match = re.search(r'<!--\s*applicable_phases:\s*([^-]+?)\s*-->', content)
+    match = re.search(r"<!--\s*applicable_phases:\s*([^-]+?)\s*-->", content)
     if not match:
         return []
 
     phases_str = match.group(1)
-    return [p.strip() for p in phases_str.split(',')]
+    return [p.strip() for p in phases_str.split(",")]
 
 
 def _extract_primer(content: str) -> str:
@@ -88,11 +85,11 @@ def _extract_primer(content: str) -> str:
     Returns:
         Primer text (empty string if not found)
     """
-    lines = content.split('\n')
+    lines = content.split("\n")
 
     start_idx = None
     for i, line in enumerate(lines):
-        if line.startswith('# '):
+        if line.startswith("# "):
             start_idx = i
             break
 
@@ -101,11 +98,11 @@ def _extract_primer(content: str) -> str:
 
     end_idx = len(lines)
     for i in range(start_idx + 1, len(lines)):
-        if '<design-mode>' in lines[i] or '<code-mode>' in lines[i]:
+        if "<design-mode>" in lines[i] or "<code-mode>" in lines[i]:
             end_idx = i
             break
 
-    return '\n'.join(lines[start_idx:end_idx]).strip()
+    return "\n".join(lines[start_idx:end_idx]).strip()
 
 
 def _extract_mode_content(content: str, mode: Mode) -> str:
@@ -146,22 +143,22 @@ def _extract_categories(content: str) -> list[tuple[str, str]]:
     Returns:
         List of (category_name, category_content) tuples
     """
-    lines = content.split('\n')
+    lines = content.split("\n")
     categories = []
     current_cat = None
     current_content = []
 
     for line in lines:
-        match = re.match(r'^## \d+\. (.+)$', line)
+        match = re.match(r"^## \d+\. (.+)$", line)
         if match:
             if current_cat:
-                categories.append((current_cat, '\n'.join(current_content).strip()))
+                categories.append((current_cat, "\n".join(current_content).strip()))
             current_cat = match.group(1)
             current_content = [line]
         elif current_cat:
             current_content.append(line)
 
     if current_cat:
-        categories.append((current_cat, '\n'.join(current_content).strip()))
+        categories.append((current_cat, "\n".join(current_content).strip()))
 
     return categories

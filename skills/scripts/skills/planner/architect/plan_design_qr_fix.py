@@ -17,18 +17,16 @@ Fix scripts separate from execute scripts:
 - Fix scripts are shorter, focused on QR findings
 """
 
-from skills.planner.shared.resources import (
-    STATE_DIR_ARG_REQUIRED,
-    validate_state_dir_requirement,
-    get_context_path,
-    render_context_file,
-)
 from skills.planner.shared.qr.utils import (
-    load_qr_state,
     format_failed_items_for_fix,
     get_qr_iteration,
+    load_qr_state,
 )
-
+from skills.planner.shared.resources import (
+    get_context_path,
+    render_context_file,
+    validate_state_dir_requirement,
+)
 
 STEPS = {
     1: "Load QR Failures",
@@ -37,8 +35,7 @@ STEPS = {
 }
 
 
-def get_step_guidance(
-    step: int, module_path: str = None, **kwargs) -> dict:
+def get_step_guidance(step: int, module_path: str | None = None, **kwargs) -> dict:
     """Return guidance for the given step."""
     MODULE_PATH = module_path or "skills.planner.architect.plan_design_qr_fix"
     state_dir = kwargs.get("state_dir", "")
@@ -64,7 +61,9 @@ def get_step_guidance(
                 "",
                 "QR-COMPLETENESS found issues in the plan.",
                 "",
-                failed_items_block if failed_items_block else "Read QR report from: STATE_DIR/qr-plan-design.json",
+                failed_items_block
+                if failed_items_block
+                else "Read QR report from: STATE_DIR/qr-plan-design.json",
                 "",
                 "PLANNING CONTEXT (reference for semantic validation):",
                 "",
@@ -115,9 +114,9 @@ def get_step_guidance(
                 "BATCH MODE (preferred - reduces process invocations):",
                 "",
                 "  python3 -m skills.planner.cli.plan --state-dir $STATE_DIR batch '[",
-                "    {\"method\": \"set-decision\", \"params\": {\"decision\": \"Use polling\", \"reasoning\": \"30% webhook failures\"}, \"id\": 1},",
-                "    {\"method\": \"set-intent\", \"params\": {\"milestone\": \"M-001\", \"file\": \"src/a.py\", \"behavior\": \"Add handler\", \"decision_refs\": \"DL-001\"}, \"id\": 2},",
-                "    {\"method\": \"set-intent\", \"params\": {\"id\": \"CI-M-001-001\", \"version\": 1, \"behavior\": \"Updated description\"}, \"id\": 3}",
+                '    {"method": "set-decision", "params": {"decision": "Use polling", "reasoning": "30% webhook failures"}, "id": 1},',
+                '    {"method": "set-intent", "params": {"milestone": "M-001", "file": "src/a.py", "behavior": "Add handler", "decision_refs": "DL-001"}, "id": 2},',
+                '    {"method": "set-intent", "params": {"id": "CI-M-001-001", "version": 1, "behavior": "Updated description"}, "id": 3}',
                 "  ]'",
                 "",
                 "COMMON FIX PATTERNS:",

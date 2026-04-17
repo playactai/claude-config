@@ -29,10 +29,10 @@ from pathlib import Path
 from skills.planner.shared.qr.utils import load_qr_state
 from skills.planner.shared.resources import get_context_path, render_context_file
 
-
 # =============================================================================
 # UTILITIES (mechanical operations)
 # =============================================================================
+
 
 def render_item_list(items: list[dict], label: str = "ungrouped_items") -> str:
     """Render QR item list for LLM parsing.
@@ -59,8 +59,11 @@ def load_ungrouped_todo_items(state_dir: str, phase: str) -> list[dict]:
     qr_state = load_qr_state(state_dir, phase)
     if not qr_state:
         return []
-    return [i for i in qr_state.get("items", [])
-            if i.get("group_id") is None and i.get("status") == "TODO"]
+    return [
+        i
+        for i in qr_state.get("items", [])
+        if i.get("group_id") is None and i.get("status") == "TODO"
+    ]
 
 
 def format_assign_cmd(state_dir: str, phase: str, prefix: str) -> str:
@@ -171,6 +174,7 @@ After writing, proceed to grouping phase."""
 # STEP DISPATCH HELPER (eliminates duplicate control flow)
 # =============================================================================
 
+
 def dispatch_step(
     step: int,
     phase: str,
@@ -198,7 +202,9 @@ def dispatch_step(
         Dict with title, actions, next keys
     """
     state_dir_arg = f" --state-dir {state_dir}" if state_dir else ""
-    next_cmd = lambda s: f"python3 -m {module_path} --step {s}{state_dir_arg}"
+
+    def next_cmd(s):
+        return f"python3 -m {module_path} --step {s}{state_dir_arg}"
 
     # Step 1: Absorb context (phase-specific)
     if step == 1:
@@ -325,13 +331,11 @@ def dispatch_step(
         return step_9_structural_grouping(state_dir, phase, module_path)
     elif step == 10:
         return step_10_component_grouping(
-            state_dir, phase, module_path,
-            grouping_config["component_examples"]
+            state_dir, phase, module_path, grouping_config["component_examples"]
         )
     elif step == 11:
         return step_11_concern_grouping(
-            state_dir, phase, module_path,
-            grouping_config["concern_examples"]
+            state_dir, phase, module_path, grouping_config["concern_examples"]
         )
     elif step == 12:
         return step_12_affinity_grouping(state_dir, phase, module_path)
@@ -344,6 +348,7 @@ def dispatch_step(
 # =============================================================================
 # GROUPING STEP BUILDERS (steps 9-13)
 # =============================================================================
+
 
 def step_9_structural_grouping(state_dir: str, phase: str, module_path: str) -> dict:
     """Step 9: Automatic structural grouping (deterministic rules).
@@ -364,10 +369,14 @@ def step_9_structural_grouping(state_dir: str, phase: str, module_path: str) -> 
     children = [i for i in todo_items if i.get("parent_id")]
     orphans = [i for i in children if i.get("parent_id") not in item_ids]
     valid_children = [i for i in children if i.get("parent_id") in item_ids]
-    parents = {i["id"]: i for i in todo_items
-               if any(c.get("parent_id") == i["id"] for c in valid_children)}
-    umbrellas = [i for i in todo_items
-                 if i.get("scope") == "*" and not i.get("parent_id") and not i.get("group_id")]
+    parents = {
+        i["id"]: i for i in todo_items if any(c.get("parent_id") == i["id"] for c in valid_children)
+    }
+    umbrellas = [
+        i
+        for i in todo_items
+        if i.get("scope") == "*" and not i.get("parent_id") and not i.get("group_id")
+    ]
 
     # Orphans block workflow - data corruption must not propagate
     if orphans:
@@ -405,7 +414,7 @@ def step_9_structural_grouping(state_dir: str, phase: str, module_path: str) -> 
             "   For items with scope='*' and no parent_id:",
             "   - Set group_id = 'umbrella'",
             "",
-            f"Execute via CLI:",
+            "Execute via CLI:",
             f"  python3 -m skills.planner.cli.qr --state-dir {state_dir} --qr-phase {phase} \\",
             "    assign-group <item_id> --group-id <group_id>",
         ],
@@ -549,10 +558,11 @@ def step_13_final_validation(state_dir: str, phase: str, module_path: str) -> di
         else:
             singletons.append(item["id"])
 
-    group_summary = "\n".join([
-        f"  {gid}: {len(ids)} items"
-        for gid, ids in sorted(groups.items())
-    ]) if groups else "  (no groups)"
+    group_summary = (
+        "\n".join([f"  {gid}: {len(ids)} items" for gid, ids in sorted(groups.items())])
+        if groups
+        else "  (no groups)"
+    )
 
     return {
         "title": f"QR Decomposition Step 13: Final Validation ({phase})",

@@ -7,7 +7,7 @@ import re
 from pathlib import Path
 
 
-def expand_inputs(tex_content: str, base_dir: Path, seen: set = None) -> str:
+def expand_inputs(tex_content: str, base_dir: Path, seen: set | None = None) -> str:
     """Recursively expand \\input{} and \\include{} statements.
 
     Args:
@@ -195,9 +195,7 @@ def inline_bibliography(tex_content: str, base_dir: Path) -> str:
 
     # If no \bibliography command but \end{document} exists, insert before it
     if r"\end{document}" in tex_content and bbl_content.strip():
-        return tex_content.replace(
-            r"\end{document}", f"\n{bbl_content}\n\\end{{document}}"
-        )
+        return tex_content.replace(r"\end{document}", f"\n{bbl_content}\n\\end{{document}}")
 
     return tex_content
 

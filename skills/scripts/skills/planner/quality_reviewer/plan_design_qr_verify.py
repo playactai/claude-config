@@ -11,14 +11,7 @@ Modes:
 For decomposition (generating items), see plan_design_qr_decompose.py.
 """
 
-from skills.planner.shared.qr.utils import (
-    get_qr_iteration,
-    has_qr_failures,
-    format_qr_result,
-)
-from skills.planner.shared.schema import get_qa_state_schema_example
 from .qr_verify_base import VerifyBase
-
 
 PHASE = "plan-design"
 
@@ -37,73 +30,87 @@ class PlanDesignVerify(VerifyBase):
 
         if scope == "*":
             # Macro check
-            guidance.extend([
-                "MACRO CHECK - Verify across entire plan.json:",
-                "",
-                "  Read plan.json:",
-                f"    cat {state_dir}/plan.json | jq '.'",
-                "",
-            ])
+            guidance.extend(
+                [
+                    "MACRO CHECK - Verify across entire plan.json:",
+                    "",
+                    "  Read plan.json:",
+                    f"    cat {state_dir}/plan.json | jq '.'",
+                    "",
+                ]
+            )
         elif scope.startswith("milestone:"):
             milestone_id = scope.split(":")[1]
-            guidance.extend([
-                f"MILESTONE CHECK - Focus on {milestone_id}:",
-                "",
-                f"  Read milestone:",
-                f"    cat {state_dir}/plan.json | jq '.milestones[] | select(.id == \"{milestone_id}\")'",
-                "",
-            ])
+            guidance.extend(
+                [
+                    f"MILESTONE CHECK - Focus on {milestone_id}:",
+                    "",
+                    "  Read milestone:",
+                    f"    cat {state_dir}/plan.json | jq '.milestones[] | select(.id == \"{milestone_id}\")'",
+                    "",
+                ]
+            )
         elif scope.startswith("code_intent:"):
             intent_id = scope.split(":")[1]
-            guidance.extend([
-                f"CODE INTENT CHECK - Focus on {intent_id}:",
-                "",
-                f"  Read intent (find containing milestone first):",
-                f"    cat {state_dir}/plan.json | jq '.milestones[].code_intents[] | select(.id == \"{intent_id}\")'",
-                "",
-            ])
+            guidance.extend(
+                [
+                    f"CODE INTENT CHECK - Focus on {intent_id}:",
+                    "",
+                    "  Read intent (find containing milestone first):",
+                    f"    cat {state_dir}/plan.json | jq '.milestones[].code_intents[] | select(.id == \"{intent_id}\")'",
+                    "",
+                ]
+            )
         else:
-            guidance.extend([
-                f"SCOPED CHECK - Scope: {scope}",
-                "",
-                "  Read the relevant section from plan.json.",
-                "",
-            ])
+            guidance.extend(
+                [
+                    f"SCOPED CHECK - Scope: {scope}",
+                    "",
+                    "  Read the relevant section from plan.json.",
+                    "",
+                ]
+            )
 
         # Add check-specific guidance
         if "decision_log" in check.lower() or "decision log" in check.lower():
-            guidance.extend([
-                "DECISION LOG VERIFICATION:",
-                "  - Each entry should have multi-step reasoning",
-                "  - BAD: 'Polling | Webhooks unreliable'",
-                "  - GOOD: 'Polling | 30% webhook failure -> need fallback anyway'",
-                "",
-            ])
+            guidance.extend(
+                [
+                    "DECISION LOG VERIFICATION:",
+                    "  - Each entry should have multi-step reasoning",
+                    "  - BAD: 'Polling | Webhooks unreliable'",
+                    "  - GOOD: 'Polling | 30% webhook failure -> need fallback anyway'",
+                    "",
+                ]
+            )
         elif "policy" in check.lower():
-            guidance.extend([
-                "POLICY DEFAULT VERIFICATION:",
-                "  - Policy defaults affect user/org (lifecycle, capacity, failure handling)",
-                "  - Must have Tier 1 (user-specified) backing in decision_log",
-                "  - Technical defaults can use Tier 2-3 backing",
-                "",
-            ])
+            guidance.extend(
+                [
+                    "POLICY DEFAULT VERIFICATION:",
+                    "  - Policy defaults affect user/org (lifecycle, capacity, failure handling)",
+                    "  - Must have Tier 1 (user-specified) backing in decision_log",
+                    "  - Technical defaults can use Tier 2-3 backing",
+                    "",
+                ]
+            )
         elif "code_intent" in check.lower():
-            guidance.extend([
-                "CODE INTENT VERIFICATION:",
-                "  - Each implementation milestone needs code_intents",
-                "  - Each code_intent needs file path and behavior",
-                "  - decision_refs should point to valid decision_log entries",
-                "",
-            ])
+            guidance.extend(
+                [
+                    "CODE INTENT VERIFICATION:",
+                    "  - Each implementation milestone needs code_intents",
+                    "  - Each code_intent needs file path and behavior",
+                    "  - decision_refs should point to valid decision_log entries",
+                    "",
+                ]
+            )
 
         return guidance
 
 
-def get_step_guidance(step: int, module_path: str = None, **kwargs) -> dict:
+def get_step_guidance(step: int, module_path: str | None = None, **kwargs) -> dict:
     """Gateway normalizes input and delegates to base class."""
     module_path = module_path or "skills.planner.quality_reviewer.plan_design_qr_verify"
     qr_item = kwargs.get("qr_item")
-    state_dir = kwargs.get("state_dir", "")
+    kwargs.get("state_dir", "")
 
     if qr_item:
         # Normalize to list (backwards compat if single string passed)
@@ -121,6 +128,7 @@ def get_step_guidance(step: int, module_path: str = None, **kwargs) -> dict:
 
 if __name__ == "__main__":
     from skills.lib.workflow.cli import mode_main
+
     mode_main(
         __file__,
         get_step_guidance,

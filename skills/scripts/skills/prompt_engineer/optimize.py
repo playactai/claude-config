@@ -22,8 +22,7 @@ import argparse
 import sys
 from pathlib import Path
 
-from skills.lib.workflow.prompts import format_step, format_file_content
-
+from skills.lib.workflow.prompts import format_file_content, format_step
 
 # ============================================================================
 # SHARED PROMPTS
@@ -199,8 +198,7 @@ UNDERSTAND_SIMPLE_INSTRUCTIONS = (
     "  - What is the MINIMUM each recipient needs?\n"
     "  - What should NOT be passed to recipients? Why?\n"
     "  If no delegation exists, state: 'No delegation boundaries.'\n"
-    "</boundaries>\n"
-    + CONTEXT_GATHERING
+    "</boundaries>\n" + CONTEXT_GATHERING
 )
 
 TECHNIQUE_REVIEW = (
@@ -213,15 +211,14 @@ TECHNIQUE_REVIEW = (
 )
 
 TECHNIQUE_REVIEW_ECOSYSTEM = (
-    TECHNIQUE_REVIEW + "\n"
-    "  - Note techniques that apply to multiple prompts"
+    TECHNIQUE_REVIEW + "\n  - Note techniques that apply to multiple prompts"
 )
 
 CHANGE_FORMAT = (
     "Format each change:\n"
     "  === CHANGE N: [title] ===\n"
     "  Line: [numbers]\n"
-    "  Technique: [name] | Trigger: \"[quoted]\" | Effect: [quoted]\n"
+    '  Technique: [name] | Trigger: "[quoted]" | Effect: [quoted]\n'
     "  BEFORE: [original]\n"
     "  AFTER: [modified]\n"
     "  TRADEOFF: [downside or None]"
@@ -231,7 +228,7 @@ FIX_FORMAT = (
     "Format each fix:\n"
     "  === FIX N: [title] ===\n"
     "  Line: [numbers]\n"
-    "  Technique: [name] | Trigger: \"[quoted]\" | Effect: [quoted]\n"
+    '  Technique: [name] | Trigger: "[quoted]" | Effect: [quoted]\n'
     "  BEFORE: [original]\n"
     "  AFTER: [modified]"
 )
@@ -644,8 +641,7 @@ UNDERSTAND_ECOSYSTEM_INSTRUCTIONS = (
     "<example type='INCORRECT'>\n"
     "  Sub-agent: 'Execute step 1. There are 8 steps: 1. Context...'\n"
     "  WHY: Sub-agent discovers workflow during execution. Overview is noise.\n"
-    "</example>\n"
-    + CONTEXT_GATHERING
+    "</example>\n" + CONTEXT_GATHERING
 )
 
 UNDERSTAND_GREENFIELD_INSTRUCTIONS = (
@@ -697,10 +693,8 @@ UNDERSTAND_GREENFIELD_INSTRUCTIONS = (
 PLAN_SINGLE_INSTRUCTIONS = (
     "BLIND identification of opportunities (quote line evidence):\n"
     "  List as 'Lines X-Y: [issue]'\n"
-    "\n"
-    + TECHNIQUE_REVIEW + "\n"
-    "\n"
-    + CHANGE_FORMAT + "\n"
+    "\n" + TECHNIQUE_REVIEW + "\n"
+    "\n" + CHANGE_FORMAT + "\n"
     "\n"
     "Include TECHNIQUE DISPOSITION summary."
 )
@@ -759,7 +753,7 @@ DESIGN_GREENFIELD_INSTRUCTIONS = (
     "\n"
     "For each section, match techniques:\n"
     "  === SECTION: [name] ===\n"
-    "  Technique: [name] | Trigger: \"[quoted]\"\n"
+    '  Technique: [name] | Trigger: "[quoted]"\n'
     "  DRAFT: [proposed content]\n"
     "  RATIONALE: [why this technique here]\n"
     "\n"
@@ -795,8 +789,7 @@ TARGET_FIX_PROBLEM_INSTRUCTIONS = (
     "  - QUOTE trigger condition\n"
     "  - Explain how problem matches trigger\n"
     "  - Propose specific change\n"
-    "\n"
-    + FIX_FORMAT + "\n"
+    "\n" + FIX_FORMAT + "\n"
     "  Expected effect: [how this fixes the problem]"
 )
 
@@ -821,10 +814,8 @@ PLAN_ECOSYSTEM_INSTRUCTIONS = (
     "  - Conflicting instructions\n"
     "  - Redundant specifications\n"
     "  List as 'ECOSYSTEM: [issue across File1, File2]'\n"
-    "\n"
-    + TECHNIQUE_REVIEW_ECOSYSTEM + "\n"
-    "\n"
-    + CHANGE_FORMAT + "\n"
+    "\n" + TECHNIQUE_REVIEW_ECOSYSTEM + "\n"
+    "\n" + CHANGE_FORMAT + "\n"
     "Note which changes affect single file vs multiple."
 )
 
@@ -837,10 +828,8 @@ EXECUTE_SINGLE_INSTRUCTIONS = (
     "  - Cross-section references correct?\n"
     "  - Terminology consistent?\n"
     "  - Priority markers not overused? (max 2-3 CRITICAL/NEVER)\n"
-    "\n"
-    + ANTI_PATTERN_AUDIT + "\n"
-    "\n"
-    + CHANGE_PRESENTATION
+    "\n" + ANTI_PATTERN_AUDIT + "\n"
+    "\n" + CHANGE_PRESENTATION
 )
 
 CREATE_GREENFIELD_INSTRUCTIONS = (
@@ -850,10 +839,8 @@ CREATE_GREENFIELD_INSTRUCTIONS = (
     "  - All requirements addressed?\n"
     "  - Edge cases handled?\n"
     "  - Structure follows chosen architecture?\n"
-    "\n"
-    + ANTI_PATTERN_AUDIT_NONSTANDALONE + "\n"
-    "\n"
-    + CHANGE_PRESENTATION
+    "\n" + ANTI_PATTERN_AUDIT_NONSTANDALONE + "\n"
+    "\n" + CHANGE_PRESENTATION
 )
 
 APPLY_FIX_PROBLEM_INSTRUCTIONS = (
@@ -862,8 +849,7 @@ APPLY_FIX_PROBLEM_INSTRUCTIONS = (
     "VERIFY the fix addresses the stated problem:\n"
     "  - Does the change match the diagnosed cause?\n"
     "  - Could it introduce new issues?\n"
-    "\n"
-    + CHANGE_PRESENTATION
+    "\n" + CHANGE_PRESENTATION
 )
 
 # --- STEP 8: EXECUTE (ECOSYSTEM ONLY) ---------------------------------------
@@ -875,10 +861,8 @@ EXECUTE_ECOSYSTEM_INSTRUCTIONS = (
     "  - Terminology aligned across all files?\n"
     "  - Handoffs clear and consistent?\n"
     "  - No conflicting instructions introduced?\n"
-    "\n"
-    + ANTI_PATTERN_AUDIT + "\n"
-    "\n"
-    + CHANGE_PRESENTATION
+    "\n" + ANTI_PATTERN_AUDIT + "\n"
+    "\n" + CHANGE_PRESENTATION
 )
 
 
@@ -899,11 +883,8 @@ def build_read_guide(scope: str) -> str:
         "\n"
         "ALWAYS read: references/efficiency.md\n"
         "  -> " + v["efficiency_note"] + "\n"
-        "\n"
-        + v["selection_intro"] + "\n"
-        + v["categories"] + "\n"
-        "\n"
-        + v["footer"] + "\n"
+        "\n" + v["selection_intro"] + "\n" + v["categories"] + "\n"
+        "\n" + v["footer"] + "\n"
         "\n"
         "NEVER read papers/**/* - use references/ only."
     )
@@ -946,23 +927,23 @@ def build_next_command(step: int, scope: str | None, categories: list[str] | Non
     - Step N-1 (pre-injection): appends --categories <SELECTED_CATEGORIES> placeholder
     - Steps with categories: passes --categories through to subsequent steps
     """
-    base = f'python3 -m {MODULE_PATH}'
+    base = f"python3 -m {MODULE_PATH}"
 
     if step == 1:
-        return f'{base} --step 2 --scope <determined-scope>'
+        return f"{base} --step 2 --scope <determined-scope>"
 
     total = SCOPE_TOTAL_STEPS[scope]
     if step >= total:
         return None
 
-    cmd = f'{base} --step {step + 1} --scope {scope}'
+    cmd = f"{base} --step {step + 1} --scope {scope}"
 
     inj_step = INJECTION_STEP.get(scope)
     if inj_step:
         if step == inj_step - 1 and not categories:
-            cmd += ' --categories <SELECTED_CATEGORIES>'
+            cmd += " --categories <SELECTED_CATEGORIES>"
         elif categories:
-            cmd += f' --categories {",".join(categories)}'
+            cmd += f" --categories {','.join(categories)}"
 
     return cmd
 
@@ -1094,7 +1075,9 @@ def main():
     if args.step > 1 and args.scope is None:
         sys.exit("ERROR: --scope required for steps 2+. Run step 1 first to determine scope.")
     if args.scope and args.step > SCOPE_TOTAL_STEPS[args.scope]:
-        sys.exit(f"ERROR: Step {args.step} exceeds total ({SCOPE_TOTAL_STEPS[args.scope]}) for scope '{args.scope}'")
+        sys.exit(
+            f"ERROR: Step {args.step} exceeds total ({SCOPE_TOTAL_STEPS[args.scope]}) for scope '{args.scope}'"
+        )
 
     categories = None
     if args.categories:

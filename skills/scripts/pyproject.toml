@@ -1,0 +1,77 @@
+[project]
+name = "claude-config-skills"
+version = "0.1.0"
+description = "Skill-based workflows for Claude Code"
+requires-python = ">=3.11"
+dependencies = [
+    "pydantic>=2.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8",
+    "hypothesis>=6",
+    "ruff>=0.8",
+    "pyright>=1.1.390",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["skills"]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+extend-exclude = [".venv", ".hypothesis", ".pytest_cache"]
+
+[tool.ruff.lint]
+select = [
+    "E",    # pycodestyle errors
+    "F",    # pyflakes
+    "I",    # isort
+    "UP",   # pyupgrade
+    "B",    # flake8-bugbear
+    "SIM",  # flake8-simplify
+    "RUF",  # ruff-specific
+    "PGH",  # pygrep-hooks (bans bare noqa/type-ignore)
+]
+ignore = [
+    "E501",  # line too long — formatter handles it
+    "B008",  # mutable default args — common in argparse patterns
+    "SIM108", # allow explicit if/else over ternary when clearer
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["B", "SIM"]  # tests permit assert/ctx-manager stylings
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+
+[tool.pyright]
+include = ["skills", "tests", "validate_conventions.py"]
+exclude = ["**/__pycache__", "**/.hypothesis", "**/.pytest_cache"]
+pythonVersion = "3.11"
+typeCheckingMode = "basic"
+
+# Promote to error (basic defaults this to "none"):
+reportMatchNotExhaustive = "error"
+reportIncompatibleMethodOverride = "error"
+reportIncompatibleVariableOverride = "error"
+reportConstantRedefinition = "error"
+
+# Warnings for hygiene (basic defaults these to "none"):
+reportUnusedImport = "warning"
+reportDuplicateImport = "warning"
+reportUnnecessaryTypeIgnoreComment = "warning"
+
+[[tool.pyright.executionEnvironments]]
+root = "tests"
+reportPrivateImportUsage = "none"

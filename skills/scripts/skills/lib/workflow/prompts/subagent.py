@@ -12,7 +12,6 @@ import shlex
 from pathlib import Path
 from string import Template
 
-
 # ============================================================================
 # CONFIGURATION
 # ============================================================================
@@ -148,6 +147,7 @@ Unique Task: {task}
 
 # --- Building block functions -----------------------------------------------
 
+
 def task_tool_instruction(agent_type: str, model: str | None) -> str:
     """Tell main agent how to spawn sub-agent via Task tool."""
     model_param = model if model else "omit (use default)"
@@ -170,6 +170,7 @@ def parallel_constraint(count: int) -> str:
 
 
 # --- Dispatch pattern functions ---------------------------------------------
+
 
 def subagent_dispatch(
     agent_type: str,
@@ -226,10 +227,12 @@ def template_dispatch(
     """
     expanded = []
     for t in targets:
-        expanded.append({
-            "prompt": Template(template).substitute(t),
-            "command": Template(command).substitute(t),
-        })
+        expanded.append(
+            {
+                "prompt": Template(template).substitute(t),
+                "command": Template(command).substitute(t),
+            }
+        )
 
     count = len(expanded)
     model_display = model if model else "default (omit parameter)"
@@ -237,11 +240,13 @@ def template_dispatch(
 
     agents_lines = []
     for i, e in enumerate(expanded, 1):
-        agents_lines.append(TEMPLATE_AGENT_ENTRY.format(
-            index=i,
-            prompt=e["prompt"],
-            invoke_block=sub_agent_invoke(e["command"]),
-        ))
+        agents_lines.append(
+            TEMPLATE_AGENT_ENTRY.format(
+                index=i,
+                prompt=e["prompt"],
+                invoke_block=sub_agent_invoke(e["command"]),
+            )
+        )
 
     return TEMPLATE_DISPATCH_TEMPLATE.format(
         count=count,
@@ -280,15 +285,21 @@ def roster_dispatch(
     count = len(agents)
     model_display = model if model else "default (omit parameter)"
     instruction_section = f"NOTE: {instruction}\n\n" if instruction else ""
-    shared_context_section = f"SHARED CONTEXT (include in every agent's prompt):\n{shared_context}\n\n" if shared_context else ""
+    shared_context_section = (
+        f"SHARED CONTEXT (include in every agent's prompt):\n{shared_context}\n\n"
+        if shared_context
+        else ""
+    )
 
     agents_lines = []
     for i, task in enumerate(agents, 1):
-        agents_lines.append(ROSTER_AGENT_ENTRY.format(
-            index=i,
-            task=task,
-            invoke_block=sub_agent_invoke(command),
-        ))
+        agents_lines.append(
+            ROSTER_AGENT_ENTRY.format(
+                index=i,
+                task=task,
+                invoke_block=sub_agent_invoke(command),
+            )
+        )
 
     return ROSTER_DISPATCH_TEMPLATE.format(
         count=count,
@@ -302,12 +313,12 @@ def roster_dispatch(
 
 
 __all__ = [
-    # Building blocks
-    "task_tool_instruction",
-    "sub_agent_invoke",
     "parallel_constraint",
+    "roster_dispatch",
+    "sub_agent_invoke",
     # Dispatch templates
     "subagent_dispatch",
+    # Building blocks
+    "task_tool_instruction",
     "template_dispatch",
-    "roster_dispatch",
 ]

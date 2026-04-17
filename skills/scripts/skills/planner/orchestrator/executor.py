@@ -28,24 +28,9 @@ import sys
 import tempfile
 from pathlib import Path
 
-from skills.lib.workflow.types import AgentRole
 from skills.lib.workflow.prompts import subagent_dispatch, template_dispatch
 from skills.lib.workflow.prompts.step import format_step
-from skills.planner.shared.qr.cli import add_qr_args
-from skills.planner.shared.qr.types import QRState, QRStatus, LoopState
-from skills.planner.shared.qr.utils import (
-    qr_file_exists,
-    increment_qr_iteration,
-    load_qr_state,
-    query_items,
-    by_status,
-    by_blocking_severity,
-    get_qr_iteration,
-    has_qr_failures,
-)
-from skills.planner.shared.qr.phases import get_phase_config
-from skills.planner.shared.gates import build_gate_output
-from skills.planner.shared.resources import get_mode_script_path
+from skills.lib.workflow.types import AgentRole
 from skills.planner.shared.builders import (
     THINKING_EFFICIENCY,
     format_forbidden,
@@ -54,7 +39,21 @@ from skills.planner.shared.constraints import (
     ORCHESTRATOR_CONSTRAINT,
     format_state_banner,
 )
-
+from skills.planner.shared.gates import build_gate_output
+from skills.planner.shared.qr.cli import add_qr_args
+from skills.planner.shared.qr.phases import get_phase_config
+from skills.planner.shared.qr.types import LoopState, QRState, QRStatus
+from skills.planner.shared.qr.utils import (
+    by_blocking_severity,
+    by_status,
+    get_qr_iteration,
+    has_qr_failures,
+    increment_qr_iteration,
+    load_qr_state,
+    qr_file_exists,
+    query_items,
+)
+from skills.planner.shared.resources import get_mode_script_path
 
 # Module path for -m invocation
 MODULE_PATH = "skills.planner.orchestrator.executor"
@@ -77,6 +76,7 @@ def _q(path: str | None) -> str:
 # =============================================================================
 # Step 1: Execution Planning
 # =============================================================================
+
 
 def format_step_1(state_dir: str, reconciliation_check: bool) -> str:
     """Create state_dir, analyze plan, build wave list."""
@@ -130,13 +130,15 @@ def format_step_1(state_dir: str, reconciliation_check: bool) -> str:
     ]
 
     if reconciliation_check:
-        actions.extend([
-            "",
-            "RECONCILIATION CHECK REQUESTED:",
-            "  Before implementing, verify which milestones are already satisfied.",
-            "  For each milestone, check if acceptance criteria are met in current code.",
-            "  Mark satisfied milestones as complete; execute only remaining ones.",
-        ])
+        actions.extend(
+            [
+                "",
+                "RECONCILIATION CHECK REQUESTED:",
+                "  Before implementing, verify which milestones are already satisfied.",
+                "  For each milestone, check if acceptance criteria are met in current code.",
+                "  Mark satisfied milestones as complete; execute only remaining ones.",
+            ]
+        )
 
     body = "\n".join(actions)
     next_cmd = f"python3 -m {MODULE_PATH} --step 2 --state-dir {_q(state_dir)}"
@@ -147,6 +149,7 @@ def format_step_1(state_dir: str, reconciliation_check: bool) -> str:
 # =============================================================================
 # Step 2: Implementation
 # =============================================================================
+
 
 def format_step_2(qr: QRState, state_dir: str) -> str:
     """Wave-aware implementation dispatch."""
@@ -164,10 +167,12 @@ def format_step_2(qr: QRState, state_dir: str) -> str:
         mode_script = get_mode_script_path("developer/exec_implement.py")
         invoke_cmd = f"python3 -m {mode_script} --step 1 --state-dir {_q(state_dir)}"
 
-        actions.append(subagent_dispatch(
-            agent_type="developer",
-            command=invoke_cmd,
-        ))
+        actions.append(
+            subagent_dispatch(
+                agent_type="developer",
+                command=invoke_cmd,
+            )
+        )
         actions.append("")
         actions.append("Developer reads QR report and fixes issues in <milestone> blocks.")
         actions.append("After developer completes, re-run Code QR for fresh verification.")
@@ -222,6 +227,7 @@ def format_step_2(qr: QRState, state_dir: str) -> str:
 # Steps 3, 7: QR Decompose
 # =============================================================================
 
+
 def format_qr_decompose(step: int, phase: str, state_dir: str, qr: QRState) -> str:
     """Dispatch QR decomposition agent for a phase."""
     config = get_phase_config(phase)
@@ -233,10 +239,12 @@ def format_qr_decompose(step: int, phase: str, state_dir: str, qr: QRState) -> s
     # Skip if already decomposed
     if qr_file_exists(state_dir, phase):
         next_step = step + 1
-        body = "\n".join([
-            f"QR items for {phase} already defined.",
-            "Proceeding to verification of existing items.",
-        ])
+        body = "\n".join(
+            [
+                f"QR items for {phase} already defined.",
+                "Proceeding to verification of existing items.",
+            ]
+        )
         next_cmd = f"python3 -m {MODULE_PATH} --step {next_step} --state-dir {_q(state_dir)}"
         return format_step(body, next_cmd, title=f"{title} - Skipped")
 
@@ -248,10 +256,12 @@ def format_qr_decompose(step: int, phase: str, state_dir: str, qr: QRState) -> s
     ]
 
     invoke_cmd = f"python3 -m {decompose_script} --step 1 --state-dir {_q(state_dir)}"
-    actions.append(subagent_dispatch(
-        agent_type="quality-reviewer",
-        command=invoke_cmd,
-    ))
+    actions.append(
+        subagent_dispatch(
+            agent_type="quality-reviewer",
+            command=invoke_cmd,
+        )
+    )
     actions.append("")
     actions.append(f"Expected output: qr-{phase}.json written to STATE_DIR")
     actions.append("Orchestrator generates verification dispatch from this file.")
@@ -266,6 +276,7 @@ def format_qr_decompose(step: int, phase: str, state_dir: str, qr: QRState) -> s
 # =============================================================================
 # Steps 4, 8: QR Verify (parallel)
 # =============================================================================
+
 
 def format_qr_verify(step: int, phase: str, state_dir: str, qr: QRState) -> str:
     """Dispatch parallel QR verification agents."""
@@ -343,8 +354,8 @@ Start: python3 -m {verify_script} --step 1 --state-dir {_q(state_dir)} $qr_item_
         "=== PHASE 2: AGGREGATE (your action after all agents return) ===",
         "",
         f"After ALL {len(groups)} agents return, tally results mechanically:",
-        f"  ALL agents returned PASS  ->  invoke next step with --qr-status pass",
-        f"  ANY agent returned FAIL   ->  invoke next step with --qr-status fail",
+        "  ALL agents returned PASS  ->  invoke next step with --qr-status pass",
+        "  ANY agent returned FAIL   ->  invoke next step with --qr-status fail",
         "",
         format_forbidden(
             "Interpreting results beyond PASS/FAIL tallying",
@@ -358,20 +369,36 @@ Start: python3 -m {verify_script} --step 1 --state-dir {_q(state_dir)} $qr_item_
     next_step = step + 1
     base_cmd = f"python3 -m {MODULE_PATH} --step {next_step} --state-dir {_q(state_dir)}"
 
-    return format_step(body, title=title,
-                       if_pass=f"{base_cmd} --qr-status pass",
-                       if_fail=f"{base_cmd} --qr-status fail")
+    return format_step(
+        body,
+        title=title,
+        if_pass=f"{base_cmd} --qr-status pass",
+        if_fail=f"{base_cmd} --qr-status fail",
+    )
 
 
 # =============================================================================
 # Steps 5, 9: QR Gate (route pass/fail)
 # =============================================================================
 
+
 def format_qr_gate(step: int, phase: str, state_dir: str, qr: QRState) -> str:
     """Route based on QR results: pass → next phase, fail → fix loop."""
     gate_config = {
-        5: ("Code QR", 2, 6, "Code quality verified. Proceed to documentation.", AgentRole.DEVELOPER),
-        9: ("Doc QR", 6, 10, "Documentation verified. Proceed to retrospective.", AgentRole.TECHNICAL_WRITER),
+        5: (
+            "Code QR",
+            2,
+            6,
+            "Code quality verified. Proceed to documentation.",
+            AgentRole.DEVELOPER,
+        ),
+        9: (
+            "Doc QR",
+            6,
+            10,
+            "Documentation verified. Proceed to retrospective.",
+            AgentRole.TECHNICAL_WRITER,
+        ),
     }
 
     qr_name, work_step, pass_step, pass_message, fix_target = gate_config[step]
@@ -396,6 +423,7 @@ def format_qr_gate(step: int, phase: str, state_dir: str, qr: QRState) -> str:
 # Step 6: Documentation
 # =============================================================================
 
+
 def format_step_6(qr: QRState, state_dir: str) -> str:
     """Dispatch technical writer for documentation."""
     mode_script = get_mode_script_path("technical_writer/exec_docs.py")
@@ -412,10 +440,12 @@ def format_step_6(qr: QRState, state_dir: str) -> str:
         ]
 
         invoke_cmd = f"python3 -m {mode_script} --step 1 --state-dir {_q(state_dir)}"
-        actions.append(subagent_dispatch(
-            agent_type="technical-writer",
-            command=invoke_cmd,
-        ))
+        actions.append(
+            subagent_dispatch(
+                agent_type="technical-writer",
+                command=invoke_cmd,
+            )
+        )
     else:
         title = "Documentation"
         actions = [
@@ -424,10 +454,12 @@ def format_step_6(qr: QRState, state_dir: str) -> str:
         ]
 
         invoke_cmd = f"python3 -m {mode_script} --step 1 --state-dir {_q(state_dir)}"
-        actions.append(subagent_dispatch(
-            agent_type="technical-writer",
-            command=invoke_cmd,
-        ))
+        actions.append(
+            subagent_dispatch(
+                agent_type="technical-writer",
+                command=invoke_cmd,
+            )
+        )
 
     body = "\n".join(actions)
     next_cmd = f"python3 -m {MODULE_PATH} --step 7 --state-dir {_q(state_dir)}"
@@ -438,6 +470,7 @@ def format_step_6(qr: QRState, state_dir: str) -> str:
 # =============================================================================
 # Step 10: Retrospective
 # =============================================================================
+
 
 def format_step_10() -> str:
     """Present execution retrospective."""
@@ -465,11 +498,9 @@ def format_step_10() -> str:
 # Step Dispatch
 # =============================================================================
 
-def format_output(step: int, state_dir: str,
-                  qr_status: str,
-                  reconciliation_check: bool) -> str:
+
+def format_output(step: int, state_dir: str, qr_status: str, reconciliation_check: bool) -> str:
     """Format output for display."""
-    from skills.planner.shared.constants import EXECUTOR_TOTAL_STEPS
 
     # Derive QR state from on-disk qr-{phase}.json (planner.py does the same).
     # Iteration lives in the state file; the gate no longer passes --qr-iteration
@@ -480,8 +511,14 @@ def format_output(step: int, state_dir: str,
     # renders different prose on retry. Restricting to N/N+1 would leave
     # verify/gate running as INITIAL even mid-fix-loop (Qodo review #4).
     phase_for_step = {
-        2: "impl-code", 3: "impl-code", 4: "impl-code", 5: "impl-code",
-        6: "impl-docs", 7: "impl-docs", 8: "impl-docs", 9: "impl-docs",
+        2: "impl-code",
+        3: "impl-code",
+        4: "impl-code",
+        5: "impl-code",
+        6: "impl-docs",
+        7: "impl-docs",
+        8: "impl-docs",
+        9: "impl-docs",
     }
     phase = phase_for_step.get(step)
     iteration = get_qr_iteration(state_dir, phase) if state_dir and phase else 1
@@ -525,8 +562,9 @@ def main():
     )
 
     parser.add_argument("--step", type=int, required=True)
-    parser.add_argument("--state-dir", type=str, default=None,
-                        help="State directory path (created in step 1)")
+    parser.add_argument(
+        "--state-dir", type=str, default=None, help="State directory path (created in step 1)"
+    )
     add_qr_args(parser)
     parser.add_argument("--reconciliation-check", action="store_true")
 
@@ -546,23 +584,28 @@ def main():
             )
         plan_path = Path(state_dir) / "plan.json"
         try:
-            plan_path.write_text(json.dumps({
-                "schema_version": 2,
-                "overview": {"problem": "", "approach": ""},
-                "planning_context": {
-                    "decisions": [],
-                    "rejected_alternatives": [],
-                    "constraints": [],
-                    "risks": [],
-                },
-                "invisible_knowledge": {
-                    "system": "",
-                    "invariants": [],
-                    "tradeoffs": [],
-                },
-                "milestones": [],
-                "waves": [],
-            }, indent=2))
+            plan_path.write_text(
+                json.dumps(
+                    {
+                        "schema_version": 2,
+                        "overview": {"problem": "", "approach": ""},
+                        "planning_context": {
+                            "decisions": [],
+                            "rejected_alternatives": [],
+                            "constraints": [],
+                            "risks": [],
+                        },
+                        "invisible_knowledge": {
+                            "system": "",
+                            "invariants": [],
+                            "tradeoffs": [],
+                        },
+                        "milestones": [],
+                        "waves": [],
+                    },
+                    indent=2,
+                )
+            )
         except OSError as e:
             sys.exit(f"Error: failed to write plan skeleton to {plan_path}: {e}")
 
@@ -570,9 +613,7 @@ def main():
     if args.step > 1 and not state_dir:
         sys.exit(f"Error: --state-dir required for step {args.step}")
 
-    print(format_output(args.step, state_dir,
-                        args.qr_status,
-                        args.reconciliation_check))
+    print(format_output(args.step, state_dir, args.qr_status, args.reconciliation_check))
 
 
 if __name__ == "__main__":

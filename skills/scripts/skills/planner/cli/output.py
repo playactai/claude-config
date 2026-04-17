@@ -6,13 +6,14 @@ This module provides the canonical entity result format specified in INTENT.md.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 import sys
+from dataclasses import dataclass
 
 
 @dataclass
 class EntityResult:
     """Result of entity operation for structured output."""
+
     id: str
     version: int
     operation: str  # "created" | "updated"
@@ -37,6 +38,7 @@ class VersionMismatchError(Exception):
     because file locking handles concurrency and status transitions
     are constrained.
     """
+
     def __init__(self, entity_id: str, expected: int, actual: int, current_json: str):
         self.entity_id = entity_id
         self.expected = expected

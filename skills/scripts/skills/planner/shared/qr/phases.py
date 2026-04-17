@@ -19,7 +19,6 @@ Invariants:
 
 from __future__ import annotations
 
-
 # Phase configuration registry - ALL phase definitions in ONE place
 #
 # Keys: phase name as used in qr-{phase}.json filename
@@ -134,10 +133,7 @@ def get_phases_for_workflow(workflow: str) -> list[str]:
     Returns:
         List of phase names for that workflow
     """
-    return [
-        phase for phase, config in QR_PHASES.items()
-        if config["workflow"] == workflow
-    ]
+    return [phase for phase, config in QR_PHASES.items() if config["workflow"] == workflow]
 
 
 def get_orchestrator_module(phase: str) -> str:

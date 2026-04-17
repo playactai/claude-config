@@ -65,10 +65,11 @@ class SubagentDispatchNode:
     Use for sequential single-agent workflows (planner -> developer -> QR).
     The orchestrator controls sequencing; each dispatch launches one agent.
     """
-    agent_type: str              # "general-purpose", "Explore", etc.
-    command: str                 # invoke command for step 1
-    prompt: str = ""             # optional context; empty = no <prompt> element
-    model: str | None = None     # "haiku", "sonnet", "opus"
+
+    agent_type: str  # "general-purpose", "Explore", etc.
+    command: str  # invoke command for step 1
+    prompt: str = ""  # optional context; empty = no <prompt> element
+    model: str | None = None  # "haiku", "sonnet", "opus"
 
 
 @dataclass(frozen=True)
@@ -82,12 +83,13 @@ class TemplateDispatchNode:
     using string.Template.substitute(). The renderer expands N prompts,
     so the LLM sees final prompts rather than substitution instructions.
     """
+
     agent_type: str
-    template: str                      # prompt with $var placeholders
+    template: str  # prompt with $var placeholders
     targets: tuple[dict[str, str], ...]  # variable bindings per target (tuple for frozen)
-    command: str                       # command with $var placeholders
+    command: str  # command with $var placeholders
     model: str | None = None
-    instruction: str | None = None     # optional instruction text
+    instruction: str | None = None  # optional instruction text
 
 
 @dataclass(frozen=True)
@@ -101,16 +103,17 @@ class RosterDispatchNode:
     Each agent receives shared_context + their unique prompt string.
     Command is fixed because prompt differentiation is sufficient.
     """
+
     agent_type: str
     shared_context: str
-    agents: tuple[str, ...]            # unique prompt per agent (tuple for frozen)
-    command: str                       # fixed: same for all agents
+    agents: tuple[str, ...]  # unique prompt per agent (tuple for frozen)
+    command: str  # fixed: same for all agents
     model: str | None = None
-    instruction: str | None = None     # optional instruction text
+    instruction: str | None = None  # optional instruction text
 
 
 __all__ = [
+    "RosterDispatchNode",
     "SubagentDispatchNode",
     "TemplateDispatchNode",
-    "RosterDispatchNode",
 ]

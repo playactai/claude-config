@@ -3,9 +3,10 @@
 Explicit, composable abstractions over stringly-typed dicts and parameter groups.
 """
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Callable, Literal, Protocol, TypeAlias
+from typing import Protocol, TypeAlias
 
 
 class ResourceProvider(Protocol):
@@ -117,6 +118,7 @@ All other phases use code mode (implementation focus).
 @dataclass
 class LinearRouting:
     """Linear routing - proceed to step+1."""
+
     pass
 
 
@@ -131,6 +133,7 @@ class BranchRouting:
 @dataclass
 class TerminalRouting:
     """Terminal routing - no continuation."""
+
     pass
 
 
@@ -261,6 +264,7 @@ class Constant:
 @dataclass(frozen=True)
 class QuestionOption:
     """Single option for a user input question."""
+
     label: str
     description: str
 
@@ -268,7 +272,6 @@ class QuestionOption:
 @dataclass(frozen=True)
 class UserInputResponse:
     """User's answer passed back to resumed sub-agent."""
+
     question_id: str
     selected: str
-
-

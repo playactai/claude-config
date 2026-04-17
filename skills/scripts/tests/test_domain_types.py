@@ -4,6 +4,7 @@ Tests BoundedInt, ChoiceSet, and Constant domain abstractions.
 """
 
 import pytest
+
 from skills.lib.workflow.types import BoundedInt, ChoiceSet, Constant
 
 

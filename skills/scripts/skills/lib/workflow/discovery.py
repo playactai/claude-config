@@ -7,14 +7,13 @@ from __future__ import annotations
 
 import importlib.util
 import pkgutil
-from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from .core import Workflow
 
 
-def discover_workflows(package: str) -> dict[str, "Workflow"]:
+def discover_workflows(package: str) -> dict[str, Workflow]:
     """Discover workflows in package without executing module-level code.
 
     Uses importlib scanning to find WORKFLOW constants without triggering
@@ -36,13 +35,13 @@ def discover_workflows(package: str) -> dict[str, "Workflow"]:
     try:
         pkg = importlib.import_module(package)
     except ImportError as e:
-        raise ImportError(f"Package '{package}' not found: {e}")
+        raise ImportError(f"Package '{package}' not found: {e}") from e
 
     if not hasattr(pkg, "__path__"):
         return workflows
 
     # Scan for skill modules
-    for importer, modname, ispkg in pkgutil.walk_packages(
+    for _importer, modname, _ispkg in pkgutil.walk_packages(
         path=pkg.__path__, prefix=f"{package}."
     ):
         # Skip lib/ and other framework directories (lib/ contains framework code, not skill workflows; including it would register infrastructure as skills)
@@ -67,8 +66,6 @@ def discover_workflows(package: str) -> dict[str, "Workflow"]:
     # (prevents sequential fix-test cycles for multiple malformed modules).
     if errors:
         error_list = "\n".join(f"  - {mod}: {err}" for mod, err in errors)
-        raise ImportError(
-            f"Failed to discover workflows in {len(errors)} module(s):\n{error_list}"
-        )
+        raise ImportError(f"Failed to discover workflows in {len(errors)} module(s):\n{error_list}")
 
     return workflows

@@ -21,27 +21,29 @@ TextOutputNode.
 from dataclasses import dataclass
 
 __all__ = [
-    "TextNode",
     "CodeNode",
+    "CurrentActionNode",
+    "Document",
     "ElementNode",
     "FileContentNode",
-    "StepHeaderNode",
-    "CurrentActionNode",
     "InvokeAfterNode",
     "Node",
-    "Document",
+    "StepHeaderNode",
+    "TextNode",
 ]
 
 
 @dataclass(frozen=True)
 class TextNode:
     """Plain text content node."""
+
     content: str
 
 
 @dataclass(frozen=True)
 class CodeNode:
     """Code block with optional language tag."""
+
     content: str
     language: str | None = None
 
@@ -49,9 +51,10 @@ class CodeNode:
 @dataclass(frozen=True)
 class ElementNode:
     """Generic XML element with attributes and children."""
+
     tag: str
     attrs: dict[str, str]
-    children: list['Node']
+    children: list["Node"]
 
 
 @dataclass(frozen=True)
@@ -68,6 +71,7 @@ class FileContentNode:
     - CodeNode is for code examples with syntax highlighting hints
     - FileContentNode is for embedding reference material the LLM should read
     """
+
     # Path relative to workspace root for consistency across invocations
     path: str
     # Raw file content - will be CDATA-wrapped during rendering
@@ -89,6 +93,7 @@ class StepHeaderNode:
     WHY int total: Consistency with step field. Both are numeric workflow metadata.
     Renderer converts both to string for XML attributes.
     """
+
     title: str
     script: str
     step: int
@@ -108,10 +113,11 @@ class CurrentActionNode:
     WHY tuple: Frozen dataclass requires immutable types.
     WHY __init__: Accepts list for convenience, converts to tuple for immutability.
     """
+
     actions: tuple[str, ...]
 
     def __init__(self, actions: list[str] | tuple[str, ...]):
-        object.__setattr__(self, 'actions', tuple(actions))
+        object.__setattr__(self, "actions", tuple(actions))
 
 
 @dataclass(frozen=True)
@@ -130,6 +136,7 @@ class InvokeAfterNode:
     WHY __post_init__ validation: Catches invalid construction immediately instead of
     deferring to render time. Prevents workflow failure from invalid node reaching renderer.
     """
+
     cmd: str | None = None
     if_pass: str | None = None
     if_fail: str | None = None
@@ -143,10 +150,19 @@ class InvokeAfterNode:
 # Type union for all AST nodes
 # Enables type checking in _render_node match statement
 # New node types MUST be added here to be recognized by the renderer
-Node = TextNode | CodeNode | ElementNode | FileContentNode | StepHeaderNode | CurrentActionNode | InvokeAfterNode
+Node = (
+    TextNode
+    | CodeNode
+    | ElementNode
+    | FileContentNode
+    | StepHeaderNode
+    | CurrentActionNode
+    | InvokeAfterNode
+)
 
 
 @dataclass(frozen=True)
 class Document:
     """Container for rendered output."""
+
     children: list[Node]

@@ -16,19 +16,22 @@ import argparse
 import sys
 from pathlib import Path
 
+from skills.lib.workflow.ast import W, XMLRenderer, render
+from skills.lib.workflow.ast.nodes import (
+    CurrentActionNode,
+    InvokeAfterNode,
+    StepHeaderNode,
+    TextNode,
+)
+from skills.lib.workflow.ast.renderer import (
+    render_current_action,
+    render_invoke_after,
+    render_step_header,
+)
 from skills.lib.workflow.core import (
     StepDef,
     Workflow,
-    Arg,
 )
-from skills.lib.workflow.ast import W, XMLRenderer, render
-from skills.lib.workflow.ast.nodes import (
-    TextNode, StepHeaderNode, CurrentActionNode, InvokeAfterNode,
-)
-from skills.lib.workflow.ast.renderer import (
-    render_step_header, render_current_action, render_invoke_after,
-)
-
 
 TOTAL_STEPS = 9  # Number of steps in workflow
 
@@ -935,6 +938,8 @@ def handle_step_4(next_step: int | None) -> dict:
         "actions": step_data["actions"],
         "next": f"Step {next_step}: {step_data['next_desc']}" if next_step else "COMPLETE",
     }
+
+
 def handle_step_5(next_step: int | None) -> dict:
     """Positive Voice Marker Check."""
     step_data = STEPS[5]
@@ -1009,7 +1014,9 @@ def handle_additional_refinement(next_step: int | None) -> dict:
             "",
             HISTORY_TEMPLATE,
         ],
-        "next": f"Step {next_step} if HIGH violations remain, or complete if clean." if next_step else "COMPLETE",
+        "next": f"Step {next_step} if HIGH violations remain, or complete if clean."
+        if next_step
+        else "COMPLETE",
     }
 
 
@@ -1029,7 +1036,6 @@ STEP_HANDLERS = {
 
 def get_step_guidance(step: int) -> dict:
     """Return step-specific guidance and actions."""
-    is_complete = step >= TOTAL_STEPS
     next_step = step + 1 if step < TOTAL_STEPS else None
 
     # Dispatch to appropriate handler
@@ -1053,11 +1059,15 @@ def format_output(step: int, guidance: dict, thoughts: str) -> str:
     is_complete = step >= WORKFLOW.total_steps
 
     title = f"WRITING STYLE - {guidance['phase']} - {guidance['step_title']}"
-    parts.append(render_step_header(StepHeaderNode(
-        title=title,
-        script="leon_writing_style",
-        step=str(step),
-    )))
+    parts.append(
+        render_step_header(
+            StepHeaderNode(
+                title=title,
+                script="leon_writing_style",
+                step=str(step),
+            )
+        )
+    )
     parts.append("")
 
     if step == 1:
@@ -1070,7 +1080,9 @@ CRITICAL: All script outputs use XML format. You MUST:
         parts.append("")
 
     if thoughts:
-        parts.append(render(W.el("accumulated_thoughts", TextNode(thoughts)).build(), XMLRenderer()))
+        parts.append(
+            render(W.el("accumulated_thoughts", TextNode(thoughts)).build(), XMLRenderer())
+        )
         parts.append("")
 
     parts.append(render_current_action(CurrentActionNode(guidance["actions"])))
@@ -1084,8 +1096,6 @@ CRITICAL: All script outputs use XML format. You MUST:
         parts.append(render_invoke_after(InvokeAfterNode(cmd=next_cmd)))
 
     return "\n".join(parts)
-
-
 
 
 # Workflow definition with 9 core steps
@@ -1173,8 +1183,7 @@ WORKFLOW = Workflow(
 )
 
 
-def main(
-    step: int = None):
+def main(step: int | None = None):
     """Entry point with parameter annotations for testing framework.
 
     Note: Uses --step-number for backward compatibility with original interface.

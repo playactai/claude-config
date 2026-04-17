@@ -33,17 +33,19 @@ No manual file editing required.
 
 import argparse
 
-from skills.lib.workflow.core import (
-    Arg,
-    StepDef,
-    Workflow,
-)
-from skills.lib.workflow.ast import W, XMLRenderer, render
 from skills.lib.workflow.ast.nodes import (
-    TextNode, StepHeaderNode, CurrentActionNode, InvokeAfterNode,
+    CurrentActionNode,
+    InvokeAfterNode,
+    StepHeaderNode,
 )
 from skills.lib.workflow.ast.renderer import (
-    render_step_header, render_current_action, render_invoke_after,
+    render_current_action,
+    render_invoke_after,
+    render_step_header,
+)
+from skills.lib.workflow.core import (
+    StepDef,
+    Workflow,
 )
 
 MODULE_PATH = "skills.incoherence.incoherence"
@@ -112,7 +114,7 @@ CATEGORY J: COMPOSITIONAL CONSISTENCY
   - Configuration values that create impossible states
   - Timing/resource constraints that cannot all be satisfied
   Detection method: Gather related claims, compute implications, check for contradiction
-  Example: timeout=30s, retries=10, max_duration=60s → 30×10=300≠60
+  Example: timeout=30s, retries=10, max_duration=60s -> 30*10=300 != 60  # noqa: RUF003
 
 CATEGORY K: IMPLICIT CONTRACT INTEGRITY
   - Names/identifiers promise behavior the code doesn't deliver
@@ -157,17 +159,19 @@ SELECTION RULES:
 """
 
 
-
-
 def format_incoherence_output(step, phase, agent_type, guidance, thoughts=""):
     """Format output using AST builder API."""
     parts = []
     title = f"INCOHERENCE [{phase}] [{agent_type}]"
-    parts.append(render_step_header(StepHeaderNode(
-        title=title,
-        script="incoherence",
-        step=step,
-    )))
+    parts.append(
+        render_step_header(
+            StepHeaderNode(
+                title=title,
+                script="incoherence",
+                step=step,
+            )
+        )
+    )
     parts.append("")
 
     if thoughts:
@@ -187,7 +191,9 @@ CRITICAL: All script outputs use XML format. You MUST:
     parts.append("")
 
     next_text = guidance.get("next", "")
-    is_workflow_complete = step >= WORKFLOW.total_steps or next_text.strip().upper() == "WORKFLOW COMPLETE."
+    is_workflow_complete = (
+        step >= WORKFLOW.total_steps or next_text.strip().upper() == "WORKFLOW COMPLETE."
+    )
     is_subagent_terminal = "SUB-AGENT TASK COMPLETE" in next_text.upper()
 
     if is_workflow_complete:
@@ -213,7 +219,7 @@ STEPS = {
             "Identify: codebase type, primary language, doc locations, info source types",
             "(README, API docs, comments, types, configs, schemas, ADRs, style guides, tests)",
         ],
-        "next": "Invoke step 2 with survey results in --thoughts"
+        "next": "Invoke step 2 with survey results in --thoughts",
     },
     2: {
         "title": "DIMENSION SELECTION",
@@ -227,7 +233,7 @@ STEPS = {
             "",
             "Output: Selected dimensions with one-line rationale each.",
         ],
-        "next": "Invoke step 3 with selected dimensions in --thoughts"
+        "next": "Invoke step 3 with selected dimensions in --thoughts",
     },
     3: {
         "title": "EXPLORATION DISPATCH",
@@ -237,10 +243,10 @@ STEPS = {
             "Launch one haiku Explore agent per dimension (ALL in SINGLE message).",
             "",
             "AGENT PROMPT:",
-            f"  DIMENSION: {{letter}} - {{name}}. DESCRIPTION: {{from_catalog}}",
+            "  DIMENSION: {letter} - {name}. DESCRIPTION: {from_catalog}",
             f'  Start: <invoke working-dir=".claude/skills/scripts" cmd="python3 -m {MODULE_PATH} --step-number 4 --thoughts \\"Dimension: {{{{letter}}}}\\"" />',
         ],
-        "next": "After all agents complete, invoke step 8 with combined findings"
+        "next": "After all agents complete, invoke step 8 with combined findings",
     },
     4: {
         "title": "BROAD SWEEP [SUB-AGENT]",
@@ -259,7 +265,7 @@ STEPS = {
             "PER FINDING: Location A, Location B, conflict, confidence (low OK).",
             "Bias: Report more. Track searched locations.",
         ],
-        "next": "Invoke step 5 with your findings and searched locations in --thoughts"
+        "next": "Invoke step 5 with your findings and searched locations in --thoughts",
     },
     5: {
         "title": "COVERAGE CHECK [SUB-AGENT]",
@@ -271,7 +277,7 @@ STEPS = {
             "",
             "Output: At least 3 gaps + specific files/patterns to search next.",
         ],
-        "next": "Invoke step 6 with identified gaps in --thoughts"
+        "next": "Invoke step 6 with identified gaps in --thoughts",
     },
     6: {
         "title": "GAP-FILL EXPLORATION [SUB-AGENT]",
@@ -283,7 +289,7 @@ STEPS = {
             "",
             "Record new findings: Location A, Location B, conflict, confidence.",
         ],
-        "next": "Invoke step 7 with all findings (original + new) in --thoughts"
+        "next": "Invoke step 7 with all findings (original + new) in --thoughts",
     },
     7: {
         "title": "FORMAT EXPLORATION FINDINGS [SUB-AGENT]",
@@ -297,7 +303,7 @@ STEPS = {
             "",
             "Include ALL findings. Deduplication happens in step 8.",
         ],
-        "next": "Output formatted results. Sub-agent task complete."
+        "next": "Output formatted results. Sub-agent task complete.",
     },
     8: {
         "title": "SYNTHESIZE CANDIDATES",
@@ -309,7 +315,7 @@ STEPS = {
             "",
             "Pass ALL candidates (no limits). Deduplication after Sonnet verification.",
         ],
-        "next": "Invoke step 9 with all candidates in --thoughts"
+        "next": "Invoke step 9 with all candidates in --thoughts",
     },
     9: {
         "title": "DEEP-DIVE DISPATCH",
@@ -320,12 +326,12 @@ STEPS = {
             "Launch ALL in SINGLE message (no self-limiting).",
             "",
             "AGENT PROMPT:",
-            f"  CANDIDATE: {{id}} at {{location}} | DIMENSION: {{letter}} - {{name}}",
-            f"  Claimed: {{summary}}",
-            f"  Workflow: step 10 (explore) -> step 11 (format)",
+            "  CANDIDATE: {id} at {location} | DIMENSION: {letter} - {name}",
+            "  Claimed: {summary}",
+            "  Workflow: step 10 (explore) -> step 11 (format)",
             f'  Start: <invoke working-dir=".claude/skills/scripts" cmd="python3 -m {MODULE_PATH} --step-number 10 --thoughts \\"Verifying: {{{{id}}}}\\"" />',
         ],
-        "next": "After all agents complete, invoke step 12 with all verdicts"
+        "next": "After all agents complete, invoke step 12 with all verdicts",
     },
     10: {
         "title": "DEEP-DIVE EXPLORATION [SUB-AGENT]",
@@ -343,7 +349,7 @@ STEPS = {
             "3. Verdict: TRUE_INCOHERENCE | SIGNIFICANT_AMBIGUITY | DOCUMENTATION_GAP |",
             "   SPECIFICATION_GAP | FALSE_POSITIVE",
         ],
-        "next": "When done exploring, invoke step 11 with findings in --thoughts"
+        "next": "When done exploring, invoke step 11 with findings in --thoughts",
     },
     11: {
         "title": "FORMAT RESULTS [SUB-AGENT]",
@@ -352,11 +358,11 @@ STEPS = {
             "",
             "Output format:",
             "  CANDIDATE: {id} | VERDICT: {verdict} | SEVERITY: {c/h/m/l}",
-            "  SOURCE A: {file}:{line} \"{quote}\" Claims: {claim}",
-            "  SOURCE B: {file}:{line} \"{quote}\" Claims: {claim}",
+            '  SOURCE A: {file}:{line} "{quote}" Claims: {claim}',
+            '  SOURCE B: {file}:{line} "{quote}" Claims: {claim}',
             "  ANALYSIS: {why conflict} | RECOMMENDATION: {fix}",
         ],
-        "next": "Output formatted result. Sub-agent task complete."
+        "next": "Output formatted result. Sub-agent task complete.",
     },
     12: {
         "title": "VERDICT ANALYSIS",
@@ -371,7 +377,7 @@ STEPS = {
             "   - SHARED THEME: same dimension, same concept, same fix type",
             "   Output: G1, G2... with member issues, relationship, unified resolution",
         ],
-        "next": "Invoke step 13 with confirmed findings and groups"
+        "next": "Invoke step 13 with confirmed findings and groups",
     },
     13: {
         "title": "PREPARE RESOLUTION BATCHES",
@@ -387,13 +393,13 @@ STEPS = {
             "",
             "Per issue output:",
             "  ISSUE {id}: {title} | Severity | Dimension | Group",
-            "  Source A: {file}:{line} \"{quote max 10 lines}\" Claims: ...",
-            "  Source B: {file}:{line} \"{quote max 10 lines}\" Claims: ...",
+            '  Source A: {file}:{line} "{quote max 10 lines}" Claims: ...',
+            '  Source B: {file}:{line} "{quote max 10 lines}" Claims: ...',
             "  Analysis: {conflict} | Suggestions: 1. {action} 2. {alt action}",
             "",
             "Suggestions must use ACTUAL values (e.g., 'Update to 60s' not 'match code').",
         ],
-        "next": "Invoke step 14 with batch definitions and issue data in --thoughts"
+        "next": "Invoke step 14 with batch definitions and issue data in --thoughts",
     },
     14: {
         "title": "PRESENT RESOLUTION BATCH",
@@ -412,7 +418,7 @@ STEPS = {
             "",
             "Suggestions must use ACTUAL values (e.g., 'Update to 60s' not 'match code').",
         ],
-        "next": "After AskUserQuestion returns, invoke step 15 with responses"
+        "next": "After AskUserQuestion returns, invoke step 15 with responses",
     },
     15: {
         "title": "RESOLUTION LOOP CONTROLLER",
@@ -437,7 +443,7 @@ STEPS = {
             "If 'Resolve individually' selected: invoke step 14 with MODE=individual\n"
             "If more batches remain: invoke step 14 with next batch\n"
             "If all batches complete: invoke step 16 with all resolutions"
-        )
+        ),
     },
     16: {
         "title": "PLAN DISPATCH",
@@ -453,7 +459,7 @@ STEPS = {
             "",
             "Output: FILE GROUPS (file, issues, agent) + DISPATCH PLAN (waves)",
         ],
-        "next": "Invoke step 17 with dispatch plan in --thoughts"
+        "next": "Invoke step 17 with dispatch plan in --thoughts",
     },
     17: {
         "title": "RECONCILE DISPATCH",
@@ -464,14 +470,14 @@ STEPS = {
             "Agent types: developer (code/config) or technical-writer (docs).",
             "",
             "AGENT PROMPT:",
-            f"  TARGET: {{file}} | ISSUES: {{ids}}",
-            f"  Per issue: type, severity, sources, analysis, resolution_text",
-            f"  Workflow: step 18 (apply) -> step 19 (format)",
+            "  TARGET: {file} | ISSUES: {ids}",
+            "  Per issue: type, severity, sources, analysis, resolution_text",
+            "  Workflow: step 18 (apply) -> step 19 (format)",
             f'  Start: <invoke working-dir=".claude/skills/scripts" cmd="python3 -m {MODULE_PATH} --step-number 18 --thoughts \\"FILE: {{{{file}}}}\\"" />',
             "",
             "Launch ALL wave agents in SINGLE message.",
         ],
-        "next": "After all wave agents complete, invoke step 20 with results"
+        "next": "After all wave agents complete, invoke step 20 with results",
     },
     18: {
         "title": "RECONCILE APPLY [SUB-AGENT]",
@@ -482,7 +488,7 @@ STEPS = {
             "Batched: apply in order, watch for conflicts.",
             "Bias: apply the resolution, interpret charitably, skip rarely.",
         ],
-        "next": "When done, invoke step 19 with results in --thoughts"
+        "next": "When done, invoke step 19 with results in --thoughts",
     },
     19: {
         "title": "RECONCILE FORMAT [SUB-AGENT]",
@@ -493,7 +499,7 @@ STEPS = {
             "  If RESOLVED: CHANGE: {brief description}",
             "  If SKIPPED: REASON: {why}",
         ],
-        "next": "Output formatted result(s). Sub-agent task complete."
+        "next": "Output formatted result(s). Sub-agent task complete.",
     },
     20: {
         "title": "RECONCILE COLLECT",
@@ -503,7 +509,7 @@ STEPS = {
             "Collect wave results: per agent, issues handled, status, change/reason.",
             "Check dispatch plan: more waves -> step 17, all complete -> step 21.",
         ],
-        "next": "If more waves: invoke step 17. Otherwise: invoke step 21."
+        "next": "If more waves: invoke step 17. Otherwise: invoke step 21.",
     },
     21: {
         "title": "PRESENT REPORT",
@@ -516,7 +522,7 @@ STEPS = {
             "",
             "List ALL issues. RESOLVED or SKIPPED with reason.",
         ],
-        "next": "WORKFLOW COMPLETE."
+        "next": "WORKFLOW COMPLETE.",
     },
 }
 
@@ -647,8 +653,7 @@ WORKFLOW = Workflow(
 )
 
 
-def main(
-    step_number: int = None):
+def main(step_number: int | None = None):
     """Entry point with parameter annotations for testing framework.
 
     Note: Parameters have defaults because actual values come from argparse.
@@ -656,8 +661,9 @@ def main(
     """
     parser = argparse.ArgumentParser(description="Incoherence Detector")
     parser.add_argument("--step-number", type=int, required=True)
-    parser.add_argument("--thoughts", type=str, default="",
-                        help="Accumulated context from previous steps")
+    parser.add_argument(
+        "--thoughts", type=str, default="", help="Accumulated context from previous steps"
+    )
     args = parser.parse_args()
 
     guidance = get_step_guidance(args.step_number, WORKFLOW.total_steps)

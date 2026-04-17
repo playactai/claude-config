@@ -19,7 +19,6 @@ Applying STRUCTURE categories generates unfixable items, causing QR loops.
 
 from skills.planner.quality_reviewer.prompts.decompose import dispatch_step
 
-
 PHASE = "plan-docs"
 
 
@@ -140,7 +139,8 @@ GROUPING_CONFIG = {
 # ENTRY POINT
 # =============================================================================
 
-def get_step_guidance(step: int, module_path: str = None, **kwargs) -> dict:
+
+def get_step_guidance(step: int, module_path: str | None = None, **kwargs) -> dict:
     """Entry point for workflow execution.
 
     Called by mode_main() in cli.py. Delegates to shared dispatch_step()

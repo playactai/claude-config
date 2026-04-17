@@ -31,9 +31,12 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 
 from skills.planner.shared.qr.phases import get_phase_config
-from skills.planner.shared.qr.utils import load_qr_state, get_qr_item, format_qr_item_for_verification
+from skills.planner.shared.qr.utils import (
+    format_qr_item_for_verification,
+    get_qr_item,
+    load_qr_state,
+)
 from skills.planner.shared.resources import get_context_path, render_context_file
-
 
 # CLI module for atomic QR updates
 CLI_MODULE = "skills.planner.cli.qr"
@@ -127,7 +130,9 @@ class VerifyBase(ABC):
         else:
             return {"error": f"Unknown step type for step {step}"}
 
-    def _step_context(self, state_dir: str, module_path: str, item_ids: list[str], total_steps: int) -> dict:
+    def _step_context(
+        self, state_dir: str, module_path: str, item_ids: list[str], total_steps: int
+    ) -> dict:
         """Step 1: Load conventions, phase rules, context.json, plan.json. List all items."""
         state_dir_arg = f" --state-dir {state_dir}"
         item_flags = " ".join(f"--qr-item {id}" for id in item_ids)
@@ -179,7 +184,9 @@ class VerifyBase(ABC):
             "next": f"python3 -m {module_path} --step 2{state_dir_arg} {item_flags}",
         }
 
-    def _step_analyze(self, state_dir: str, module_path: str, item_ids: list[str], item_idx: int, total_steps: int) -> dict:
+    def _step_analyze(
+        self, state_dir: str, module_path: str, item_ids: list[str], item_idx: int, total_steps: int
+    ) -> dict:
         """ANALYZE step: Explore codebase if needed, analyze item, form preliminary conclusion."""
         state_dir_arg = f" --state-dir {state_dir}"
         item_flags = " ".join(f"--qr-item {id}" for id in item_ids)
@@ -228,7 +235,9 @@ class VerifyBase(ABC):
             "next": f"python3 -m {module_path} --step {current_step + 1}{state_dir_arg} {item_flags}",
         }
 
-    def _step_confirm(self, state_dir: str, module_path: str, item_ids: list[str], item_idx: int, total_steps: int) -> dict:
+    def _step_confirm(
+        self, state_dir: str, module_path: str, item_ids: list[str], item_idx: int, total_steps: int
+    ) -> dict:
         """CONFIRM step: Verify confidence, record result via cli/qr.py."""
         state_dir_arg = f" --state-dir {state_dir}"
         item_flags = " ".join(f"--qr-item {id}" for id in item_ids)
@@ -274,7 +283,9 @@ class VerifyBase(ABC):
             "next": next_action,
         }
 
-    def _step_summary(self, state_dir: str, module_path: str, item_ids: list[str], total_steps: int) -> dict:
+    def _step_summary(
+        self, state_dir: str, module_path: str, item_ids: list[str], total_steps: int
+    ) -> dict:
         """SUMMARY step: Count results, output single word PASS or FAIL."""
         return {
             "title": f"QR Verify Step {total_steps}/{total_steps}: Summary ({self.PHASE})",

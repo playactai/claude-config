@@ -25,25 +25,25 @@ import argparse
 import sys
 import tempfile
 from datetime import datetime
+from pathlib import Path
 
-from skills.lib.workflow.types import AgentRole, Dispatch
 from skills.lib.workflow.constants import (
-    SUB_AGENT_QUESTION_FORMAT,
     QUESTION_RELAY_HANDLER,
+    SUB_AGENT_QUESTION_FORMAT,
 )
 from skills.lib.workflow.prompts import subagent_dispatch, template_dispatch
 from skills.lib.workflow.prompts.step import format_step
-from skills.planner.shared.qr.types import QRState, QRStatus, LoopState
-from skills.planner.shared.gates import build_gate_output, GateResult
-from skills.planner.shared.qr.cli import add_qr_args
-from skills.planner.shared.qr.utils import qr_file_exists, increment_qr_iteration
-from skills.planner.shared.resources import get_mode_script_path, PlannerResourceProvider
+from skills.lib.workflow.types import AgentRole
 from skills.planner.shared.builders import THINKING_EFFICIENCY, format_forbidden
 from skills.planner.shared.constraints import (
     ORCHESTRATOR_CONSTRAINT_EXTENDED,
     format_state_banner,
 )
-
+from skills.planner.shared.gates import GateResult, build_gate_output
+from skills.planner.shared.qr.cli import add_qr_args
+from skills.planner.shared.qr.types import LoopState, QRState, QRStatus
+from skills.planner.shared.qr.utils import increment_qr_iteration, qr_file_exists
+from skills.planner.shared.resources import PlannerResourceProvider, get_mode_script_path
 
 MODULE_PATH = "skills.planner.orchestrator.planner"
 
@@ -58,7 +58,7 @@ def _translate_plan(state_dir: str) -> str | None:
     the workflow should still complete -- QR already approved
     the plan.json content.
     """
-    from pathlib import Path
+
     from skills.planner.cli.plan_commands import PlanContext, _translate
 
     try:
@@ -68,8 +68,10 @@ def _translate_plan(state_dir: str) -> str | None:
         return plan_md
     except Exception as e:
         import sys
+
         print(f"Warning: plan.md translation failed: {e}", file=sys.stderr)
         return None
+
 
 def _slugify(text: str) -> str:
     """Convert text to URL-safe slug.
@@ -84,6 +86,7 @@ def _slugify(text: str) -> str:
     Returns slug suitable for YYYY-MM-DD-{slug}.md filename.
     """
     import re
+
     slug = text.lower()
     slug = re.sub(r"[^a-z0-9]+", "-", slug)
     slug = re.sub(r"-+", "-", slug)
@@ -102,7 +105,6 @@ def _find_repo_root() -> "Path | None":
 
     Returns repo root path on success, None if not found.
     """
-    from pathlib import Path
     current = Path(__file__).resolve().parent
     while current != current.parent:
         git_path = current / ".git"
@@ -123,7 +125,6 @@ def _save_plan_to_docs(state_dir: str) -> "Path | None":
     Non-fatal: prints warning to stderr on failure.
     """
     import json
-    from pathlib import Path
 
     try:
         state_path = Path(state_dir)
@@ -165,6 +166,7 @@ def _save_plan_to_docs(state_dir: str) -> "Path | None":
 _provider = PlannerResourceProvider()
 
 QUESTION_RELAY_INSTRUCTION = SUB_AGENT_QUESTION_FORMAT
+
 
 def get_plan_format() -> str:
     """Read the plan format template from resources."""
@@ -211,11 +213,12 @@ def _build_fix_mode_output(title, agent, agent_role, script, mode_total_steps, q
 # Step Pattern Functions
 # =============================================================================
 
+
 def init_step(title, actions):
     """Step 1: creates state_dir, writes plan.json skeleton."""
+
     def handler(ctx):
         import json
-        from pathlib import Path
 
         state_dir = tempfile.mkdtemp(prefix="planner-")
 
@@ -252,6 +255,7 @@ def init_step(title, actions):
 
 def verify_step(title, actions):
     """Step 2: context verification."""
+
     def handler(ctx):
         from skills.planner.shared.resources import validate_state_dir_requirement
 
@@ -268,8 +272,11 @@ def verify_step(title, actions):
     return handler
 
 
-def execute_dispatch_step(title, agent, agent_role, script, mode_total_steps, post_dispatch=None, phase=None):
+def execute_dispatch_step(
+    title, agent, agent_role, script, mode_total_steps, post_dispatch=None, phase=None
+):
     """Steps 3, 7, 11: work execution dispatch."""
+
     def handler(ctx):
         from skills.planner.shared.resources import validate_state_dir_requirement
 
@@ -280,7 +287,9 @@ def execute_dispatch_step(title, agent, agent_role, script, mode_total_steps, po
         validate_state_dir_requirement(step, state_dir)
 
         if qr.state == LoopState.RETRY:
-            return _build_fix_mode_output(title, agent, agent_role, script, mode_total_steps, qr, ctx)
+            return _build_fix_mode_output(
+                title, agent, agent_role, script, mode_total_steps, qr, ctx
+            )
 
         action_children = []
 
@@ -322,6 +331,7 @@ def qr_decompose_step(title, phase, script, model=None):
     Decompose runs exactly once per phase. If qr-{phase}.json already exists,
     decomposition is skipped and flow proceeds directly to verify step.
     """
+
     def handler(ctx):
         state_dir = ctx["state_dir"]
         qr = ctx["qr"]
@@ -390,9 +400,15 @@ def qr_verify_step(title, phase):
     Uses repeated --qr-item flags (argparse action="append") instead of
     comma-separated --qr-items to avoid parsing ambiguity.
     """
+
     def handler(ctx):
-        from skills.planner.shared.qr.utils import load_qr_state, query_items, by_status, by_blocking_severity
         from skills.planner.shared.qr.phases import get_phase_config
+        from skills.planner.shared.qr.utils import (
+            by_blocking_severity,
+            by_status,
+            load_qr_state,
+            query_items,
+        )
 
         state_dir = ctx["state_dir"]
         step = ctx["step"]
@@ -456,17 +472,17 @@ Start: python3 -m {verify_script} --step 1 --state-dir {state_dir} $qr_item_flag
         action_children = [
             ORCHESTRATOR_CONSTRAINT_EXTENDED,
             "",
-            f"=== PHASE 1: DISPATCH (delegate to sub-agents) ===",
+            "=== PHASE 1: DISPATCH (delegate to sub-agents) ===",
             "",
             f"VERIFY: {len(items)} items",
             "",
             dispatch_text,
             "",
-            f"=== PHASE 2: AGGREGATE (your action after all agents return) ===",
+            "=== PHASE 2: AGGREGATE (your action after all agents return) ===",
             "",
             f"After ALL {len(groups)} agents return, tally results mechanically:",
-            f"  ALL agents returned PASS  ->  invoke next step with --qr-status pass",
-            f"  ANY agent returned FAIL   ->  invoke next step with --qr-status fail",
+            "  ALL agents returned PASS  ->  invoke next step with --qr-status pass",
+            "  ANY agent returned FAIL   ->  invoke next step with --qr-status fail",
             "",
             format_forbidden(
                 "Interpreting results beyond PASS/FAIL tallying",
@@ -504,7 +520,6 @@ def _all_milestones_doc_only(state_dir: str) -> bool:
     so behaviour stays conservative (goes through plan-code) when in doubt.
     """
     import json
-    from pathlib import Path
 
     try:
         plan_path = Path(state_dir) / "plan.json"
@@ -527,6 +542,7 @@ def qr_route_step(title, phase, work_step, pass_step, pass_message, fix_target=N
     a PASS routes to step 11 (plan-docs-work) instead of step 7 (plan-code-work)
     because code phase QR never converges on prose.
     """
+
     def handler(ctx):
         qr = ctx["qr"]
         state_dir = ctx.get("state_dir", "")
@@ -723,7 +739,7 @@ def get_step_guidance(step: int, qr_status, state_dir) -> dict | str:
 
     # Phase stored as handler attribute by step factory.
     # None for non-QR steps (1, 2).
-    phase = getattr(handler, 'phase', None)
+    phase = getattr(handler, "phase", None)
     iteration = get_qr_iteration(state_dir, phase) if state_dir and phase else 1
 
     status = QRStatus(qr_status) if qr_status else None
@@ -779,7 +795,9 @@ def main():
     )
 
     parser.add_argument("--step", type=int, required=True)
-    parser.add_argument("--state-dir", type=str, default=None, help="State directory path (for retry mode)")
+    parser.add_argument(
+        "--state-dir", type=str, default=None, help="State directory path (for retry mode)"
+    )
     add_qr_args(parser)
 
     args = parser.parse_args()
@@ -791,7 +809,8 @@ def main():
 
     # Validate state before running step (skip for step 1 which creates state)
     if args.step > 1 and args.state_dir:
-        from skills.planner.shared.schema import validate_state, SchemaValidationError
+        from skills.planner.shared.schema import SchemaValidationError, validate_state
+
         try:
             validate_state(args.state_dir)
         except SchemaValidationError as e:

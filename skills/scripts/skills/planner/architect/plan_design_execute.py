@@ -17,12 +17,11 @@ Router (plan_design.py) dispatches to appropriate script.
 from skills.lib.workflow.constants import SUB_AGENT_QUESTION_FORMAT
 from skills.planner.shared.resources import (
     STATE_DIR_ARG_REQUIRED,
+    PlannerResourceProvider,
     get_context_path,
     render_context_file,
     validate_state_dir_requirement,
-    PlannerResourceProvider,
 )
-
 
 STEPS = {
     1: "Task Analysis & Exploration Planning",
@@ -34,8 +33,7 @@ STEPS = {
 }
 
 
-def get_step_guidance(
-    step: int, module_path: str = None, **kwargs) -> dict:
+def get_step_guidance(step: int, module_path: str | None = None, **kwargs) -> dict:
     """Return guidance for the given step."""
     _provider = PlannerResourceProvider()
     MODULE_PATH = module_path or "skills.planner.architect.plan_design_execute"
@@ -217,16 +215,16 @@ def get_step_guidance(
                 "",
                 "BATCH MODE (preferred - reduces process invocations):",
                 "",
-                "JSON-RPC format: [{\"method\": \"...\", \"params\": {...}, \"id\": N}, ...]",
+                'JSON-RPC format: [{"method": "...", "params": {...}, "id": N}, ...]',
                 "",
                 "  python3 -m skills.planner.cli.plan --state-dir $STATE_DIR batch '[",
-                "    {\"method\": \"set-decision\", \"params\": {\"decision\": \"Use polling\", \"reasoning\": \"30% webhook failures\"}, \"id\": 1},",
-                "    {\"method\": \"set-milestone\", \"params\": {\"name\": \"Auth stack\", \"files\": \"src/auth.py\"}, \"id\": 2},",
-                "    {\"method\": \"set-intent\", \"params\": {\"milestone\": \"M-001\", \"file\": \"src/auth.py\", \"behavior\": \"Add token validation\", \"decision_refs\": \"DL-001\"}, \"id\": 3}",
+                '    {"method": "set-decision", "params": {"decision": "Use polling", "reasoning": "30% webhook failures"}, "id": 1},',
+                '    {"method": "set-milestone", "params": {"name": "Auth stack", "files": "src/auth.py"}, "id": 2},',
+                '    {"method": "set-intent", "params": {"milestone": "M-001", "file": "src/auth.py", "behavior": "Add token validation", "decision_refs": "DL-001"}, "id": 3}',
                 "  ]'",
                 "",
-                "Response: [{\"id\": 1, \"result\": {\"id\": \"DL-001\", ...}}, ...]",
-                "Errors: [{\"id\": N, \"error\": {\"code\": -32000, \"message\": \"...\"}}]",
+                'Response: [{"id": 1, "result": {"id": "DL-001", ...}}, ...]',
+                'Errors: [{"id": N, "error": {"code": -32000, "message": "..."}}]',
                 "",
                 "DIAGRAM CREATION (if applicable):",
                 "",

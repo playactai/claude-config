@@ -13,22 +13,22 @@ Selection based on QR state detection:
 - FAIL items present -> qr_fix
 """
 
+from skills.planner.shared.qr.utils import get_qr_iteration, has_qr_failures
 from skills.planner.shared.routing import route_work_phase
-from skills.planner.shared.qr.utils import has_qr_failures, get_qr_iteration
-
 
 PHASE_KEY = "impl-docs"
 
 
-def get_step_guidance(
-    step: int, module_path: str = None, **kwargs) -> dict:
+def get_step_guidance(step: int, module_path: str | None = None, **kwargs) -> dict:
     """Router: dispatch to execute or fix based on state.
 
     Routing logic lives in shared/routing.py (ONE place).
     This file specifies only: which phase key to use.
     """
     if step != 1:
-        return {"error": "Router only handles step 1. Subsequent steps handled by dispatched script."}
+        return {
+            "error": "Router only handles step 1. Subsequent steps handled by dispatched script."
+        }
 
     state_dir = kwargs.get("state_dir")
 

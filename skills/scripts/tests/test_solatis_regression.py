@@ -18,7 +18,6 @@ from pathlib import Path
 
 import pytest
 
-
 SCRIPTS_DIR = Path(__file__).parent.parent
 
 
@@ -36,6 +35,7 @@ def _run_module(*args: str) -> subprocess.CompletedProcess:
 # ---------------------------------------------------------------------------
 # Issue #19: StepHeaderNode step field is typed int; incoherence must pass int.
 # ---------------------------------------------------------------------------
+
 
 def test_issue_19_step_header_receives_int():
     """format_incoherence_output must construct StepHeaderNode with int step.
@@ -83,7 +83,9 @@ def test_issue_19_caller_passes_int_to_step_header(monkeypatch):
     monkeypatch.setattr(nodes.StepHeaderNode, "__init__", spy_init)
 
     incoherence.format_incoherence_output(
-        step=3, phase="DETECTION", agent_type="PARENT",
+        step=3,
+        phase="DETECTION",
+        agent_type="PARENT",
         guidance={"actions": ["x"], "next": ""},
     )
 
@@ -98,6 +100,7 @@ def test_issue_19_caller_passes_int_to_step_header(monkeypatch):
 # Issue #22: mode_main() must handle {"error": ...} guidance dicts cleanly.
 # ---------------------------------------------------------------------------
 
+
 def test_issue_22_mode_main_handles_error_dict():
     """Invalid-step dispatch must exit 1 with a readable error, not a traceback.
 
@@ -107,8 +110,10 @@ def test_issue_22_mode_main_handles_error_dict():
     """
     result = _run_module(
         "skills.planner.architect.plan_design",
-        "--step", "99",
-        "--state-dir", "/tmp/nonexistent-regression-xyz",
+        "--step",
+        "99",
+        "--state-dir",
+        "/tmp/nonexistent-regression-xyz",
     )
     assert result.returncode == 1, f"expected exit 1, got {result.returncode}"
     assert "Traceback" not in result.stderr, "mode_main must not leak a traceback"
@@ -142,6 +147,7 @@ def test_issue_22_mode_main_unit():
 # Issue #23: Step 6 gate bypasses plan-code for pure-documentation plans.
 # ---------------------------------------------------------------------------
 
+
 def _write_plan(state_dir: Path, milestones: list[dict]) -> None:
     """Write a minimal plan.json skeleton with the given milestones."""
     plan = {
@@ -164,16 +170,22 @@ def test_issue_23_all_doc_only_detected(tmp_path):
     """_all_milestones_doc_only returns True only when every milestone is doc-only."""
     from skills.planner.orchestrator.planner import _all_milestones_doc_only
 
-    _write_plan(tmp_path, [
-        {"id": "M-001", "is_documentation_only": True},
-        {"id": "M-002", "is_documentation_only": True},
-    ])
+    _write_plan(
+        tmp_path,
+        [
+            {"id": "M-001", "is_documentation_only": True},
+            {"id": "M-002", "is_documentation_only": True},
+        ],
+    )
     assert _all_milestones_doc_only(str(tmp_path)) is True
 
-    _write_plan(tmp_path, [
-        {"id": "M-001", "is_documentation_only": True},
-        {"id": "M-002", "is_documentation_only": False},
-    ])
+    _write_plan(
+        tmp_path,
+        [
+            {"id": "M-001", "is_documentation_only": True},
+            {"id": "M-002", "is_documentation_only": False},
+        ],
+    )
     assert _all_milestones_doc_only(str(tmp_path)) is False
 
     # Empty milestones -> conservative False (keep normal flow)
@@ -203,9 +215,12 @@ def test_issue_23_step6_routes_doc_only_to_step_11(tmp_path):
     """PASS at step 6 with doc-only plan -> next command points at step 11."""
     from skills.planner.orchestrator.planner import format_output
 
-    _write_plan(tmp_path, [
-        {"id": "M-001", "is_documentation_only": True},
-    ])
+    _write_plan(
+        tmp_path,
+        [
+            {"id": "M-001", "is_documentation_only": True},
+        ],
+    )
 
     result = format_output(step=6, qr_status="pass", state_dir=str(tmp_path))
     # format_output returns GateResult for gate steps
@@ -218,10 +233,13 @@ def test_issue_23_step6_routes_code_plan_to_step_7(tmp_path):
     """PASS at step 6 with at least one code milestone -> routes to step 7."""
     from skills.planner.orchestrator.planner import format_output
 
-    _write_plan(tmp_path, [
-        {"id": "M-001", "is_documentation_only": True},
-        {"id": "M-002", "is_documentation_only": False},
-    ])
+    _write_plan(
+        tmp_path,
+        [
+            {"id": "M-001", "is_documentation_only": True},
+            {"id": "M-002", "is_documentation_only": False},
+        ],
+    )
 
     result = format_output(step=6, qr_status="pass", state_dir=str(tmp_path))
     output = result.output if hasattr(result, "output") else result

@@ -3,6 +3,7 @@
 Each public function with 'ctx' as first param is auto-discovered as RPC method.
 Function names use underscores, converted to hyphens for method names.
 """
+
 from __future__ import annotations
 
 import json
@@ -17,43 +18,66 @@ if TYPE_CHECKING:
 def _get_schema():
     """Lazy import to avoid circular deps."""
     from ..shared.schema import (
-        Plan, Overview, Milestone, CodeIntent, CodeChange, Decision,
-        Documentation, Docstring, FunctionBlock, InlineComment, ReadmeEntry,
-        DiagramGraph, DiagramNode, DiagramEdge, validate_state,
+        CodeChange,
+        CodeIntent,
+        Decision,
+        DiagramEdge,
+        DiagramGraph,
+        DiagramNode,
+        Docstring,
+        Documentation,
+        FunctionBlock,
+        InlineComment,
+        Milestone,
+        Overview,
+        Plan,
+        ReadmeEntry,
+        validate_state,
     )
+
     return {
-        'Plan': Plan, 'Overview': Overview, 'Milestone': Milestone,
-        'CodeIntent': CodeIntent, 'CodeChange': CodeChange, 'Decision': Decision,
-        'Documentation': Documentation, 'Docstring': Docstring,
-        'FunctionBlock': FunctionBlock, 'InlineComment': InlineComment, 'ReadmeEntry': ReadmeEntry,
-        'DiagramGraph': DiagramGraph, 'DiagramNode': DiagramNode,
-        'DiagramEdge': DiagramEdge, 'validate_state': validate_state,
+        "Plan": Plan,
+        "Overview": Overview,
+        "Milestone": Milestone,
+        "CodeIntent": CodeIntent,
+        "CodeChange": CodeChange,
+        "Decision": Decision,
+        "Documentation": Documentation,
+        "Docstring": Docstring,
+        "FunctionBlock": FunctionBlock,
+        "InlineComment": InlineComment,
+        "ReadmeEntry": ReadmeEntry,
+        "DiagramGraph": DiagramGraph,
+        "DiagramNode": DiagramNode,
+        "DiagramEdge": DiagramEdge,
+        "validate_state": validate_state,
     }
 
 
 @dataclass
 class PlanContext:
     """Context passed to all plan commands."""
+
     state_dir: Path
 
     def plan_path(self) -> Path:
         return self.state_dir / "plan.json"
 
-    def load_plan(self) -> "Plan":
+    def load_plan(self) -> Plan:
         schema = _get_schema()
         path = self.plan_path()
         if not path.exists():
             raise FileNotFoundError(f"plan.json not found at {path}")
         data = json.loads(path.read_text())
-        return schema['Plan'].model_validate(data)
+        return schema["Plan"].model_validate(data)
 
-    def save_plan(self, plan: "Plan") -> None:
+    def save_plan(self, plan: Plan) -> None:
         schema = _get_schema()
         path = self.plan_path()
         tmp_path = path.with_suffix(".tmp")
         tmp_path.write_text(plan.model_dump_json(indent=2))
         tmp_path.rename(path)
-        schema['validate_state'](str(self.state_dir))
+        schema["validate_state"](str(self.state_dir))
 
 
 def _parse_csv(value: str | None) -> list[str]:
@@ -67,7 +91,7 @@ def _check_version(entity, provided: int | None, entity_id: str) -> None:
     """CAS version check. Raises if mismatch."""
     if provided is None:
         return
-    current = getattr(entity, 'version', 1)
+    current = getattr(entity, "version", 1)
     if provided != current:
         raise ValueError(
             f"Version mismatch for {entity_id}: provided {provided}, current {current}. "
@@ -77,13 +101,14 @@ def _check_version(entity, provided: int | None, entity_id: str) -> None:
 
 def _bump_version(entity) -> None:
     """Increment entity version."""
-    if hasattr(entity, 'version'):
+    if hasattr(entity, "version"):
         entity.version += 1
 
 
 # -----------------------------------------------------------------------------
 # Initialization
 # -----------------------------------------------------------------------------
+
 
 def init(ctx: PlanContext, task: str, title: str = "Untitled Plan") -> dict:
     """Initialize new plan.json with task description."""
@@ -93,7 +118,7 @@ def init(ctx: PlanContext, task: str, title: str = "Untitled Plan") -> dict:
     if path.exists():
         raise FileExistsError(f"plan.json already exists at {path}")
 
-    plan = schema['Plan'](overview=schema['Overview'](problem=task, approach=""))
+    plan = schema["Plan"](overview=schema["Overview"](problem=task, approach=""))
     ctx.save_plan(plan)
 
     return {"id": plan.plan_id, "version": 1, "operation": "created"}
@@ -103,10 +128,18 @@ def init(ctx: PlanContext, task: str, title: str = "Untitled Plan") -> dict:
 # Architect Phase
 # -----------------------------------------------------------------------------
 
-def set_milestone(ctx: PlanContext, name: str = None, id: str = None,
-                  version: int = None, files: str = None, flags: str = None,
-                  requirements: str = None, acceptance_criteria: str = None,
-                  tests: str = None) -> dict:
+
+def set_milestone(
+    ctx: PlanContext,
+    name: str | None = None,
+    id: str | None = None,
+    version: int | None = None,
+    files: str | None = None,
+    flags: str | None = None,
+    requirements: str | None = None,
+    acceptance_criteria: str | None = None,
+    tests: str | None = None,
+) -> dict:
     """Create or update milestone."""
     schema = _get_schema()
     plan = ctx.load_plan()
@@ -152,19 +185,32 @@ def set_milestone(ctx: PlanContext, name: str = None, id: str = None,
         num = len(plan.milestones) + 1
         mid = f"M-{num:03d}"
 
-        ms = schema['Milestone'](
-            id=mid, version=1, number=num, name=name,
-            files=files_list, flags=flags_list, requirements=requirements_list,
-            acceptance_criteria=acceptance_list, tests=tests_list,
+        ms = schema["Milestone"](
+            id=mid,
+            version=1,
+            number=num,
+            name=name,
+            files=files_list,
+            flags=flags_list,
+            requirements=requirements_list,
+            acceptance_criteria=acceptance_list,
+            tests=tests_list,
         )
         plan.milestones.append(ms)
         ctx.save_plan(plan)
         return {"id": mid, "version": 1, "operation": "created"}
 
 
-def set_intent(ctx: PlanContext, milestone: str, file: str = None,
-               behavior: str = None, id: str = None, version: int = None,
-               function: str = None, decision_refs: str = None) -> dict:
+def set_intent(
+    ctx: PlanContext,
+    milestone: str,
+    file: str | None = None,
+    behavior: str | None = None,
+    id: str | None = None,
+    version: int | None = None,
+    function: str | None = None,
+    decision_refs: str | None = None,
+) -> dict:
     """Create or update code intent."""
     schema = _get_schema()
     plan = ctx.load_plan()
@@ -210,17 +256,26 @@ def set_intent(ctx: PlanContext, milestone: str, file: str = None,
         num = len(ms.code_intents) + 1
         cid = f"CI-{ms.id}-{num:03d}"
 
-        ci = schema['CodeIntent'](
-            id=cid, version=1, file=file, function=function,
-            behavior=behavior, decision_refs=refs_list,
+        ci = schema["CodeIntent"](
+            id=cid,
+            version=1,
+            file=file,
+            function=function,
+            behavior=behavior,
+            decision_refs=refs_list,
         )
         ms.code_intents.append(ci)
         ctx.save_plan(plan)
         return {"id": cid, "version": 1, "operation": "created"}
 
 
-def set_decision(ctx: PlanContext, decision: str = None, reasoning: str = None,
-                 id: str = None, version: int = None) -> dict:
+def set_decision(
+    ctx: PlanContext,
+    decision: str | None = None,
+    reasoning: str | None = None,
+    id: str | None = None,
+    version: int | None = None,
+) -> dict:
     """Create or update decision."""
     schema = _get_schema()
     plan = ctx.load_plan()
@@ -252,14 +307,13 @@ def set_decision(ctx: PlanContext, decision: str = None, reasoning: str = None,
         num = len(plan.planning_context.decisions) + 1
         did = f"DL-{num:03d}"
 
-        dl = schema['Decision'](id=did, version=1, decision=decision, reasoning=reasoning)
+        dl = schema["Decision"](id=did, version=1, decision=decision, reasoning=reasoning)
         plan.planning_context.decisions.append(dl)
         ctx.save_plan(plan)
         return {"id": did, "version": 1, "operation": "created"}
 
 
-def set_diagram(ctx: PlanContext, type: str, scope: str, title: str,
-                id: str = None) -> dict:
+def set_diagram(ctx: PlanContext, type: str, scope: str, title: str, id: str | None = None) -> dict:
     """Create or update diagram graph."""
     schema = _get_schema()
     plan = ctx.load_plan()
@@ -275,7 +329,7 @@ def set_diagram(ctx: PlanContext, type: str, scope: str, title: str,
     else:
         next_num = len(plan.diagram_graphs) + 1
         new_id = f"DIAG-{next_num:03d}"
-        dg = schema['DiagramGraph'](id=new_id, type=type, scope=scope, title=title)
+        dg = schema["DiagramGraph"](id=new_id, type=type, scope=scope, title=title)
         plan.diagram_graphs.append(dg)
         id = new_id
         operation = "created"
@@ -284,8 +338,9 @@ def set_diagram(ctx: PlanContext, type: str, scope: str, title: str,
     return {"id": id, "version": 1, "operation": operation}
 
 
-def add_diagram_node(ctx: PlanContext, diagram: str, node_id: str, label: str,
-                     type: str = None) -> dict:
+def add_diagram_node(
+    ctx: PlanContext, diagram: str, node_id: str, label: str, type: str | None = None
+) -> dict:
     """Add node to diagram."""
     schema = _get_schema()
     plan = ctx.load_plan()
@@ -297,15 +352,21 @@ def add_diagram_node(ctx: PlanContext, diagram: str, node_id: str, label: str,
     if any(n.id == node_id for n in dg.nodes):
         raise ValueError(f"Node {node_id} already exists in {diagram}")
 
-    node = schema['DiagramNode'](id=node_id, label=label, type=type)
+    node = schema["DiagramNode"](id=node_id, label=label, type=type)
     dg.nodes.append(node)
     ctx.save_plan(plan)
 
     return {"id": node_id, "diagram": diagram, "operation": "created"}
 
 
-def add_diagram_edge(ctx: PlanContext, diagram: str, source: str, target: str,
-                     label: str, protocol: str = None) -> dict:
+def add_diagram_edge(
+    ctx: PlanContext,
+    diagram: str,
+    source: str,
+    target: str,
+    label: str,
+    protocol: str | None = None,
+) -> dict:
     """Add edge to diagram."""
     schema = _get_schema()
     plan = ctx.load_plan()
@@ -314,7 +375,7 @@ def add_diagram_edge(ctx: PlanContext, diagram: str, source: str, target: str,
     if not dg:
         raise ValueError(f"Diagram {diagram} not found")
 
-    edge = schema['DiagramEdge'](source=source, target=target, label=label, protocol=protocol)
+    edge = schema["DiagramEdge"](source=source, target=target, label=label, protocol=protocol)
     dg.edges.append(edge)
 
     errors = plan.validate_diagram_edges(diagram)
@@ -330,9 +391,17 @@ def add_diagram_edge(ctx: PlanContext, diagram: str, source: str, target: str,
 # Developer Phase
 # -----------------------------------------------------------------------------
 
-def set_change(ctx: PlanContext, milestone: str, file: str = None,
-               diff: str = None, id: str = None, version: int = None,
-               intent_ref: str = None, comments: str = None) -> dict:
+
+def set_change(
+    ctx: PlanContext,
+    milestone: str,
+    file: str | None = None,
+    diff: str | None = None,
+    id: str | None = None,
+    version: int | None = None,
+    intent_ref: str | None = None,
+    comments: str | None = None,
+) -> dict:
     """Create or update code change."""
     schema = _get_schema()
     plan = ctx.load_plan()
@@ -379,9 +448,13 @@ def set_change(ctx: PlanContext, milestone: str, file: str = None,
         num = len(ms.code_changes) + 1
         ccid = f"CC-{ms.id}-{num:03d}"
 
-        cc = schema['CodeChange'](
-            id=ccid, version=1, intent_ref=intent_ref,
-            file=file, diff=diff, comments=comments or "",
+        cc = schema["CodeChange"](
+            id=ccid,
+            version=1,
+            intent_ref=intent_ref,
+            file=file,
+            diff=diff,
+            comments=comments or "",
         )
         ms.code_changes.append(cc)
 
@@ -397,9 +470,17 @@ def set_change(ctx: PlanContext, milestone: str, file: str = None,
 # TW Phase
 # -----------------------------------------------------------------------------
 
-def set_doc(ctx: PlanContext, milestone: str, type: str, content_file: str,
-            function: str = None, location: str = None,
-            decision_ref: str = None, source: str = None) -> dict:
+
+def set_doc(
+    ctx: PlanContext,
+    milestone: str,
+    type: str,
+    content_file: str,
+    function: str | None = None,
+    location: str | None = None,
+    decision_ref: str | None = None,
+    source: str | None = None,
+) -> dict:
     """Create documentation entry."""
     schema = _get_schema()
     plan = ctx.load_plan()
@@ -421,7 +502,7 @@ def set_doc(ctx: PlanContext, milestone: str, type: str, content_file: str,
         if not function:
             raise ValueError("--function required for docstring type")
         ms.documentation.docstrings.append(
-            schema['Docstring'](function=function, docstring=content)
+            schema["Docstring"](function=function, docstring=content)
         )
     elif type == "function_block":
         if not function:
@@ -430,9 +511,11 @@ def set_doc(ctx: PlanContext, milestone: str, type: str, content_file: str,
             dids = [d.id for d in plan.planning_context.decisions]
             raise ValueError(f"Decision {decision_ref} not found. Valid: {dids}")
         ms.documentation.function_blocks.append(
-            schema['FunctionBlock'](
-                function=function, comment=content,
-                decision_ref=decision_ref, source=source,
+            schema["FunctionBlock"](
+                function=function,
+                comment=content,
+                decision_ref=decision_ref,
+                source=source,
             )
         )
     elif type == "inline":
@@ -442,7 +525,9 @@ def set_doc(ctx: PlanContext, milestone: str, type: str, content_file: str,
             dids = [d.id for d in plan.planning_context.decisions]
             raise ValueError(f"Decision {decision_ref} not found. Valid: {dids}")
         ms.documentation.inline_comments.append(
-            schema['InlineComment'](location=location, comment=content, decision_ref=decision_ref, source=source)
+            schema["InlineComment"](
+                location=location, comment=content, decision_ref=decision_ref, source=source
+            )
         )
     else:
         raise ValueError(f"Unknown doc type: {type}")
@@ -465,13 +550,11 @@ def set_readme(ctx: PlanContext, path: str, content_file: str) -> dict:
     # Upsert: one README per directory path
     for i, entry in enumerate(plan.readme_entries):
         if entry.path == path:
-            plan.readme_entries[i] = schema['ReadmeEntry'](path=path, content=content)
+            plan.readme_entries[i] = schema["ReadmeEntry"](path=path, content=content)
             ctx.save_plan(plan)
             return {"path": path, "operation": "updated"}
 
-    plan.readme_entries.append(
-        schema['ReadmeEntry'](path=path, content=content)
-    )
+    plan.readme_entries.append(schema["ReadmeEntry"](path=path, content=content))
     ctx.save_plan(plan)
     return {"path": path, "operation": "created"}
 
@@ -494,8 +577,7 @@ def set_diagram_render(ctx: PlanContext, diagram: str, content_file: str) -> dic
     return {"diagram": diagram, "operation": "updated"}
 
 
-def set_doc_diff(ctx: PlanContext, change: str, version: int,
-                 content_file: str) -> dict:
+def set_doc_diff(ctx: PlanContext, change: str, version: int, content_file: str) -> dict:
     """Set documentation diff for an existing code change."""
     plan = ctx.load_plan()
 
@@ -517,8 +599,7 @@ def set_doc_diff(ctx: PlanContext, change: str, version: int,
     return {"id": cc.id, "version": cc.version, "operation": "updated"}
 
 
-def create_doc_change(ctx: PlanContext, milestone: str, file: str,
-                      content_file: str) -> dict:
+def create_doc_change(ctx: PlanContext, milestone: str, file: str, content_file: str) -> dict:
     """Create a documentation-only change."""
     schema = _get_schema()
     plan = ctx.load_plan()
@@ -535,9 +616,14 @@ def create_doc_change(ctx: PlanContext, milestone: str, file: str,
     num = len(ms.code_changes) + 1
     ccid = f"CC-{ms.id}-{num:03d}"
 
-    cc = schema['CodeChange'](
-        id=ccid, version=1, intent_ref=None,
-        file=file, diff="", doc_diff=content_path.read_text(), comments="",
+    cc = schema["CodeChange"](
+        id=ccid,
+        version=1,
+        intent_ref=None,
+        file=file,
+        diff="",
+        doc_diff=content_path.read_text(),
+        comments="",
     )
     ms.code_changes.append(cc)
     ctx.save_plan(plan)
@@ -560,6 +646,7 @@ def _translate(ctx: PlanContext, output: str) -> dict:
 # Validation
 # -----------------------------------------------------------------------------
 
+
 def validate(ctx: PlanContext, phase: str) -> dict:
     """Validate plan.json for a specific phase."""
     plan = ctx.load_plan()
@@ -578,13 +665,11 @@ def validate(ctx: PlanContext, phase: str) -> dict:
 # List Helpers (read-only)
 # -----------------------------------------------------------------------------
 
+
 def list_milestones(ctx: PlanContext) -> list[dict]:
     """List all milestones."""
     plan = ctx.load_plan()
-    return [
-        {"id": ms.id, "version": ms.version, "name": ms.name}
-        for ms in plan.milestones
-    ]
+    return [{"id": ms.id, "version": ms.version, "name": ms.name} for ms in plan.milestones]
 
 
 def list_intents(ctx: PlanContext, milestone_id: str) -> list[dict]:

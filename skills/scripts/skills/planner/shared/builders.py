@@ -3,7 +3,6 @@
 Constants for static text, functions for parameterized output.
 """
 
-
 THINKING_EFFICIENCY = (
     "THINKING EFFICIENCY:\n"
     "  Max 5 words per step. Symbolic notation preferred.\n"

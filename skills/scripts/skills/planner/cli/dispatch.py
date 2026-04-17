@@ -3,6 +3,7 @@
 Functions with 'ctx' as first parameter are auto-discovered from modules.
 No decorators needed - write a function, it becomes a method.
 """
+
 import inspect
 from typing import Any
 
@@ -78,10 +79,7 @@ def batch(methods: dict, requests: list[dict], ctx) -> list[dict]:
             result = dispatch(methods, method, params, ctx)
             results.append({"id": req_id, "result": result})
         except Exception as e:
-            results.append({
-                "id": req_id,
-                "error": {"code": -32000, "message": str(e)}
-            })
+            results.append({"id": req_id, "error": {"code": -32000, "message": str(e)}})
     return results
 
 
@@ -90,7 +88,7 @@ def list_methods(methods: dict) -> dict[str, dict]:
     result = {}
     for name, func in methods.items():
         required, optional = extract_params(func)
-        doc = func.__doc__.split('\n')[0] if func.__doc__ else ""
+        doc = func.__doc__.split("\n")[0] if func.__doc__ else ""
         result[name] = {
             "required": sorted(required),
             "optional": sorted(optional.keys()),

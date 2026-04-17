@@ -13,8 +13,9 @@ SKILLS_DIR = Path(__file__).resolve().parent.parent.parent.parent.parent
 _SKILLS_DIR_Q = shlex.quote(str(SKILLS_DIR))
 
 
-def format_step(body: str, next_cmd: str = "", title: str = "",
-                if_pass: str = "", if_fail: str = "") -> str:
+def format_step(
+    body: str, next_cmd: str = "", title: str = "", if_pass: str = "", if_fail: str = ""
+) -> str:
     """Assemble complete workflow step: title + body + invoke directive.
 
     Args:

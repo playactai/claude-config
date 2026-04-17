@@ -13,18 +13,20 @@ import re
 from string import Template
 
 from skills.lib.workflow.ast.dispatch import (
+    RosterDispatchNode,
     SubagentDispatchNode,
     TemplateDispatchNode,
-    RosterDispatchNode,
 )
 
 
 def _extract_template_vars(s: str) -> list[str]:
     """Extract $var names from template string."""
-    return [m.group(1) for m in re.finditer(r'\$(\w+)', s)]
+    return [m.group(1) for m in re.finditer(r"\$(\w+)", s)]
 
 
-def _expand_template_targets(template: str, command: str, targets: tuple[dict[str, str], ...]) -> list[dict[str, str]]:
+def _expand_template_targets(
+    template: str, command: str, targets: tuple[dict[str, str], ...]
+) -> list[dict[str, str]]:
     """Expand template+command for each target with substituted values.
 
     Substitution happens here, not in render_template_dispatch, so
@@ -131,9 +133,9 @@ def render_subagent_dispatch(node: SubagentDispatchNode) -> str:
     # Always emit explicit model guidance to prevent LLM pattern-matching
     # from prior steps. See _build_model_selection() docstring.
     if node.model:
-        lines.append(f'  <model>{node.model}</model>')
+        lines.append(f"  <model>{node.model}</model>")
     else:
-        lines.append('  <model>DEFAULT (omit model parameter from Task tool)</model>')
+        lines.append("  <model>DEFAULT (omit model parameter from Task tool)</model>")
 
     if node.prompt:
         lines.append("  <prompt>")
@@ -144,7 +146,7 @@ def render_subagent_dispatch(node: SubagentDispatchNode) -> str:
     # Wrap invoke in directive to signal immediate execution
     lines.append('  <directive action="IMMEDIATELY invoke">')
     lines.append(f'    <invoke cmd="cd .claude/skills/scripts && {node.command}" />')
-    lines.append('  </directive>')
+    lines.append("  </directive>")
 
     lines.append("</subagent_dispatch>")
 
@@ -168,8 +170,7 @@ def render_template_dispatch(node: TemplateDispatchNode) -> str:
     """
     if not node.targets:
         raise ValueError(
-            f"TemplateDispatchNode.targets cannot be empty. "
-            f"Agent type: {node.agent_type}"
+            f"TemplateDispatchNode.targets cannot be empty. Agent type: {node.agent_type}"
         )
 
     expanded = _expand_template_targets(node.template, node.command, node.targets)
@@ -224,8 +225,7 @@ def render_roster_dispatch(node: RosterDispatchNode) -> str:
     """
     if not node.agents:
         raise ValueError(
-            f"RosterDispatchNode.agents cannot be empty. "
-            f"Agent type: {node.agent_type}"
+            f"RosterDispatchNode.agents cannot be empty. Agent type: {node.agent_type}"
         )
 
     count = len(node.agents)
@@ -267,7 +267,7 @@ def render_roster_dispatch(node: RosterDispatchNode) -> str:
 
 
 __all__ = [
+    "render_roster_dispatch",
     "render_subagent_dispatch",
     "render_template_dispatch",
-    "render_roster_dispatch",
 ]

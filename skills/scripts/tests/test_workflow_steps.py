@@ -5,12 +5,10 @@ Uses domain types (BoundedInt, ChoiceSet, Constant) to generate Cartesian produc
 """
 
 import pytest
-
-from skills.lib.workflow import discover_workflows
-
+from conftest import EXCLUDED, run_skill_invocation
 from test_generation import generate_inputs
 
-from conftest import EXCLUDED, run_skill_invocation
+from skills.lib.workflow import discover_workflows
 
 
 def _collect_test_cases():

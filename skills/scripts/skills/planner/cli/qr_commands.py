@@ -2,6 +2,7 @@
 
 Each public function with 'ctx' as first param is auto-discovered as RPC method.
 """
+
 from __future__ import annotations
 
 import fcntl
@@ -10,7 +11,6 @@ import os
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
-
 
 VALID_STATUSES = frozenset({"PASS", "FAIL"})
 TERMINAL_STATUSES = frozenset({"PASS"})
@@ -21,6 +21,7 @@ FORBIDS_FINDING = frozenset({"PASS"})
 @dataclass
 class QRContext:
     """Context passed to all QR commands."""
+
     state_dir: Path
     phase: str
 
@@ -41,12 +42,10 @@ def _save_qr_state_atomic(ctx: QRContext, qr_state: dict) -> None:
     """Write QR state atomically via tempfile + rename."""
     qr_path = ctx.qr_path()
     fd, tmp_path = tempfile.mkstemp(
-        dir=str(ctx.state_dir),
-        prefix=f"qr-{ctx.phase}.",
-        suffix=".tmp"
+        dir=str(ctx.state_dir), prefix=f"qr-{ctx.phase}.", suffix=".tmp"
     )
     try:
-        with os.fdopen(fd, 'w') as f:
+        with os.fdopen(fd, "w") as f:
             json.dump(qr_state, f, indent=2)
         os.rename(tmp_path, qr_path)
     except Exception:
@@ -63,8 +62,7 @@ def _find_item(qr_state: dict, item_id: str) -> tuple[int, dict | None]:
     return -1, None
 
 
-def update_item(ctx: QRContext, item_id: str, status: str,
-                finding: str = None) -> dict:
+def update_item(ctx: QRContext, item_id: str, status: str, finding: str | None = None) -> dict:
     """Update QR item status with file locking."""
     status = status.upper()
 
@@ -126,7 +124,7 @@ def get_item(ctx: QRContext, item_id: str) -> dict:
     return item
 
 
-def list_items(ctx: QRContext, status: str = None) -> list[dict]:
+def list_items(ctx: QRContext, status: str | None = None) -> list[dict]:
     """List QR items, optionally filtered by status."""
     qr_path = ctx.qr_path()
     if not qr_path.exists():
@@ -140,11 +138,13 @@ def list_items(ctx: QRContext, status: str = None) -> list[dict]:
         item_status = item.get("status", "TODO")
         if status and item_status != status.upper():
             continue
-        items.append({
-            "id": item.get("id"),
-            "status": item_status,
-            "finding": item.get("finding"),
-        })
+        items.append(
+            {
+                "id": item.get("id"),
+                "status": item_status,
+                "finding": item.get("finding"),
+            }
+        )
 
     return items
 
@@ -172,8 +172,8 @@ def summary(ctx: QRContext) -> dict:
 
 def assign_group(ctx: QRContext, item_id: str, group_id: str) -> dict:
     """Assign QR item to a group."""
-    valid_prefixes = ('umbrella', 'parent-', 'component-', 'concern-', 'affinity-')
-    if not (group_id == 'umbrella' or any(group_id.startswith(p) for p in valid_prefixes[1:])):
+    valid_prefixes = ("umbrella", "parent-", "component-", "concern-", "affinity-")
+    if not (group_id == "umbrella" or any(group_id.startswith(p) for p in valid_prefixes[1:])):
         raise ValueError(
             f"Invalid group_id '{group_id}'. "
             f"Must be 'umbrella' or start with: parent-, component-, concern-, affinity-"

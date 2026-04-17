@@ -13,7 +13,6 @@ Severity categories: Same as plan-code (Dev can fix code issues).
 
 from skills.planner.quality_reviewer.prompts.decompose import dispatch_step
 
-
 PHASE = "impl-code"
 
 
@@ -112,7 +111,7 @@ GROUPING_CONFIG = {
 }
 
 
-def get_step_guidance(step: int, module_path: str = None, **kwargs) -> dict:
+def get_step_guidance(step: int, module_path: str | None = None, **kwargs) -> dict:
     module_path = module_path or "skills.planner.quality_reviewer.impl_code_qr_decompose"
     state_dir = kwargs.get("state_dir", "")
     return dispatch_step(step, PHASE, module_path, PHASE_PROMPTS, GROUPING_CONFIG, state_dir)

@@ -30,15 +30,12 @@ Router (plan_docs.py) dispatches to appropriate script.
 """
 
 from skills.planner.shared.constraints import format_state_banner
-from skills.lib.conventions import get_convention
 from skills.planner.shared.resources import (
     STATE_DIR_ARG_REQUIRED,
     get_context_path,
     render_context_file,
     validate_state_dir_requirement,
 )
-from skills.planner.shared.temporal_detection import format_as_prose, format_actions
-
 
 STEPS = {
     1: "Task Description",
@@ -50,8 +47,7 @@ STEPS = {
 }
 
 
-def get_step_guidance(
-    step: int, module_path: str = None, **kwargs) -> dict:
+def get_step_guidance(step: int, module_path: str | None = None, **kwargs) -> dict:
     """Return guidance for the given step."""
     MODULE_PATH = module_path or "skills.planner.technical_writer.plan_docs_execute"
     state_dir = kwargs.get("state_dir", "")
@@ -64,51 +60,55 @@ def get_step_guidance(
 
         actions = []
         if context_display:
-            actions.extend([
-                "PLANNING CONTEXT (from orchestrator):",
+            actions.extend(
+                [
+                    "PLANNING CONTEXT (from orchestrator):",
+                    "",
+                    context_display,
+                    "",
+                ]
+            )
+        actions.extend(
+            [
+                banner,
                 "",
-                context_display,
+                "TYPE: PLAN_DOCS (JSON-IR with doc_diff overlay)",
                 "",
-            ])
-        actions.extend([
-            banner,
-            "",
-            "TYPE: PLAN_DOCS (JSON-IR with doc_diff overlay)",
-            "",
-            "TASK: Add documentation diffs to code_changes.",
-            "",
-            "DOC_DIFF ARCHITECTURE:",
-            "  Developer populates code_changes[].diff with code.",
-            "  Your job: populate code_changes[].doc_diff with documentation diffs.",
-            "  doc_diff is a unified diff that adds documentation to the resulting file state.",
-            "  Use CLI commands - DO NOT edit plan.json directly.",
-            "",
-            "WORKFLOW:",
-            "  Steps 1-2: Extract planning context",
-            "  Steps 3-4: Generate doc_diff for each code_change",
-            "  Steps 5-6: Standalone documentation and validation",
-            "",
-            "CLI COMMANDS:",
-            "",
-            "  # Set doc_diff for existing code_change:",
-            "  python3 -m skills.planner.cli.plan --state-dir $STATE_DIR set-doc-diff \\",
-            "    --change CC-M-001-001 --version 1 --content-file /tmp/doc.diff",
-            "",
-            "  # Create documentation-only change (README, etc.):",
-            "  python3 -m skills.planner.cli.plan --state-dir $STATE_DIR create-doc-change \\",
-            "    --milestone M-001 --file path/README.md --content-file /tmp/readme.diff",
-            "",
-            "BATCH MODE:",
-            "  python3 -m skills.planner.cli.plan --state-dir $STATE_DIR batch '[",
-            "    {\"method\": \"set-doc-diff\", \"params\": {\"change\": \"CC-M-001-001\", \"version\": 1, \"content_file\": \"/tmp/d1.diff\"}, \"id\": 1},",
-            "    {\"method\": \"create-doc-change\", \"params\": {\"milestone\": \"M-001\", \"file\": \"README.md\", \"content_file\": \"/tmp/r.diff\"}, \"id\": 2}",
-            "  ]'",
-            "",
-            "Read plan.json now. Identify:",
-            "  - planning_context.decisions entries",
-            "  - milestones with code_changes (each needs doc_diff)",
-            "  - invisible_knowledge section",
-        ])
+                "TASK: Add documentation diffs to code_changes.",
+                "",
+                "DOC_DIFF ARCHITECTURE:",
+                "  Developer populates code_changes[].diff with code.",
+                "  Your job: populate code_changes[].doc_diff with documentation diffs.",
+                "  doc_diff is a unified diff that adds documentation to the resulting file state.",
+                "  Use CLI commands - DO NOT edit plan.json directly.",
+                "",
+                "WORKFLOW:",
+                "  Steps 1-2: Extract planning context",
+                "  Steps 3-4: Generate doc_diff for each code_change",
+                "  Steps 5-6: Standalone documentation and validation",
+                "",
+                "CLI COMMANDS:",
+                "",
+                "  # Set doc_diff for existing code_change:",
+                "  python3 -m skills.planner.cli.plan --state-dir $STATE_DIR set-doc-diff \\",
+                "    --change CC-M-001-001 --version 1 --content-file /tmp/doc.diff",
+                "",
+                "  # Create documentation-only change (README, etc.):",
+                "  python3 -m skills.planner.cli.plan --state-dir $STATE_DIR create-doc-change \\",
+                "    --milestone M-001 --file path/README.md --content-file /tmp/readme.diff",
+                "",
+                "BATCH MODE:",
+                "  python3 -m skills.planner.cli.plan --state-dir $STATE_DIR batch '[",
+                '    {"method": "set-doc-diff", "params": {"change": "CC-M-001-001", "version": 1, "content_file": "/tmp/d1.diff"}, "id": 1},',
+                '    {"method": "create-doc-change", "params": {"milestone": "M-001", "file": "README.md", "content_file": "/tmp/r.diff"}, "id": 2}',
+                "  ]'",
+                "",
+                "Read plan.json now. Identify:",
+                "  - planning_context.decisions entries",
+                "  - milestones with code_changes (each needs doc_diff)",
+                "  - invisible_knowledge section",
+            ]
+        )
 
         return {
             "title": STEPS[1],

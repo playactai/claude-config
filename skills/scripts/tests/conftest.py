@@ -9,7 +9,6 @@ from typing import Any
 
 import pytest
 
-
 # Skills excluded from testing (not in git or incompatible)
 EXCLUDED = {
     "leon-writing-style",
@@ -86,10 +85,6 @@ def populate_workflow_registry():
     """Import all skills to populate workflow registry before tests run."""
     failures = import_all_skills()
     # Filter expected failures - excluded skills may not be present
-    unexpected = [
-        (mod, exc)
-        for mod, exc in failures
-        if not any(excl in mod for excl in EXCLUDED)
-    ]
+    unexpected = [(mod, exc) for mod, exc in failures if not any(excl in mod for excl in EXCLUDED)]
     if unexpected:
         pytest.fail(f"Unexpected import failures: {unexpected}")

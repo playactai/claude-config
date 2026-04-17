@@ -18,8 +18,7 @@ Invariants:
 
 from __future__ import annotations
 
-from .qr.utils import load_qr_state, query_items, by_status, by_blocking_severity
-
+from .qr.utils import by_blocking_severity, by_status, load_qr_state, query_items
 
 # Work phase routing registry - ALL work phases in ONE place
 #

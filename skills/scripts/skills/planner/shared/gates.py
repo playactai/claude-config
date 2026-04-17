@@ -9,11 +9,11 @@ from dataclasses import dataclass
 
 from skills.lib.workflow.prompts.step import format_step
 from skills.planner.shared.builders import (
-    format_gate_result,
-    format_forbidden,
     PEDANTIC_ENFORCEMENT,
+    format_forbidden,
+    format_gate_result,
 )
-from skills.planner.shared.qr.types import QRState, AgentRole
+from skills.planner.shared.qr.types import AgentRole, QRState
 
 
 @dataclass
@@ -25,6 +25,7 @@ class GateResult:
     next phase). terminal_pass carries pass_step=None without requiring
     callers to re-derive it.
     """
+
     output: str
     terminal_pass: bool
 
@@ -39,7 +40,8 @@ def build_gate_output(
     pass_step: int | None,
     pass_message: str,
     fix_target: AgentRole | None,
-    state_dir: str) -> GateResult:
+    state_dir: str,
+) -> GateResult:
     """Build complete gate step output for QR gates.
 
     Gates route to either:
@@ -53,11 +55,13 @@ def build_gate_output(
     if qr.passed:
         parts.append(pass_message)
         parts.append("")
-        parts.append(format_forbidden(
-            "Asking the user whether to proceed - the workflow is deterministic",
-            "Offering alternatives to the next step - all steps are mandatory",
-            "Interpreting 'proceed' as optional - EXECUTE immediately",
-        ))
+        parts.append(
+            format_forbidden(
+                "Asking the user whether to proceed - the workflow is deterministic",
+                "Offering alternatives to the next step - all steps are mandatory",
+                "Interpreting 'proceed' as optional - EXECUTE immediately",
+            )
+        )
     else:
         parts.append(PEDANTIC_ENFORCEMENT)
         parts.append("")
@@ -68,15 +72,17 @@ def build_gate_output(
             f"  The next step will dispatch {target_name} with fix guidance."
         )
         parts.append("")
-        parts.append(format_forbidden(
-            "Fixing issues directly from this gate step",
-            "Spawning agents directly from this gate step",
-            "Using Edit/Write tools yourself",
-            "Proceeding without invoking the next step",
-            "Interpreting 'minor issues' as skippable",
-            "Claiming 'diminishing returns' or 'comprehensive enough'",
-            "Proceeding to next phase without QR PASS",
-        ))
+        parts.append(
+            format_forbidden(
+                "Fixing issues directly from this gate step",
+                "Spawning agents directly from this gate step",
+                "Using Edit/Write tools yourself",
+                "Proceeding without invoking the next step",
+                "Interpreting 'minor issues' as skippable",
+                "Claiming 'diminishing returns' or 'comprehensive enough'",
+                "Proceeding to next phase without QR PASS",
+            )
+        )
 
     body = "\n".join(parts)
     title = f"{qr_name} Gate"
@@ -90,7 +96,9 @@ def build_gate_output(
         if state_dir:
             next_cmd += f" --state-dir {shlex.quote(state_dir)}"
     else:
-        next_cmd = f"python3 -m {module_path} --step {work_step} --state-dir {shlex.quote(state_dir)}"
+        next_cmd = (
+            f"python3 -m {module_path} --step {work_step} --state-dir {shlex.quote(state_dir)}"
+        )
 
     return GateResult(
         output=format_step(body, next_cmd, title=title),

@@ -3,12 +3,10 @@
 Handles loading of resource files and path resolution.
 """
 
+import json
 from pathlib import Path
 
-import json
-
 from skills.lib.io import read_text_or_exit
-
 
 """State directory argument configuration.
 
@@ -30,8 +28,8 @@ this documentation rather than reimplementing the logic.
 # This matches the pattern: component that READS a file owns its location convention.
 # Single source of truth for path derivation prevents drift across 3 sub-agent scripts.
 STATE_DIR_ARG_REQUIRED = (
-    ['--state-dir'],
-    {'type': str, 'required': True, 'help': 'Path to state directory (REQUIRED)'}
+    ["--state-dir"],
+    {"type": str, "required": True, "help": "Path to state directory (REQUIRED)"},
 )
 
 
@@ -60,6 +58,7 @@ def validate_state_dir_requirement(step: int, state_dir: str | None) -> None:
             "Step 1 creates the state directory; subsequent steps require it."
         )
 
+
 def get_context_path(state_dir: str) -> Path:
     """Derive context.json path from state directory.
 
@@ -69,20 +68,21 @@ def get_context_path(state_dir: str) -> Path:
     """
     return Path(state_dir) / "context.json"
 
+
 # WHY explicit __all__ update: resources.py uses __all__ (lines 23-32) to enforce
 # public API contract. STATE_DIR_ARG_REQUIRED and get_context_path must be listed
 # because sub-agent scripts import them directly. Implicit exports would work but
 # explicit __all__ makes interface contract clear -- only listed symbols are public.
 __all__ = [
-    "get_resource",
-    "get_mode_script_path",
-    "get_exhaustiveness_prompt",
-    "get_qa_schema",
-    "load_context_block",
     "STATE_DIR_ARG_REQUIRED",
-    "get_context_path",
-    "render_context_file",
     "PlannerResourceProvider",
+    "get_context_path",
+    "get_exhaustiveness_prompt",
+    "get_mode_script_path",
+    "get_qa_schema",
+    "get_resource",
+    "load_context_block",
+    "render_context_file",
     "validate_state_dir_requirement",
 ]
 
@@ -107,8 +107,8 @@ class PlannerResourceProvider:
         resource_path = Path(__file__).resolve().parents[4] / "planner" / "resources" / name
         try:
             return read_text_or_exit(resource_path, "loading planner resource")
-        except SystemExit:
-            raise FileNotFoundError(f"Resource not found: {name}")
+        except SystemExit as e:
+            raise FileNotFoundError(f"Resource not found: {name}") from e
 
     def get_step_guidance(self, **kwargs) -> dict:
         """Get step-specific guidance (placeholder for forward compatibility).
@@ -247,11 +247,9 @@ def render_context_file(context_file: str) -> str:
 
     try:
         content = Path(context_file).read_text()
-    except FileNotFoundError:
+    except FileNotFoundError as e:
         raise FileNotFoundError(
             f"Context file not found: {context_file}. "
             "Orchestrator must create context.json before sub-agent dispatch."
-        )
+        ) from e
     return format_file_content("context.json", content)
-
-

@@ -18,7 +18,6 @@ import sys
 
 from skills.lib.workflow.prompts import format_step
 
-
 # ============================================================================
 # CONFIGURATION
 # ============================================================================
@@ -173,22 +172,9 @@ SYNTHESIS_INSTRUCTIONS = (
 
 def build_next_command(step: int) -> str | None:
     """Build invoke command for next step."""
-    base = f'python3 -m {MODULE_PATH}'
-    if step == 1:
-        return f'{base} --step 2'
-    elif step == 2:
-        return f'{base} --step 3'
-    elif step == 3:
-        return f'{base} --step 4'
-    elif step == 4:
-        return f'{base} --step 5'
-    elif step == 5:
-        return f'{base} --step 6'
-    elif step == 6:
-        return f'{base} --step 7'
-    elif step == 7:
+    if step < 1 or step >= 7:
         return None
-    return None
+    return f"python3 -m {MODULE_PATH} --step {step + 1}"
 
 
 # ============================================================================
@@ -208,11 +194,7 @@ STATIC_STEPS = {
 
 def _format_step_1(decision: str) -> tuple[str, str]:
     """Step 1: Extract Structure - prepends decision context to body."""
-    body = (
-        f"DECISION UNDER REVIEW: {decision}\n"
-        "\n"
-        f"{EXTRACT_STRUCTURE_INSTRUCTIONS}"
-    )
+    body = f"DECISION UNDER REVIEW: {decision}\n\n{EXTRACT_STRUCTURE_INSTRUCTIONS}"
     return ("Extract Structure", body)
 
 

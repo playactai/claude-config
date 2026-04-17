@@ -15,52 +15,50 @@ import os
 import sys
 from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import ClassVar, TYPE_CHECKING
+from typing import TYPE_CHECKING, ClassVar
 
-from .output import EntityResult, VersionMismatchError, print_entity_result, exit_with_version_error
 from . import plan_commands
-from .dispatch import discover_methods, batch as batch_dispatch, list_methods
+from .dispatch import batch as batch_dispatch
+from .dispatch import discover_methods, list_methods
+from .output import EntityResult, VersionMismatchError, exit_with_version_error, print_entity_result
 
 PYDANTIC_AVAILABLE = False
 Plan = None  # Will be set if pydantic available
 
 if TYPE_CHECKING:
     from ..shared.schema import (
-        Plan,
-        Overview,
-        Milestone,
-        CodeIntent,
         CodeChange,
+        CodeIntent,
         Decision,
-        Risk,
-        Documentation,
+        DiagramEdge,
+        DiagramGraph,
+        DiagramNode,
         Docstring,
         FunctionBlock,
         InlineComment,
+        Milestone,
+        Overview,
+        Plan,
         ReadmeEntry,
-        DiagramGraph,
-        DiagramNode,
-        DiagramEdge,
     )
 
 try:
     from ..shared.schema import (
-        Plan,
-        Overview,
-        Milestone,
-        CodeIntent,
         CodeChange,
+        CodeIntent,
         Decision,
-        Risk,
-        Documentation,
+        DiagramEdge,
+        DiagramGraph,
+        DiagramNode,
         Docstring,
         FunctionBlock,
         InlineComment,
+        Milestone,
+        Overview,
+        Plan,
         ReadmeEntry,
-        DiagramGraph,
-        DiagramNode,
-        DiagramEdge,
     )
+
     PYDANTIC_AVAILABLE = True
 except ImportError:
     pass
@@ -72,11 +70,17 @@ except ImportError:
 
 
 ROLE_PERMISSIONS = {
-    "architect": {"init", "set-milestone", "set-intent", "set-decision",
-                  "set-diagram", "add-diagram-node", "add-diagram-edge"},
+    "architect": {
+        "init",
+        "set-milestone",
+        "set-intent",
+        "set-decision",
+        "set-diagram",
+        "add-diagram-node",
+        "add-diagram-edge",
+    },
     "developer": {"set-change"},
-    "tw": {"set-doc", "set-readme", "set-diagram-render",
-           "set-doc-diff", "create-doc-change"},
+    "tw": {"set-doc", "set-readme", "set-diagram-render", "set-doc-diff", "create-doc-change"},
     "qr": {"validate"},
 }
 
@@ -164,19 +168,19 @@ def check_version(entity, provided_version: int | None, entity_id: str) -> None:
     """
     if provided_version is None:
         return
-    current = getattr(entity, 'version', 1)
+    current = getattr(entity, "version", 1)
     if provided_version != current:
         raise VersionMismatchError(
             entity_id=entity_id,
             expected=provided_version,
             actual=current,
-            current_json=entity.model_dump_json(indent=2)
+            current_json=entity.model_dump_json(indent=2),
         )
 
 
 def bump_version(entity) -> None:
     """Increment entity version after successful update."""
-    if hasattr(entity, 'version'):
+    if hasattr(entity, "version"):
         entity.version += 1
 
 
@@ -185,7 +189,7 @@ def bump_version(entity) -> None:
 # =============================================================================
 
 
-def load_plan(state_dir: Path) -> "Plan":
+def load_plan(state_dir: Path) -> Plan:
     """Load and validate plan.json."""
     path = get_plan_path(state_dir)
     if not path.exists():
@@ -199,7 +203,7 @@ def load_plan(state_dir: Path) -> "Plan":
         error_exit(f"Validation error: {e}")
 
 
-def save_plan(state_dir: Path, plan: "Plan"):
+def save_plan(state_dir: Path, plan: Plan):
     """Atomic write: write to .tmp then rename."""
     path = get_plan_path(state_dir)
     tmp_path = path.with_suffix(".tmp")
@@ -207,6 +211,7 @@ def save_plan(state_dir: Path, plan: "Plan"):
     tmp_path.rename(path)
     # Catch schema violations immediately after mutation
     from ..shared.schema import validate_state
+
     validate_state(str(state_dir))
 
 
@@ -218,9 +223,9 @@ def save_plan(state_dir: Path, plan: "Plan"):
 class Command(ABC):
     """Base class for CLI commands. Subclasses define args and handler together."""
 
-    name: ClassVar[str]           # command name (e.g., "set-intent")
-    help: ClassVar[str]           # help text
-    role: ClassVar[str | None]    # required role or None for unrestricted
+    name: ClassVar[str]  # command name (e.g., "set-intent")
+    help: ClassVar[str]  # help text
+    role: ClassVar[str | None]  # required role or None for unrestricted
 
     @classmethod
     @abstractmethod
@@ -294,8 +299,14 @@ class SetMilestoneCommand(Command):
 
         files = [f.strip() for f in args.files.split(",")] if args.files else []
         flags = [f.strip() for f in args.flags.split(",")] if args.flags else []
-        requirements = [r.strip() for r in args.requirements.split(",")] if args.requirements else []
-        acceptance = [a.strip() for a in args.acceptance_criteria.split(",")] if args.acceptance_criteria else []
+        requirements = (
+            [r.strip() for r in args.requirements.split(",")] if args.requirements else []
+        )
+        acceptance = (
+            [a.strip() for a in args.acceptance_criteria.split(",")]
+            if args.acceptance_criteria
+            else []
+        )
         tests = [t.strip() for t in args.tests.split(",")] if args.tests else []
 
         if args.id:
@@ -303,8 +314,12 @@ class SetMilestoneCommand(Command):
             ms = plan.get_milestone(args.id)
             if not ms:
                 ids = [m.id for m in plan.milestones]
-                validation_error("milestone.id", "Valid milestone ID", args.id,
-                               f"Use existing: {', '.join(ids) or 'none'}")
+                validation_error(
+                    "milestone.id",
+                    "Valid milestone ID",
+                    args.id,
+                    f"Use existing: {', '.join(ids) or 'none'}",
+                )
 
             try:
                 check_version(ms, args.version, args.id)
@@ -380,22 +395,36 @@ class SetIntentCommand(Command):
         ms = plan.get_milestone(args.milestone)
         if not ms:
             ids = [m.id for m in plan.milestones]
-            validation_error("milestone", "Valid milestone ID", args.milestone,
-                           f"Use existing: {', '.join(ids) or 'none'}")
+            validation_error(
+                "milestone",
+                "Valid milestone ID",
+                args.milestone,
+                f"Use existing: {', '.join(ids) or 'none'}",
+            )
 
-        decision_refs = [r.strip() for r in args.decision_refs.split(",")] if args.decision_refs else []
+        decision_refs = (
+            [r.strip() for r in args.decision_refs.split(",")] if args.decision_refs else []
+        )
         for dref in decision_refs:
             if not plan.get_decision(dref):
-                validation_error("decision_refs", "Valid decision ID", dref,
-                               f"Use existing: {', '.join(d.id for d in plan.planning_context.decisions)}")
+                validation_error(
+                    "decision_refs",
+                    "Valid decision ID",
+                    dref,
+                    f"Use existing: {', '.join(d.id for d in plan.planning_context.decisions)}",
+                )
 
         if args.id:
             # UPDATE path
             _, ci = plan.get_intent(args.id)
             if not ci:
                 all_intents = [c.id for m in plan.milestones for c in m.code_intents]
-                validation_error("intent.id", "Valid intent ID", args.id,
-                               f"Use existing: {', '.join(all_intents) or 'none'}")
+                validation_error(
+                    "intent.id",
+                    "Valid intent ID",
+                    args.id,
+                    f"Use existing: {', '.join(all_intents) or 'none'}",
+                )
 
             try:
                 check_version(ci, args.version, args.id)
@@ -463,8 +492,12 @@ class SetDecisionCommand(Command):
             dl = plan.get_decision(args.id)
             if not dl:
                 dids = [d.id for d in plan.planning_context.decisions]
-                validation_error("decision.id", "Valid decision ID", args.id,
-                               f"Use existing: {', '.join(dids) or 'none'}")
+                validation_error(
+                    "decision.id",
+                    "Valid decision ID",
+                    args.id,
+                    f"Use existing: {', '.join(dids) or 'none'}",
+                )
 
             try:
                 check_version(dl, args.version, args.id)
@@ -512,10 +545,12 @@ class SetDiagramCommand(Command):
     @classmethod
     def add_arguments(cls, p: argparse.ArgumentParser) -> None:
         p.add_argument("--id", help="Diagram ID (omit for create)")
-        p.add_argument("--type", required=True,
-                      choices=["architecture", "state", "sequence", "dataflow"])
-        p.add_argument("--scope", required=True,
-                      help="'overview' | 'invisible_knowledge' | 'milestone:M-XXX'")
+        p.add_argument(
+            "--type", required=True, choices=["architecture", "state", "sequence", "dataflow"]
+        )
+        p.add_argument(
+            "--scope", required=True, help="'overview' | 'invisible_knowledge' | 'milestone:M-XXX'"
+        )
         p.add_argument("--title", required=True)
 
     @classmethod
@@ -534,12 +569,7 @@ class SetDiagramCommand(Command):
         else:
             next_num = len(plan.diagram_graphs) + 1
             new_id = f"DIAG-{next_num:03d}"
-            dg = DiagramGraph(
-                id=new_id,
-                type=args.type,
-                scope=args.scope,
-                title=args.title
-            )
+            dg = DiagramGraph(id=new_id, type=args.type, scope=args.scope, title=args.title)
             plan.diagram_graphs.append(dg)
             operation = "created"
 
@@ -601,10 +631,7 @@ class AddDiagramEdgeCommand(Command):
             error_exit(f"Diagram {args.diagram} not found")
 
         edge = DiagramEdge(
-            source=args.source,
-            target=args.target,
-            label=args.label,
-            protocol=args.protocol
+            source=args.source, target=args.target, label=args.label, protocol=args.protocol
         )
         dg.edges.append(edge)
 
@@ -645,24 +672,36 @@ class SetChangeCommand(Command):
         ms = plan.get_milestone(args.milestone)
         if not ms:
             ids = [m.id for m in plan.milestones]
-            validation_error("milestone", "Valid milestone ID", args.milestone,
-                           f"Use existing: {', '.join(ids) or 'none'}")
+            validation_error(
+                "milestone",
+                "Valid milestone ID",
+                args.milestone,
+                f"Use existing: {', '.join(ids) or 'none'}",
+            )
 
         # Validate intent_ref if provided
         if args.intent_ref:
             _, ci = plan.get_intent(args.intent_ref)
             if not ci:
                 all_intents = [c.id for m in plan.milestones for c in m.code_intents]
-                validation_error("intent_ref", "Valid intent ID", args.intent_ref,
-                               f"Use existing: {', '.join(all_intents) or 'none'}")
+                validation_error(
+                    "intent_ref",
+                    "Valid intent ID",
+                    args.intent_ref,
+                    f"Use existing: {', '.join(all_intents) or 'none'}",
+                )
 
         if args.id:
             # UPDATE path
             _, cc = plan.get_change(args.id)
             if not cc:
                 all_changes = [c.id for m in plan.milestones for c in m.code_changes]
-                validation_error("change.id", "Valid change ID", args.id,
-                               f"Use existing: {', '.join(all_changes) or 'none'}")
+                validation_error(
+                    "change.id",
+                    "Valid change ID",
+                    args.id,
+                    f"Use existing: {', '.join(all_changes) or 'none'}",
+                )
 
             try:
                 check_version(cc, args.version, args.id)
@@ -728,12 +767,18 @@ class SetDocCommand(Command):
     @classmethod
     def add_arguments(cls, p: argparse.ArgumentParser) -> None:
         p.add_argument("--milestone", required=True, help="Parent milestone ID")
-        p.add_argument("--type", required=True, choices=["module", "docstring", "function_block", "inline"],
-                      help="Documentation type")
+        p.add_argument(
+            "--type",
+            required=True,
+            choices=["module", "docstring", "function_block", "inline"],
+            help="Documentation type",
+        )
         p.add_argument("--content-file", required=True, help="Path to content file")
         p.add_argument("--function", help="Function name (for docstring or function_block type)")
         p.add_argument("--location", help="Location spec (for inline type)")
-        p.add_argument("--decision-ref", help="Decision ID reference (for function_block/inline type)")
+        p.add_argument(
+            "--decision-ref", help="Decision ID reference (for function_block/inline type)"
+        )
         p.add_argument("--source", help="Source provenance (for function_block/inline type)")
 
     @classmethod
@@ -744,8 +789,12 @@ class SetDocCommand(Command):
         ms = plan.get_milestone(args.milestone)
         if not ms:
             ids = [m.id for m in plan.milestones]
-            validation_error("milestone.id", "Valid milestone ID", args.milestone,
-                           f"Use existing: {', '.join(ids)}")
+            validation_error(
+                "milestone.id",
+                "Valid milestone ID",
+                args.milestone,
+                f"Use existing: {', '.join(ids)}",
+            )
 
         content_path = Path(args.content_file)
         if not content_path.exists():
@@ -764,20 +813,38 @@ class SetDocCommand(Command):
                 error_exit("--function required for function_block type")
             if args.decision_ref and not plan.get_decision(args.decision_ref):
                 dids = [d.id for d in plan.planning_context.decisions]
-                validation_error("decision_ref", "Valid decision ID", args.decision_ref,
-                               f"Use existing: {', '.join(dids)}")
+                validation_error(
+                    "decision_ref",
+                    "Valid decision ID",
+                    args.decision_ref,
+                    f"Use existing: {', '.join(dids)}",
+                )
             ms.documentation.function_blocks.append(
-                FunctionBlock(function=args.function, comment=content, decision_ref=args.decision_ref, source=args.source)
+                FunctionBlock(
+                    function=args.function,
+                    comment=content,
+                    decision_ref=args.decision_ref,
+                    source=args.source,
+                )
             )
         elif args.type == "inline":
             if not args.location:
                 error_exit("--location required for inline type")
             if args.decision_ref and not plan.get_decision(args.decision_ref):
                 dids = [d.id for d in plan.planning_context.decisions]
-                validation_error("decision_ref", "Valid decision ID", args.decision_ref,
-                               f"Use existing: {', '.join(dids)}")
+                validation_error(
+                    "decision_ref",
+                    "Valid decision ID",
+                    args.decision_ref,
+                    f"Use existing: {', '.join(dids)}",
+                )
             ms.documentation.inline_comments.append(
-                InlineComment(location=args.location, comment=content, decision_ref=args.decision_ref, source=args.source)
+                InlineComment(
+                    location=args.location,
+                    comment=content,
+                    decision_ref=args.decision_ref,
+                    source=args.source,
+                )
             )
 
         save_plan(state_dir, plan)
@@ -869,8 +936,12 @@ class SetDocDiffCommand(Command):
         _, cc = plan.get_change(args.change)
         if not cc:
             all_changes = [c.id for m in plan.milestones for c in m.code_changes]
-            validation_error("change", "Valid change ID", args.change,
-                           f"Valid: {', '.join(all_changes) or 'none'}")
+            validation_error(
+                "change",
+                "Valid change ID",
+                args.change,
+                f"Valid: {', '.join(all_changes) or 'none'}",
+            )
 
         try:
             check_version(cc, args.version, args.change)
@@ -907,8 +978,12 @@ class CreateDocChangeCommand(Command):
         ms = plan.get_milestone(args.milestone)
         if not ms:
             ids = [m.id for m in plan.milestones]
-            validation_error("milestone", "Valid milestone ID", args.milestone,
-                           f"Valid: {', '.join(ids) or 'none'}")
+            validation_error(
+                "milestone",
+                "Valid milestone ID",
+                args.milestone,
+                f"Valid: {', '.join(ids) or 'none'}",
+            )
 
         content_path = Path(args.content_file)
         if not content_path.exists():
@@ -936,8 +1011,7 @@ class CreateDocChangeCommand(Command):
 # =============================================================================
 
 
-
-def translate_to_markdown(plan: "Plan") -> str:
+def translate_to_markdown(plan: Plan) -> str:
     """Generate Markdown from plan.json."""
     lines = []
 
@@ -1195,8 +1269,12 @@ class ValidateCommand(Command):
 
     @classmethod
     def add_arguments(cls, p: argparse.ArgumentParser) -> None:
-        p.add_argument("--phase", required=True, choices=["plan-design", "plan-code", "plan-docs"],
-                      help="Phase to validate")
+        p.add_argument(
+            "--phase",
+            required=True,
+            choices=["plan-design", "plan-code", "plan-docs"],
+            help="Phase to validate",
+        )
 
     @classmethod
     def run(cls, args: argparse.Namespace) -> None:
@@ -1343,7 +1421,7 @@ def build_parser() -> argparse.ArgumentParser:
     """Build parser by iterating over command registry."""
     parser = argparse.ArgumentParser(
         prog="python3 -m skills.planner.cli.plan",
-        description="CLI for plan.json manipulation with CAS versioning"
+        description="CLI for plan.json manipulation with CAS versioning",
     )
     parser.add_argument("--state-dir", required=True, help="State directory containing plan.json")
 
@@ -1363,7 +1441,7 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def cli(args: list[str] = None):
+def cli(args: list[str] | None = None):
     """Main CLI entrypoint."""
     if not PYDANTIC_AVAILABLE:
         error_exit("pydantic v2 required. Install with: pip install pydantic>=2.0")
@@ -1378,7 +1456,7 @@ def cli(args: list[str] = None):
         methods = discover_methods(plan_commands)
         ctx = plan_commands.PlanContext(state_dir=Path(parsed.state_dir))
 
-        if hasattr(parsed, 'input') and parsed.input:
+        if hasattr(parsed, "input") and parsed.input:
             requests = json.loads(parsed.input)
         else:
             requests = json.load(sys.stdin)

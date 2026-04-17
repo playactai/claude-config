@@ -5,12 +5,11 @@ Handles argument parsing and mode script entry points.
 
 import argparse
 import sys
+from collections.abc import Callable
 from pathlib import Path
-from typing import Callable
 
 from .prompts.step import format_step
 from .types import UserInputResponse
-
 
 # Injected on step 1 only. Replaces the deleted xml_format_mandate.
 THINKING_EFFICIENCY = (
@@ -36,7 +35,7 @@ def _compute_module_path(script_file: str) -> str:
     if "scripts" in parts:
         scripts_idx = parts.index("scripts")
         if scripts_idx + 1 < len(parts):
-            module_parts = list(parts[scripts_idx + 1:])
+            module_parts = list(parts[scripts_idx + 1 :])
             module_parts[-1] = module_parts[-1].removesuffix(".py")
             return ".".join(module_parts)
     # Fallback: just use filename
@@ -48,15 +47,9 @@ def add_standard_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--step", type=int, required=True)
     parser.add_argument("--qr-iteration", type=int, default=1)
     parser.add_argument("--qr-fail", type=str, default=None)
+    parser.add_argument("--user-answer-id", type=str, help="Question ID that was answered")
     parser.add_argument(
-        "--user-answer-id",
-        type=str,
-        help="Question ID that was answered"
-    )
-    parser.add_argument(
-        "--user-answer-value",
-        type=str,
-        help="User's selected option or custom text"
+        "--user-answer-value", type=str, help="User's selected option or custom text"
     )
 
 
@@ -74,7 +67,7 @@ def mode_main(
     script_file: str,
     get_step_guidance: Callable[..., dict],
     description: str,
-    extra_args: list[tuple[list, dict]] = None,
+    extra_args: list[tuple[list, dict]] | None = None,
 ):
     """Standard entry point for mode scripts.
 
@@ -90,18 +83,16 @@ def mode_main(
     parser.add_argument("--step", type=int, required=True)
     parser.add_argument("--qr-iteration", type=int, default=1)
     parser.add_argument("--qr-fail", type=str, default=None)
-    for args, kwargs in (extra_args or []):
+    for args, kwargs in extra_args or []:
         parser.add_argument(*args, **kwargs)
     parsed = parser.parse_args()
 
     guidance = get_step_guidance(
-        parsed.step, module_path,
-        **{k: v for k, v in vars(parsed).items()
-           if k not in ('step',)}
+        parsed.step, module_path, **{k: v for k, v in vars(parsed).items() if k not in ("step",)}
     )
 
     # Handle both dict and dataclass (GuidanceResult) returns
-    if hasattr(guidance, '__dataclass_fields__'):
+    if hasattr(guidance, "__dataclass_fields__"):
         guidance_dict = {
             "title": guidance.title,
             "actions": guidance.actions,

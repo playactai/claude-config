@@ -8,8 +8,15 @@ from typing import Protocol
 from xml.sax.saxutils import quoteattr
 
 from skills.lib.workflow.ast.nodes import (
-    Node, Document, TextNode, CodeNode, ElementNode, FileContentNode,
-    StepHeaderNode, CurrentActionNode, InvokeAfterNode
+    CodeNode,
+    CurrentActionNode,
+    Document,
+    ElementNode,
+    FileContentNode,
+    InvokeAfterNode,
+    Node,
+    StepHeaderNode,
+    TextNode,
 )
 
 

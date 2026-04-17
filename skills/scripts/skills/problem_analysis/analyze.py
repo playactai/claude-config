@@ -18,7 +18,6 @@ import sys
 
 from skills.lib.workflow.prompts import format_step
 
-
 # ============================================================================
 # CONFIGURATION
 # ============================================================================
@@ -307,17 +306,17 @@ OUTPUT_INSTRUCTIONS = (
 
 def build_next_command(step: int, confidence: str, iteration: int) -> str | None:
     """Build invoke command for next step."""
-    base = f'python3 -m {MODULE_PATH}'
+    base = f"python3 -m {MODULE_PATH}"
     if step == 1:
-        return f'{base} --step 2'
+        return f"{base} --step 2"
     if step == 2:
-        return f'{base} --step 3 --confidence exploring --iteration 1'
+        return f"{base} --step 3 --confidence exploring --iteration 1"
     if step == 3:
         if confidence in ("high", "certain") or iteration >= MAX_ITERATIONS:
-            return f'{base} --step 4'
-        return f'{base} --step 3 --confidence {{exploring|low|medium|high|certain}} --iteration {iteration + 1}'
+            return f"{base} --step 4"
+        return f"{base} --step 3 --confidence {{exploring|low|medium|high|certain}} --iteration {iteration + 1}"
     if step == 4:
-        return f'{base} --step 5'
+        return f"{base} --step 5"
     return None
 
 

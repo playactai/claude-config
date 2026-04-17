@@ -12,15 +12,14 @@ For QR fix mode, see plan_code_qr_fix.py.
 Router (plan_code.py) dispatches to appropriate script.
 """
 
-from skills.planner.shared.constraints import format_state_banner
 from skills.lib.conventions import get_convention
+from skills.planner.shared.constraints import format_state_banner
 from skills.planner.shared.resources import (
     STATE_DIR_ARG_REQUIRED,
     get_context_path,
     render_context_file,
     validate_state_dir_requirement,
 )
-
 
 STEPS = {
     1: "Task Description",
@@ -37,8 +36,7 @@ Decision Log provides WHY context.
 """
 
 
-def get_step_guidance(
-    step: int, module_path: str = None, **kwargs) -> dict:
+def get_step_guidance(step: int, module_path: str | None = None, **kwargs) -> dict:
     """Return guidance for the given step."""
     MODULE_PATH = module_path or "skills.planner.developer.plan_code_execute"
     state_dir = kwargs.get("state_dir", "")
@@ -88,8 +86,8 @@ def get_step_guidance(
                 "BATCH MODE (preferred for multiple changes):",
                 "",
                 "  python3 -m skills.planner.cli.plan --state-dir $STATE_DIR batch '[",
-                "    {\"method\": \"set-change\", \"params\": {\"milestone\": \"M-001\", \"intent_ref\": \"CI-M-001-001\", \"file\": \"src/a.py\", \"diff\": \"...\"}, \"id\": 1},",
-                "    {\"method\": \"set-change\", \"params\": {\"milestone\": \"M-001\", \"intent_ref\": \"CI-M-001-002\", \"file\": \"src/b.py\", \"diff\": \"...\"}, \"id\": 2}",
+                '    {"method": "set-change", "params": {"milestone": "M-001", "intent_ref": "CI-M-001-001", "file": "src/a.py", "diff": "..."}, "id": 1},',
+                '    {"method": "set-change", "params": {"milestone": "M-001", "intent_ref": "CI-M-001-002", "file": "src/b.py", "diff": "..."}, "id": 2}',
                 "  ]'",
                 "",
                 "Read plan.json now. List milestones and code_intents.",

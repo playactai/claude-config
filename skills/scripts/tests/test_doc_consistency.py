@@ -10,6 +10,7 @@ These are small, intentional doc checks — not a general doc-lint.
 """
 
 from pathlib import Path
+from typing import ClassVar
 
 import pytest
 
@@ -26,7 +27,7 @@ def _read(relpath: str) -> str:
 class TestAstClaudeMdNodeTypes:
     """ast/CLAUDE.md must describe every public node type in nodes.__all__."""
 
-    _SPECIALIZED = {
+    _SPECIALIZED: ClassVar[set[str]] = {
         "FileContentNode",
         "StepHeaderNode",
         "CurrentActionNode",

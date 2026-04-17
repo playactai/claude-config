@@ -10,18 +10,18 @@ Builder tested: W.el() for constructing ElementNode
 """
 
 import pytest
-from hypothesis import given, strategies as st
+from hypothesis import given
+from hypothesis import strategies as st
 
 from skills.lib.workflow.ast import (
-    Node,
-    Document,
-    TextNode,
-    CodeNode,
-    ElementNode,
     ASTBuilder,
+    CodeNode,
+    Document,
+    ElementNode,
+    TextNode,
+    W,
     XMLRenderer,
     render,
-    W,
 )
 
 
@@ -44,7 +44,9 @@ def code_node(draw):
 @st.composite
 def element_node(draw):
     """Generate ElementNode with variable attrs and children."""
-    tag = draw(st.text(min_size=1, max_size=20, alphabet=st.characters(whitelist_categories=("Ll", "Lu"))))
+    tag = draw(
+        st.text(min_size=1, max_size=20, alphabet=st.characters(whitelist_categories=("Ll", "Lu")))
+    )
     num_attrs = draw(st.integers(min_value=0, max_value=3))
     attrs = {f"attr{i}": draw(st.text(min_size=1, max_size=10)) for i in range(num_attrs)}
     num_children = draw(st.integers(min_value=0, max_value=2))
@@ -98,11 +100,7 @@ class TestElementNode:
 
     def test_element_with_attrs_and_children(self):
         """ElementNode with attrs and children should render properly."""
-        node = ElementNode(
-            "div",
-            {"class": "container", "id": "main"},
-            [TextNode("content")]
-        )
+        node = ElementNode("div", {"class": "container", "id": "main"}, [TextNode("content")])
         result = render(Document([node]), XMLRenderer())
         assert '<div class="container" id="main">' in result
         assert "content" in result

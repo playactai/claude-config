@@ -18,20 +18,23 @@ import shlex
 import sys
 from enum import Enum
 from pathlib import Path
-from typing import Annotated
 
+from skills.lib.workflow.ast import (
+    CurrentActionNode,
+    FileContentNode,
+    InvokeAfterNode,
+    StepHeaderNode,
+    TemplateDispatchNode,
+    XMLRenderer,
+    render_current_action,
+    render_invoke_after,
+    render_step_header,
+    render_template_dispatch,
+)
 from skills.lib.workflow.core import (
-    Arg,
     StepDef,
     Workflow,
 )
-from skills.lib.workflow.ast import (
-    W, XMLRenderer, render, TextNode, FileContentNode,
-    TemplateDispatchNode, render_template_dispatch,
-    StepHeaderNode, CurrentActionNode, InvokeAfterNode,
-    render_step_header, render_current_action, render_invoke_after,
-)
-from skills.lib.workflow.types import FlatCommand
 
 
 class DocumentAvailability(Enum):
@@ -56,7 +59,9 @@ EXPLORE_MODULE_PATH = "skills.refactor.explore"
 DEFAULT_CATEGORY_COUNT = 10
 
 # Path to conventions/code-quality/ directory
-CONVENTIONS_DIR = Path(__file__).resolve().parent.parent.parent.parent.parent / "conventions" / "code-quality"
+CONVENTIONS_DIR = (
+    Path(__file__).resolve().parent.parent.parent.parent.parent / "conventions" / "code-quality"
+)
 
 
 # =============================================================================
@@ -88,17 +93,17 @@ def parse_documents() -> list[dict]:
         content = path.read_text()
         lines = content.splitlines()
 
-        phases_match = re.search(r'<!--\s*applicable_phases:\s*([^-]+?)\s*-->', content)
+        phases_match = re.search(r"<!--\s*applicable_phases:\s*([^-]+?)\s*-->", content)
         phases = []
         if phases_match:
-            phases = [p.strip() for p in phases_match.group(1).split(',')]
+            phases = [p.strip() for p in phases_match.group(1).split(",")]
 
         # NOTE: has_design creates implicit AND with applicable_phases check.
         # A doc needs BOTH refactor_design in phases AND <design-mode> tag
         # to generate design targets. Tag absence silently excludes all design
         # targets even if phase is present. This dual-gate prevents target generation
         # from docs that haven't implemented mode-specific guidance.
-        has_design = '<design-mode>' in content
+        has_design = "<design-mode>" in content
 
         categories = []
         current_cat = None
@@ -116,12 +121,14 @@ def parse_documents() -> list[dict]:
             current_cat["end_line"] = len(lines)
             categories.append(current_cat)
 
-        docs.append({
-            "file": md_file,
-            "applicable_phases": phases,
-            "has_design_mode": has_design,
-            "categories": categories,
-        })
+        docs.append(
+            {
+                "file": md_file,
+                "applicable_phases": phases,
+                "has_design_mode": has_design,
+                "categories": categories,
+            }
+        )
 
     return docs
 
@@ -159,9 +166,12 @@ def build_target_pool(mode_filter: str = "both") -> list[dict]:
         phases = doc["applicable_phases"]
 
         for cat in doc["categories"]:
-            if mode_filter in ("both", "design") and "refactor_design" in phases:
-                if doc["has_design_mode"]:
-                    targets.append({**cat, "mode": "design"})
+            if (
+                mode_filter in ("both", "design")
+                and "refactor_design" in phases
+                and doc["has_design_mode"]
+            ):
+                targets.append({**cat, "mode": "design"})
 
             if mode_filter in ("both", "code") and "refactor_code" in phases:
                 targets.append({**cat, "mode": "code"})
@@ -201,7 +211,9 @@ def select_targets(n: int = DEFAULT_CATEGORY_COUNT, mode_filter: str = "both") -
 # =============================================================================
 
 
-def build_explore_dispatch(n: int = DEFAULT_CATEGORY_COUNT, mode_filter: str = "both", scope: str | None = None) -> str:
+def build_explore_dispatch(
+    n: int = DEFAULT_CATEGORY_COUNT, mode_filter: str = "both", scope: str | None = None
+) -> str:
     """Build parallel dispatch block for explore agents.
 
     Each category uses the same 5-step explore workflow; only the category reference differs.
@@ -224,12 +236,18 @@ def build_explore_dispatch(n: int = DEFAULT_CATEGORY_COUNT, mode_filter: str = "
     scope_arg = f" --scope {shlex.quote(scope)}" if scope else ""
 
     # Template prompt with $var placeholders
-    template = """Explore the codebase for this code smell.
+    template = (
+        """Explore the codebase for this code smell.
 
 CATEGORY: $name
 MODE: $mode
 
-Start: <invoke working-dir=".claude/skills/scripts" cmd="python3 -m """ + EXPLORE_MODULE_PATH + """ --step 1 --category $ref --mode $mode""" + scope_arg + """" />"""
+Start: <invoke working-dir=".claude/skills/scripts" cmd="python3 -m """
+        + EXPLORE_MODULE_PATH
+        + """ --step 1 --category $ref --mode $mode"""
+        + scope_arg
+        + """" />"""
+    )
 
     # Command template (also has $var placeholders)
     command = f'<invoke working-dir=".claude/skills/scripts" cmd="python3 -m {EXPLORE_MODULE_PATH} --step 1 --category $ref --mode $mode{scope_arg}" />'
@@ -326,13 +344,13 @@ STEPS = {
             '      "evidence": {',
             '        "code": "quoted code snippet (2-5 lines, preserve indentation)",',
             '        "line_count": N',
-            '      },',
+            "      },",
             '      "impact": "WHY fix this - copied from <impact> tag",',
             '      "occurrences": {',
             '        "count": N,',
             '        "verification": "grep command to reproduce count",',
             '        "locations": ["file:line", "file:line", "..."]',
-            '      }',
+            "      }",
             "    }",
             "  ],",
             '  "smell_count": N,',
@@ -381,8 +399,6 @@ STEPS = {
         "brief": "Generate actionable work items",
     },
 }
-
-
 
 
 # =============================================================================
@@ -1084,21 +1100,21 @@ DO NOT modify commands. DO NOT skip steps. DO NOT interpret.
         '  - Problem keywords: "simplify", "too much boilerplate", "consolidate"',
         '  - Problem keywords: "abstractions don\'t work", "hard to understand"',
         '  - Problem keywords: "reduce duplication", "clean up the mess"',
-        '  - Pattern: User describes WHAT is wrong, not just WHERE to look',
+        "  - Pattern: User describes WHAT is wrong, not just WHERE to look",
         "",
         "Indicators for DESIGN mode (architecture/intent focus):",
         '  - Keywords: "architecture", "design", "structure", "boundaries", "responsibilities"',
-        '  - Focus: System organization, module relationships, high-level intent',
+        "  - Focus: System organization, module relationships, high-level intent",
         "",
         "Indicators for CODE mode (implementation focus):",
         '  - Keywords: "implementation", "code quality", "patterns", "idioms", "readability"',
-        '  - Focus: Function structure, naming, duplication, control flow',
+        "  - Focus: Function structure, naming, duplication, control flow",
         "",
         "CONTRASTIVE EXAMPLES:",
         '  CUSTOM:     "there is too much boilerplate in the auth module"',
-        '              -> Problem: boilerplate. Location: auth module.',
+        "              -> Problem: boilerplate. Location: auth module.",
         '  NOT CUSTOM: "apply refactor skill on the auth module"',
-        '              -> No problem specified. Just a location.',
+        "              -> No problem specified. Just a location.",
         "",
         "PRECEDENCE RULE:",
         "  If BOTH custom and design/code indicators present, prefer CUSTOM.",
@@ -1110,7 +1126,7 @@ DO NOT modify commands. DO NOT skip steps. DO NOT interpret.
         "If user mentions a specific path/directory/module, extract it:",
         '  - "in src/planner" -> scope: src/planner',
         '  - "the auth module" -> scope: (resolve to actual path if known, else leave as hint)',
-        '  - No path mentioned -> scope: null (entire codebase)',
+        "  - No path mentioned -> scope: null (entire codebase)",
         "",
         "SCOPE PRECEDENCE:",
         "  If --scope CLI arg is provided, it OVERRIDES any scope detected from user text.",
@@ -1119,11 +1135,13 @@ DO NOT modify commands. DO NOT skip steps. DO NOT interpret.
         "STEP C - PROBLEM STATEMENT (custom mode only):",
         "",
         "If mode is CUSTOM, extract the problem statement:",
-        '  - What specific issue is the user describing?',
-        '  - Preserve their exact wording where possible',
+        "  - What specific issue is the user describing?",
+        "  - Preserve their exact wording where possible",
         "",
-        f"CLI override: --mode {mode_filter}" + (" (use this)" if mode_filter not in ("both", "custom") else " (detect if 'both')"),
-        f"CLI scope: {scope or '(none provided)'}" + (" (use this)" if scope else " (detect from request)"),
+        f"CLI override: --mode {mode_filter}"
+        + (" (use this)" if mode_filter not in ("both", "custom") else " (detect if 'both')"),
+        f"CLI scope: {scope or '(none provided)'}"
+        + (" (use this)" if scope else " (detect from request)"),
         "",
         "OUTPUT FORMAT:",
         "<mode_selection>",
@@ -1185,10 +1203,12 @@ DO NOT modify commands. DO NOT skip steps. DO NOT interpret.
         "",
         f"WAIT for all {n} agents to complete before proceeding.",
         "",
-        format_expected_output({
-            "Per target": "smell_report with severity (none/low/medium/high) and findings",
-            "Format": "<smell_report> blocks from each Explore agent",
-        })
+        format_expected_output(
+            {
+                "Per target": "smell_report with severity (none/low/medium/high) and findings",
+                "Format": "<smell_report> blocks from each Explore agent",
+            }
+        ),
     ]
 
     parts.append(render_current_action(CurrentActionNode(actions)))
@@ -1196,7 +1216,13 @@ DO NOT modify commands. DO NOT skip steps. DO NOT interpret.
 
     # Non-custom: jump to step 4 (triage), skipping step 3 (verification)
     scope_arg = f" --scope {shlex.quote(scope)}" if scope else ""
-    parts.append(render_invoke_after(InvokeAfterNode(cmd=f"python3 -m {MODULE_PATH} --step 4 --mode {mode_filter}{scope_arg}")))
+    parts.append(
+        render_invoke_after(
+            InvokeAfterNode(
+                cmd=f"python3 -m {MODULE_PATH} --step 4 --mode {mode_filter}{scope_arg}"
+            )
+        )
+    )
 
     return "\n".join(parts)
 
@@ -1209,12 +1235,16 @@ def format_step_2_custom(info: dict, scope: str | None = None) -> str:
     """
     parts = []
 
-    parts.append(render_step_header(StepHeaderNode(title="Category Selection", script="refactor", step=2)))
+    parts.append(
+        render_step_header(StepHeaderNode(title="Category Selection", script="refactor", step=2))
+    )
     parts.append("")
 
     # Embed all category files for LLM review
     parts.append("<category_definitions>")
-    parts.append("Review the following code quality categories. Select those relevant to the problem statement from Step 1.")
+    parts.append(
+        "Review the following code quality categories. Select those relevant to the problem statement from Step 1."
+    )
     parts.append("")
 
     for md_file in sorted(CONVENTIONS_DIR.glob("*.md")):
@@ -1260,7 +1290,11 @@ def format_step_2_custom(info: dict, scope: str | None = None) -> str:
 
     # Next step: verification (step 3)
     scope_arg = f" --scope {shlex.quote(scope)}" if scope else ""
-    parts.append(render_invoke_after(InvokeAfterNode(cmd=f"python3 -m {MODULE_PATH} --step 3 --mode custom{scope_arg}")))
+    parts.append(
+        render_invoke_after(
+            InvokeAfterNode(cmd=f"python3 -m {MODULE_PATH} --step 3 --mode custom{scope_arg}")
+        )
+    )
 
     return "\n".join(parts)
 
@@ -1273,7 +1307,9 @@ def format_step_3_verification(info: dict, scope: str | None = None, retry: int 
     """
     parts = []
 
-    parts.append(render_step_header(StepHeaderNode(title="Category Verification", script="refactor", step=3)))
+    parts.append(
+        render_step_header(StepHeaderNode(title="Category Verification", script="refactor", step=3))
+    )
     parts.append("")
 
     actions = [
@@ -1332,7 +1368,9 @@ def format_step_3_verification(info: dict, scope: str | None = None, retry: int 
 </invoke_after>"""
     else:
         # Retry budget exhausted - proceed regardless
-        invoke_after = render_invoke_after(InvokeAfterNode(cmd=f"python3 -m {MODULE_PATH} --step 4 --mode custom{scope_arg}"))
+        invoke_after = render_invoke_after(
+            InvokeAfterNode(cmd=f"python3 -m {MODULE_PATH} --step 4 --mode custom{scope_arg}")
+        )
 
     parts.append(invoke_after)
 
@@ -1488,7 +1526,7 @@ def format_output(
     n: int = DEFAULT_CATEGORY_COUNT,
     mode_filter: str = "both",
     scope: str | None = None,
-    retry: int = 0
+    retry: int = 0,
 ) -> str:
     """Format output for display. Dispatches based on step and mode.
 
@@ -1548,11 +1586,11 @@ def format_output(
 
 
 def main(
-    step: int = None,
-    n: int = None,
-    mode: str = None,
-    scope: str = None,
-    retry: int = None,
+    step: int | None = None,
+    n: int | None = None,
+    mode: str | None = None,
+    scope: str | None = None,
+    retry: int | None = None,
 ):
     """Entry point with parameter annotations for testing framework.
 
@@ -1566,29 +1604,39 @@ def main(
     parser.add_argument("--step", type=int, required=True)
 
     # Number of random samples for non-custom modes
-    parser.add_argument("--n", type=int, default=DEFAULT_CATEGORY_COUNT,
-                       help=f"Number of targets for random modes (default: {DEFAULT_CATEGORY_COUNT}, ignored for custom)")
+    parser.add_argument(
+        "--n",
+        type=int,
+        default=DEFAULT_CATEGORY_COUNT,
+        help=f"Number of targets for random modes (default: {DEFAULT_CATEGORY_COUNT}, ignored for custom)",
+    )
 
     # Mode determines category selection strategy
-    parser.add_argument("--mode", type=str,
-                       choices=["design", "code", "both", "custom"],
-                       default="both",
-                       help="Category selection mode. custom: LLM selects based on problem statement")
+    parser.add_argument(
+        "--mode",
+        type=str,
+        choices=["design", "code", "both", "custom"],
+        default="both",
+        help="Category selection mode. custom: LLM selects based on problem statement",
+    )
 
     # Filesystem constraint propagated to all explore agents
-    parser.add_argument("--scope", type=str, default=None,
-                       help="Filesystem scope constraint (e.g., 'src/planner/'). Propagates to explore agents.")
+    parser.add_argument(
+        "--scope",
+        type=str,
+        default=None,
+        help="Filesystem scope constraint (e.g., 'src/planner/'). Propagates to explore agents.",
+    )
 
     # Verification loopback counter (custom mode only, internal)
-    parser.add_argument("--retry", type=int, default=0,
-                       help=argparse.SUPPRESS)
+    parser.add_argument("--retry", type=int, default=0, help=argparse.SUPPRESS)
 
     args = parser.parse_args()
 
     if args.step < 1:
         sys.exit("ERROR: --step must be >= 1")
     if args.step > 8:
-        sys.exit(f"ERROR: --step cannot exceed 8")
+        sys.exit("ERROR: --step cannot exceed 8")
     if args.retry > 1:
         sys.exit("ERROR: --retry cannot exceed 1 (max one verification retry)")
 

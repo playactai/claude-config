@@ -1,4 +1,5 @@
 """Unified file I/O with contextual error handling."""
+
 import sys
 from pathlib import Path
 

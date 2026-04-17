@@ -10,6 +10,7 @@ Provides centralized access to qr-<phase>.json state files:
 """
 
 import json
+from collections.abc import Callable
 from pathlib import Path
 
 from skills.planner.shared.qr.constants import QR_ROUTING
@@ -33,7 +34,7 @@ def load_qr_state(state_dir: str, phase: str) -> dict | None:
     try:
         with open(path) as f:
             return json.load(f)
-    except (json.JSONDecodeError, IOError):
+    except (OSError, json.JSONDecodeError):
         return None
 
 
@@ -69,13 +70,8 @@ def get_qr_items_by_status(qr_state: dict, status: str) -> list[dict]:
     if not qr_state:
         return []
 
-    return [
-        item for item in qr_state.get("items", [])
-        if item.get("status") == status
-    ]
+    return [item for item in qr_state.get("items", []) if item.get("status") == status]
 
-
-from collections.abc import Callable
 
 # Predicate: item dict -> bool. Compose via query_items(*predicates).
 ItemPredicate = Callable[[dict], bool]
@@ -104,6 +100,7 @@ def by_blocking_severity(iteration: int) -> ItemPredicate:
     skippable (COULD). See shared/schema.py QA_ITEM_DEFAULTS.
     """
     from skills.planner.shared.qr.constants import get_blocking_severities
+
     blocking = get_blocking_severities(iteration)
     return lambda item: item.get("severity", "SHOULD") in blocking
 
@@ -218,7 +215,7 @@ def format_qr_result(workflow: str, phase: str, passed: bool, state_dir: str) ->
     key = (workflow, phase)
     if key not in QR_ROUTING:
         raise ValueError(f"Unknown QR routing: workflow={workflow}, phase={phase}")
-    gate_step, module_path, total_steps = QR_ROUTING[key]
+    gate_step, module_path, _total_steps = QR_ROUTING[key]
 
     if passed:
         return f"""RESULT: PASS
@@ -333,7 +330,7 @@ def increment_qr_iteration(state_dir: str, phase: str) -> int | None:
     # Atomic write via temp file
     fd, tmp_path = tempfile.mkstemp(dir=state_dir, suffix=".tmp")
     try:
-        with os.fdopen(fd, 'w') as tmp:
+        with os.fdopen(fd, "w") as tmp:
             json.dump(qr_state, tmp, indent=2)
         os.rename(tmp_path, str(path))
     except Exception:

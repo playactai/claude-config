@@ -17,15 +17,18 @@ Fix scripts separate from execute scripts:
 - Fix scripts are shorter, focused on QR findings
 """
 
-from skills.planner.shared.constraints import format_state_banner
 from skills.lib.conventions import get_convention
-from skills.planner.shared.resources import validate_state_dir_requirement, get_context_path, render_context_file
+from skills.planner.shared.constraints import format_state_banner
 from skills.planner.shared.qr.utils import (
-    load_qr_state,
     format_failed_items_for_fix,
     get_qr_iteration,
+    load_qr_state,
 )
-
+from skills.planner.shared.resources import (
+    get_context_path,
+    render_context_file,
+    validate_state_dir_requirement,
+)
 
 STEPS = {
     1: "Load QR Failures",
@@ -34,8 +37,7 @@ STEPS = {
 }
 
 
-def get_step_guidance(
-    step: int, module_path: str = None, **kwargs) -> dict:
+def get_step_guidance(step: int, module_path: str | None = None, **kwargs) -> dict:
     """Return guidance for the given step."""
     MODULE_PATH = module_path or "skills.planner.developer.plan_code_qr_fix"
     state_dir = kwargs.get("state_dir", "")
@@ -66,7 +68,9 @@ def get_step_guidance(
                 "",
                 "QR-CODE found issues requiring fixes.",
                 "",
-                failed_items_block if failed_items_block else "Read QR report from: STATE_DIR/qr-plan-code.json",
+                failed_items_block
+                if failed_items_block
+                else "Read QR report from: STATE_DIR/qr-plan-code.json",
                 "",
                 "PLANNING CONTEXT (reference for semantic validation):",
                 "",
@@ -120,8 +124,8 @@ def get_step_guidance(
                 "BATCH MODE (preferred - reduces process invocations):",
                 "",
                 "  python3 -m skills.planner.cli.plan --state-dir $STATE_DIR batch '[",
-                "    {\"method\": \"set-change\", \"params\": {\"id\": \"CC-M-001-001\", \"version\": 1, \"milestone\": \"M-001\", \"diff\": \"--- a/src/a.py\\n+++ b/src/a.py\\n...\"}, \"id\": 1},",
-                "    {\"method\": \"set-change\", \"params\": {\"id\": \"CC-M-001-002\", \"version\": 1, \"milestone\": \"M-001\", \"diff\": \"--- a/src/b.py\\n+++ b/src/b.py\\n...\"}, \"id\": 2}",
+                '    {"method": "set-change", "params": {"id": "CC-M-001-001", "version": 1, "milestone": "M-001", "diff": "--- a/src/a.py\\n+++ b/src/a.py\\n..."}, "id": 1},',
+                '    {"method": "set-change", "params": {"id": "CC-M-001-002", "version": 1, "milestone": "M-001", "diff": "--- a/src/b.py\\n+++ b/src/b.py\\n..."}, "id": 2}',
                 "  ]'",
                 "",
                 "COMMON FIX PATTERNS:",

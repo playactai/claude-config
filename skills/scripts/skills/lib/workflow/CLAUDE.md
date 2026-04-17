@@ -36,6 +36,7 @@ main() -> format_output() -> print() -> LLM reads -> follows <invoke_after>
 ## Test
 
 ```bash
-pytest tests/ -v
-pytest tests/ -k deepthink -v
+SCRIPTS="${CLAUDE_PROJECT_DIR:-$HOME}/.claude/skills/scripts"
+uv run --project "$SCRIPTS" pytest "$SCRIPTS" -v
+uv run --project "$SCRIPTS" pytest "$SCRIPTS" -k deepthink -v
 ```

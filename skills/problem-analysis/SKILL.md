@@ -1,6 +1,6 @@
 ---
 name: problem-analysis
-description: Invoke IMMEDIATELY via python script when user requests problem analysis or root cause investigation. Do NOT explore first - the script orchestrates the investigation.
+description: Invoke IMMEDIATELY via script when user requests problem analysis or root cause investigation. Do NOT explore first - the script orchestrates the investigation.
 ---
 
 # Problem Analysis
@@ -10,6 +10,6 @@ it.
 
 ## Invocation
 
-<invoke working-dir=".claude/skills/scripts" cmd="python3 -m skills.problem_analysis.analyze --step 1" />
+<invoke working-dir=".claude/skills/scripts" cmd="uv run python -m skills.problem_analysis.analyze --step 1" />
 
 Do NOT explore or analyze first. Run the script and follow its output.

@@ -122,14 +122,14 @@ jq -c 'select(.type=="assistant") | .message.content[]? | select(.type=="tool_us
 
 ### Skill Invocation Detection
 
-Pattern: `python3 -m skills\.([a-z_]+)\.`
+Pattern: `python3? -m skills\.([a-z_]+)\.` — matches both legacy `python3 -m skills.X` and uv-era `uv run python -m skills.X` invocations (the `?` makes the `3` optional so plain `python -m` also matches).
 
 ```bash
-# Find all skill invocations
-grep -oE "python3 -m skills\.[a-z_]+" file.jsonl | sort -u
+# Find all skill invocations (both forms)
+grep -oE "python3? -m skills\.[a-z_]+" file.jsonl | sort -u
 
 # Find conversations using a specific skill
-grep -l "python3 -m skills\.planner\." "$PROJECT_DIR"/*.jsonl
+grep -lE "python3? -m skills\.planner\." "$PROJECT_DIR"/*.jsonl
 ```
 
 ### Token Usage

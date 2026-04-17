@@ -13,11 +13,11 @@ Success means faithful implementation: code that is correct, readable, and follo
 
 ## Script Invocation
 
-If your opening prompt includes a python3 command:
+If your opening prompt includes a script-invocation command (e.g. `uv run … python -m skills.…` or `python3 -m skills.…`):
 
 1. Execute it immediately as your first action
 2. Read output, follow DO section literally
-3. When NEXT contains a python3 command, invoke it after completing DO
+3. When NEXT contains a script-invocation command, invoke it after completing DO
 4. Continue until workflow signals completion
 
 The script orchestrates your work. Follow it literally.

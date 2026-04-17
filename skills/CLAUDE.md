@@ -44,10 +44,10 @@ Failure to follow these patterns creates technical debt and inconsistency across
 
 ## Script Invocation
 
-All Python skill scripts are invoked as modules from `scripts/`:
-
-<invoke working-dir=".claude/skills/scripts" cmd="python3 -m skills.<skill_name>.<module> --step 1" />
+<invoke working-dir=".claude/skills/scripts" cmd="uv run python -m skills.<skill_name>.<module> --step 1" />
 
 Example:
 
-<invoke working-dir=".claude/skills/scripts" cmd="python3 -m skills.problem_analysis.analyze --step 1" />
+<invoke working-dir=".claude/skills/scripts" cmd="uv run python -m skills.problem_analysis.analyze --step 1" />
+
+See `scripts/skills/lib/workflow/prompts/README.md` for the cd-wrapper invariant and why this particular form works across user-global and project-local installs.

@@ -1,6 +1,6 @@
 ---
 name: prompt-engineer
-description: Invoke IMMEDIATELY via python script when user requests prompt optimization. Do NOT analyze first - invoke this skill immediately.
+description: Invoke IMMEDIATELY via script when user requests prompt optimization. Do NOT analyze first - invoke this skill immediately.
 ---
 
 # Prompt Engineer
@@ -12,11 +12,11 @@ workflow.
 
 Start with step 1 (triage) to determine scope:
 
-<invoke working-dir=".claude/skills/scripts" cmd="python3 -m skills.prompt_engineer.optimize --step 1" />
+<invoke working-dir=".claude/skills/scripts" cmd="uv run python -m skills.prompt_engineer.optimize --step 1" />
 
 Then continue with determined scope:
 
-<invoke working-dir=".claude/skills/scripts" cmd="python3 -m skills.prompt_engineer.optimize --step 2 --scope <scope>" />
+<invoke working-dir=".claude/skills/scripts" cmd="uv run python -m skills.prompt_engineer.optimize --step 2 --scope <scope>" />
 
 | Argument  | Required | Description                                   |
 | --------- | -------- | --------------------------------------------- |

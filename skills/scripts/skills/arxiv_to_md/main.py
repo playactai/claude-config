@@ -71,7 +71,7 @@ MODE1_TEMPLATE = (
     "\n"
     "arXiv ID: $ARXIV_ID\n"
     "\n"
-    'Start: <invoke working-dir=".claude/skills/scripts" cmd="python3 -m skills.arxiv_to_md.sub_agent --step 1 --arxiv-id $ARXIV_ID" />\n'
+    'Start: <invoke working-dir=".claude/skills/scripts" cmd="uv run python -m skills.arxiv_to_md.sub_agent --step 1 --arxiv-id $ARXIV_ID" />\n'
     "\n"
     "<expected_output>\n"
     "Sub-agent responds with ONLY:\n"
@@ -139,7 +139,7 @@ MODE2_TEMPLATE = (
     "arXiv ID: $ARXIV_ID\n"
     "Destination: $DEST_FILE\n"
     "\n"
-    'Start: <invoke working-dir=".claude/skills/scripts" cmd="python3 -m skills.arxiv_to_md.sub_agent --step 1 --arxiv-id $ARXIV_ID --dest-file \'$DEST_FILE\'" />\n'
+    'Start: <invoke working-dir=".claude/skills/scripts" cmd="uv run python -m skills.arxiv_to_md.sub_agent --step 1 --arxiv-id $ARXIV_ID --dest-file \'$DEST_FILE\'" />\n'
     "\n"
     "<expected_output>\n"
     "Sub-agent responds with ONLY:\n"

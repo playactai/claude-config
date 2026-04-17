@@ -15,6 +15,6 @@ Each orchestrator runs QR in a 4-step block per phase: `work → decompose → v
 ## Run
 
 ```bash
-python3 -m skills.planner.orchestrator.planner --step 1
-python3 -m skills.planner.orchestrator.executor --step 1
+uv run --project "${CLAUDE_PROJECT_DIR:-$HOME}/.claude/skills/scripts" python -m skills.planner.orchestrator.planner --step 1
+uv run --project "${CLAUDE_PROJECT_DIR:-$HOME}/.claude/skills/scripts" python -m skills.planner.orchestrator.executor --step 1
 ```

@@ -73,13 +73,13 @@ The documentation approach lets the LLM compose queries on demand rather than le
 
 ### Skill Recognition Pattern
 
-Skills are invoked via bash with pattern `python3 -m skills.{name}.{module}`. This pattern is general enough to capture all skills without enumeration:
+Skills are invoked via bash. Two forms appear in transcripts: legacy `python3 -m skills.{name}.{module}` (pre-uv-migration) and current `uv run python -m skills.{name}.{module}`. A single pattern captures both because the only varying part before `skills.` is the Python binary:
 
 ```regex
-python3 -m skills\.([a-z_]+)\.
+python3? -m skills\.([a-z_]+)\.
 ```
 
-Capture group 1 extracts the skill name. No need to maintain a list of valid skill names.
+The `3?` makes the digit optional, so `python -m` (uv form) and `python3 -m` (legacy form) both match. Capture group 1 extracts the skill name; no need to maintain a list of valid skill names.
 
 ### Subagent Correlation Challenge
 
@@ -120,14 +120,14 @@ done | sort -rn | head -10
 ### Analyze Skill Usage
 
 ```bash
-# Which skills were used in a conversation?
-grep -oE "python3 -m skills\.[a-z_]+" file.jsonl | \
-  sed 's/python3 -m skills\.//' | \
+# Which skills were used in a conversation? (both legacy and uv forms)
+grep -oE "python3? -m skills\.[a-z_]+" file.jsonl | \
+  sed -E 's/python3? -m skills\.//' | \
   cut -d. -f1 | \
   sort -u
 
-# Find all planner skill conversations
-grep -l "python3 -m skills\.planner\." "$PROJECT_DIR"/*.jsonl
+# Find all planner skill conversations (both forms)
+grep -lE "python3? -m skills\.planner\." "$PROJECT_DIR"/*.jsonl
 ```
 
 ### Token Growth Analysis

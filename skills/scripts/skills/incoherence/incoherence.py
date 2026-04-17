@@ -201,7 +201,7 @@ CRITICAL: All script outputs use XML format. You MUST:
     elif is_subagent_terminal:
         parts.append("SUB-AGENT TASK COMPLETE - Return results to parent agent.")
     else:
-        next_cmd = f'python3 -m skills.incoherence.incoherence --step-number {step + 1} --thoughts "<ACCUMULATED_CONTEXT>"'
+        next_cmd = f'uv run python -m skills.incoherence.incoherence --step-number {step + 1} --thoughts "<ACCUMULATED_CONTEXT>"'
         parts.append(render_invoke_after(InvokeAfterNode(cmd=next_cmd)))
 
     return "\n".join(parts)

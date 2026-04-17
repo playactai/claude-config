@@ -52,7 +52,7 @@ class TestInvokeAfterEscaping:
     def test_escapes_angle_brackets_in_cmd(self):
         """The live incoherence.py:198 trigger: --thoughts "<ACCUMULATED_CONTEXT>"."""
         node = InvokeAfterNode(
-            cmd="python3 -m skills.incoherence.incoherence --step-number 2 "
+            cmd="uv run python -m skills.incoherence.incoherence --step-number 2 "
             '--thoughts "<ACCUMULATED_CONTEXT>"'
         )
         rendered = render_invoke_after(node)

@@ -1,6 +1,6 @@
 ---
 name: codebase-analysis
-description: Invoke IMMEDIATELY via python script when user requests codebase understanding, architecture comprehension, or repository orientation. Do NOT explore first - the script orchestrates exploration.
+description: Invoke IMMEDIATELY via script when user requests codebase understanding, architecture comprehension, or repository orientation. Do NOT explore first - the script orchestrates exploration.
 ---
 
 # Codebase Analysis
@@ -11,4 +11,4 @@ When this skill activates, IMMEDIATELY invoke the script. The script IS the work
 
 Invoke:
 
-<invoke working-dir=".claude/skills/scripts" cmd="python3 -m skills.codebase_analysis.analyze --step 1" />
+<invoke working-dir=".claude/skills/scripts" cmd="uv run python -m skills.codebase_analysis.analyze --step 1" />

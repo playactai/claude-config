@@ -1,6 +1,6 @@
 ---
 name: decision-critic
-description: Invoke IMMEDIATELY via python script to stress-test decisions and reasoning. Do NOT analyze first - the script orchestrates the critique workflow.
+description: Invoke IMMEDIATELY via script to stress-test decisions and reasoning. Do NOT analyze first - the script orchestrates the critique workflow.
 ---
 
 # Decision Critic
@@ -10,7 +10,7 @@ workflow.
 
 ## Invocation
 
-<invoke working-dir=".claude/skills/scripts" cmd="python3 -m skills.decision_critic.decision_critic --step 1 --decision '<decision text>'" />
+<invoke working-dir=".claude/skills/scripts" cmd="uv run python -m skills.decision_critic.decision_critic --step 1 --decision '<decision text>'" />
 
 | Argument        | Required | Description                             |
 | --------------- | -------- | --------------------------------------- |

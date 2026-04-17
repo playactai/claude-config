@@ -1,6 +1,6 @@
 ---
 name: refactor
-description: Invoke IMMEDIATELY via python script when user requests refactoring analysis, technical debt review, or code quality improvement. Do NOT explore first - the script orchestrates exploration.
+description: Invoke IMMEDIATELY via script when user requests refactoring analysis, technical debt review, or code quality improvement. Do NOT explore first - the script orchestrates exploration.
 ---
 
 # Refactor
@@ -9,7 +9,7 @@ When this skill activates, IMMEDIATELY invoke the script. The script IS the work
 
 ## Invocation
 
-<invoke working-dir=".claude/skills/scripts" cmd="python3 -m skills.refactor.refactor --step 1 --n 10" />
+<invoke working-dir=".claude/skills/scripts" cmd="uv run python -m skills.refactor.refactor --step 1 --n 10" />
 
 | Argument | Required | Description                                   |
 | -------- | -------- | --------------------------------------------- |

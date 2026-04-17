@@ -61,6 +61,16 @@ LLM reads output, follows <invoke_after> to invoke next step
 
 Discovery uses `importlib.import_module` + `pkgutil.walk_packages` to find `WORKFLOW` constants without executing module-level side effects. This pull-based approach eliminates import-time surprises and keeps testing isolated.
 
+## Invocation Pattern
+
+Three distinct invocation forms are used across the repository, chosen by caller context:
+
+- `<invoke working-dir=".claude/skills/scripts" cmd="uv run python -m skills.X" />` — Claude Code `<invoke>` tags; `working-dir` resolves against the active `.claude/` dir.
+- `uv run --project "${CLAUDE_PROJECT_DIR:-$HOME}/.claude/skills/scripts" python -m skills.X` — raw bash in code blocks; no `working-dir` resolution available.
+- `uv run python -m skills.X` — Python `next_cmd` strings fed to `format_step()`; the wrapper supplies cwd via a `cd` prefix.
+
+Full rationale and the cd-wrapper invariant are in `prompts/README.md`.
+
 ## Core Types
 
 ### Workflow
@@ -161,7 +171,7 @@ These checks run at module load time, so malformed workflows surface as `ValueEr
 
 ## Design Decisions
 
-**Why metadata-only (no central execution engine)?** Skills already have CLI-based step invocation (`python3 -m skill --step N`) that works well with the LLM's Bash tool. A central `Workflow.run()` would have to re-route through the same CLI layer or duplicate it; removing it eliminates dead code and a whole class of framework-vs-skill coupling.
+**Why metadata-only (no central execution engine)?** Skills already have CLI-based step invocation (`uv run python -m skill --step N`) that works well with the LLM's Bash tool. A central `Workflow.run()` would have to re-route through the same CLI layer or duplicate it; removing it eliminates dead code and a whole class of framework-vs-skill coupling.
 
 **Why separate `Workflow` and `StepDef`?** Workflows are collections; steps are atomic. Keeping them separate lets `Workflow.__init__` validate at the collection level (unique ids, entry point) while step definitions stay focused on per-step metadata.
 
@@ -171,7 +181,7 @@ These checks run at module load time, so malformed workflows surface as `ValueEr
 
 **Why pull-based discovery over registration decorators?** Decorators run module-level side effects on import. Pull-based scanning (`discover_workflows`) finds `WORKFLOW` constants without requiring side effects, enabling isolated unit testing and avoiding circular import chains.
 
-**Separate CLI entry points per skill** (as opposed to one `python -m workflow run <skill>` dispatcher): Running modules as `__main__` causes module identity issues (the module is imported via its qualified name by `__init__.py` but would be re-executed as `__main__` under a central dispatcher). Separate CLI entry points avoid this duplicate-import trap.
+**Separate CLI entry points per skill** (as opposed to one `uv run python -m workflow run <skill>` dispatcher): Running modules as `__main__` causes module identity issues (the module is imported via its qualified name by `__init__.py` but would be re-executed as `__main__` under a central dispatcher). Separate CLI entry points avoid this duplicate-import trap.
 
 ## Tradeoffs
 
@@ -275,13 +285,14 @@ For sub-agent scripts that may ask questions, include `SUB_AGENT_QUESTION_FORMAT
 
 ## Testing
 
-All tests use pytest. Run from `skills/scripts/`:
+All tests use pytest. Run via uv. Set `SCRIPTS="${CLAUDE_PROJECT_DIR:-$HOME}/.claude/skills/scripts"` so the commands work against both the user-global install and a project-local `.claude/`:
 
 ```bash
-pytest tests/ -v                         # everything
-pytest tests/ -k deepthink -v            # one workflow
-pytest tests/test_workflow_import.py -v  # imports only
-pytest tests/test_workflow_structure.py -v  # structure validation
-pytest tests/test_workflow_steps.py -v   # exhaustive step invocability
-pytest tests/test_domain_types.py -v     # domain type units
+SCRIPTS="${CLAUDE_PROJECT_DIR:-$HOME}/.claude/skills/scripts"
+uv run --project "$SCRIPTS" pytest "$SCRIPTS" -v                                          # everything
+uv run --project "$SCRIPTS" pytest "$SCRIPTS" -k deepthink -v                             # one workflow
+uv run --project "$SCRIPTS" pytest "$SCRIPTS/tests/test_workflow_import.py" -v            # imports only
+uv run --project "$SCRIPTS" pytest "$SCRIPTS/tests/test_workflow_structure.py" -v         # structure validation
+uv run --project "$SCRIPTS" pytest "$SCRIPTS/tests/test_workflow_steps.py" -v             # exhaustive step invocability
+uv run --project "$SCRIPTS" pytest "$SCRIPTS/tests/test_domain_types.py" -v               # domain type units
 ```

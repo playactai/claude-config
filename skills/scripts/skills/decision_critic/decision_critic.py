@@ -174,7 +174,7 @@ def build_next_command(step: int) -> str | None:
     """Build invoke command for next step."""
     if step < 1 or step >= 7:
         return None
-    return f"python3 -m {MODULE_PATH} --step {step + 1}"
+    return f"uv run python -m {MODULE_PATH} --step {step + 1}"
 
 
 # ============================================================================

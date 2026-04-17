@@ -141,7 +141,7 @@ def format_step_1(state_dir: str, reconciliation_check: bool) -> str:
         )
 
     body = "\n".join(actions)
-    next_cmd = f"python3 -m {MODULE_PATH} --step 2 --state-dir {_q(state_dir)}"
+    next_cmd = f"uv run python -m {MODULE_PATH} --step 2 --state-dir {_q(state_dir)}"
 
     return format_step(body, next_cmd, title="Execution Planning")
 
@@ -165,7 +165,7 @@ def format_step_2(qr: QRState, state_dir: str) -> str:
         ]
 
         mode_script = get_mode_script_path("developer/exec_implement.py")
-        invoke_cmd = f"python3 -m {mode_script} --step 1 --state-dir {_q(state_dir)}"
+        invoke_cmd = f"uv run python -m {mode_script} --step 1 --state-dir {_q(state_dir)}"
 
         actions.append(
             subagent_dispatch(
@@ -218,7 +218,7 @@ def format_step_2(qr: QRState, state_dir: str) -> str:
         ]
 
     body = "\n".join(actions)
-    next_cmd = f"python3 -m {MODULE_PATH} --step 3 --state-dir {_q(state_dir)}"
+    next_cmd = f"uv run python -m {MODULE_PATH} --step 3 --state-dir {_q(state_dir)}"
 
     return format_step(body, next_cmd, title=title)
 
@@ -245,7 +245,7 @@ def format_qr_decompose(step: int, phase: str, state_dir: str, qr: QRState) -> s
                 "Proceeding to verification of existing items.",
             ]
         )
-        next_cmd = f"python3 -m {MODULE_PATH} --step {next_step} --state-dir {_q(state_dir)}"
+        next_cmd = f"uv run python -m {MODULE_PATH} --step {next_step} --state-dir {_q(state_dir)}"
         return format_step(body, next_cmd, title=f"{title} - Skipped")
 
     actions = [
@@ -255,7 +255,7 @@ def format_qr_decompose(step: int, phase: str, state_dir: str, qr: QRState) -> s
         "",
     ]
 
-    invoke_cmd = f"python3 -m {decompose_script} --step 1 --state-dir {_q(state_dir)}"
+    invoke_cmd = f"uv run python -m {decompose_script} --step 1 --state-dir {_q(state_dir)}"
     actions.append(
         subagent_dispatch(
             agent_type="quality-reviewer",
@@ -268,7 +268,7 @@ def format_qr_decompose(step: int, phase: str, state_dir: str, qr: QRState) -> s
 
     body = "\n".join(actions)
     next_step = step + 1
-    next_cmd = f"python3 -m {MODULE_PATH} --step {next_step} --state-dir {_q(state_dir)}"
+    next_cmd = f"uv run python -m {MODULE_PATH} --step {next_step} --state-dir {_q(state_dir)}"
 
     return format_step(body, next_cmd, title=title)
 
@@ -290,7 +290,7 @@ def format_qr_verify(step: int, phase: str, state_dir: str, qr: QRState) -> str:
     if not qr_state or "items" not in qr_state:
         decompose_step = step - 1
         body = f"Error: qr-{phase}.json not found or malformed. Routing back to decompose step."
-        retry_cmd = f"python3 -m {MODULE_PATH} --step {decompose_step} --state-dir {_q(state_dir)}"
+        retry_cmd = f"uv run python -m {MODULE_PATH} --step {decompose_step} --state-dir {_q(state_dir)}"
         return format_step(body, retry_cmd, title=title)
 
     iteration = qr_state.get("iteration", 1)
@@ -306,7 +306,7 @@ def format_qr_verify(step: int, phase: str, state_dir: str, qr: QRState) -> str:
         body = "All items already verified. Proceeding with pass."
         # No agents dispatched → collapse to single NEXT STEP (pass) so the
         # prompt doesn't render "Count PASS vs FAIL" for zero agents.
-        next_cmd = f"python3 -m {MODULE_PATH} --step {next_step} --state-dir {_q(state_dir)} --qr-status pass"
+        next_cmd = f"uv run python -m {MODULE_PATH} --step {next_step} --state-dir {_q(state_dir)} --qr-status pass"
         return format_step(body, next_cmd=next_cmd, title=title)
 
     # Group items by group_id for batch verification
@@ -330,9 +330,9 @@ def format_qr_verify(step: int, phase: str, state_dir: str, qr: QRState) -> str:
 Items: $item_ids
 Checks: $checks_summary
 
-Start: python3 -m {verify_script} --step 1 --state-dir {_q(state_dir)} $qr_item_flags"""
+Start: uv run python -m {verify_script} --step 1 --state-dir {_q(state_dir)} $qr_item_flags"""
 
-    command = f"python3 -m {verify_script} --step 1 --state-dir {_q(state_dir)} $qr_item_flags"
+    command = f"uv run python -m {verify_script} --step 1 --state-dir {_q(state_dir)} $qr_item_flags"
 
     dispatch_text = template_dispatch(
         agent_type="quality-reviewer",
@@ -367,7 +367,7 @@ Start: python3 -m {verify_script} --step 1 --state-dir {_q(state_dir)} $qr_item_
 
     body = "\n".join(actions)
     next_step = step + 1
-    base_cmd = f"python3 -m {MODULE_PATH} --step {next_step} --state-dir {_q(state_dir)}"
+    base_cmd = f"uv run python -m {MODULE_PATH} --step {next_step} --state-dir {_q(state_dir)}"
 
     return format_step(
         body,
@@ -439,7 +439,7 @@ def format_step_6(qr: QRState, state_dir: str) -> str:
             "",
         ]
 
-        invoke_cmd = f"python3 -m {mode_script} --step 1 --state-dir {_q(state_dir)}"
+        invoke_cmd = f"uv run python -m {mode_script} --step 1 --state-dir {_q(state_dir)}"
         actions.append(
             subagent_dispatch(
                 agent_type="technical-writer",
@@ -453,7 +453,7 @@ def format_step_6(qr: QRState, state_dir: str) -> str:
             "",
         ]
 
-        invoke_cmd = f"python3 -m {mode_script} --step 1 --state-dir {_q(state_dir)}"
+        invoke_cmd = f"uv run python -m {mode_script} --step 1 --state-dir {_q(state_dir)}"
         actions.append(
             subagent_dispatch(
                 agent_type="technical-writer",
@@ -462,7 +462,7 @@ def format_step_6(qr: QRState, state_dir: str) -> str:
         )
 
     body = "\n".join(actions)
-    next_cmd = f"python3 -m {MODULE_PATH} --step 7 --state-dir {_q(state_dir)}"
+    next_cmd = f"uv run python -m {MODULE_PATH} --step 7 --state-dir {_q(state_dir)}"
 
     return format_step(body, next_cmd, title=title)
 

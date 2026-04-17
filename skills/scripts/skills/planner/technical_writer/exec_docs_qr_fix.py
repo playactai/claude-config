@@ -72,7 +72,7 @@ def get_step_guidance(step: int, module_path: str | None = None, **kwargs) -> di
                 "  - Do NOT remove valid documentation",
                 "  - Focus ONLY on addressing the specific failures",
             ],
-            "next": f"python3 -m {MODULE_PATH} --step 2 --state-dir {state_dir}",
+            "next": f"uv run python -m {MODULE_PATH} --step 2 --state-dir {state_dir}",
         }
 
     elif step == 2:
@@ -106,7 +106,7 @@ def get_step_guidance(step: int, module_path: str | None = None, **kwargs) -> di
                 "",
                 "CONSTRAINT: Fix ONLY the failing items. Don't refactor passing docs.",
             ],
-            "next": f"python3 -m {MODULE_PATH} --step 3 --state-dir {state_dir}",
+            "next": f"uv run python -m {MODULE_PATH} --step 3 --state-dir {state_dir}",
         }
 
     elif step == 3:

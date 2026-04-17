@@ -877,7 +877,7 @@ FORMATTING_INSTRUCTIONS = (
 
 def build_dispatch_body() -> str:
     """Build DISPATCH instructions with roster_dispatch()."""
-    invoke_cmd = f"python3 -m {SUBAGENT_MODULE_PATH} --step 1"
+    invoke_cmd = f"uv run python -m {SUBAGENT_MODULE_PATH} --step 1"
 
     dispatch_text = roster_dispatch(
         agent_type="general-purpose",
@@ -893,7 +893,7 @@ def build_dispatch_body() -> str:
 
 def build_next_command(step: int, mode: str, confidence: str, iteration: int) -> str | None:
     """Build invoke command for next step."""
-    base = f"python3 -m {MODULE_PATH}"
+    base = f"uv run python -m {MODULE_PATH}"
 
     if step == 1:
         return f"{base} --step 2"

@@ -92,7 +92,7 @@ def get_step_guidance(step: int, module_path: str | None = None, **kwargs) -> di
                 "",
                 "Read plan.json now. List milestones and code_intents.",
             ],
-            "next": f"python3 -m {MODULE_PATH} --step 2 --state-dir {state_dir}",
+            "next": f"uv run python -m {MODULE_PATH} --step 2 --state-dir {state_dir}",
         }
 
     elif step == 2:
@@ -121,7 +121,7 @@ def get_step_guidance(step: int, module_path: str | None = None, **kwargs) -> di
                 "SKIP PATTERN: If milestone only touches .md/.rst/.txt files,",
                 "mark as documentation-only (no code_changes needed).",
             ],
-            "next": f"python3 -m {MODULE_PATH} --step 3{state_dir_arg}",
+            "next": f"uv run python -m {MODULE_PATH} --step 3{state_dir_arg}",
         }
 
     elif step == 3:
@@ -171,7 +171,7 @@ def get_step_guidance(step: int, module_path: str | None = None, **kwargs) -> di
                 "CRITICAL: Each code_change MUST have valid intent_ref.",
                 "  CLI validates: intent_ref must exist in code_intents[].",
             ],
-            "next": f"python3 -m {MODULE_PATH} --step 4{state_dir_arg}",
+            "next": f"uv run python -m {MODULE_PATH} --step 4{state_dir_arg}",
         }
 
     elif step == 4:

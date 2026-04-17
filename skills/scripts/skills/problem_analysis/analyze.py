@@ -306,7 +306,7 @@ OUTPUT_INSTRUCTIONS = (
 
 def build_next_command(step: int, confidence: str, iteration: int) -> str | None:
     """Build invoke command for next step."""
-    base = f"python3 -m {MODULE_PATH}"
+    base = f"uv run python -m {MODULE_PATH}"
     if step == 1:
         return f"{base} --step 2"
     if step == 2:

@@ -113,7 +113,7 @@ def get_step_guidance(step: int, module_path: str | None = None, **kwargs) -> di
         return {
             "title": STEPS[1],
             "actions": actions,
-            "next": f"python3 -m {MODULE_PATH} --step 2 --state-dir {state_dir}",
+            "next": f"uv run python -m {MODULE_PATH} --step 2 --state-dir {state_dir}",
         }
 
     elif step == 2:
@@ -153,7 +153,7 @@ def get_step_guidance(step: int, module_path: str | None = None, **kwargs) -> di
                 "These decision IDs are your SOURCE for WHY comments.",
                 "Comments you add MUST reference these decision_refs.",
             ],
-            "next": f"python3 -m {MODULE_PATH} --step 3{state_dir_arg}",
+            "next": f"uv run python -m {MODULE_PATH} --step 3{state_dir_arg}",
         }
 
     elif step == 3:
@@ -181,7 +181,7 @@ def get_step_guidance(step: int, module_path: str | None = None, **kwargs) -> di
                 "",
                 "This analysis drives Step 4.",
             ],
-            "next": f"python3 -m {MODULE_PATH} --step 4{state_dir_arg}",
+            "next": f"uv run python -m {MODULE_PATH} --step 4{state_dir_arg}",
         }
 
     elif step == 4:
@@ -224,7 +224,7 @@ def get_step_guidance(step: int, module_path: str | None = None, **kwargs) -> di
                 "  - BAD: 'Added to support...', 'Now uses...', 'Changed from...'",
                 "  - GOOD: Timeless present tense describing what IS",
             ],
-            "next": f"python3 -m {MODULE_PATH} --step 5{state_dir_arg}",
+            "next": f"uv run python -m {MODULE_PATH} --step 5{state_dir_arg}",
         }
 
     elif step == 5:
@@ -272,7 +272,7 @@ def get_step_guidance(step: int, module_path: str | None = None, **kwargs) -> di
                 "  - If YES: skip (redundant)",
                 "  - If NO: include (invisible knowledge)",
             ],
-            "next": f"python3 -m {MODULE_PATH} --step 6{state_dir_arg}",
+            "next": f"uv run python -m {MODULE_PATH} --step 6{state_dir_arg}",
         }
 
     elif step == 6:

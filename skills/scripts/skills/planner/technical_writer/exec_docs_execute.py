@@ -58,7 +58,7 @@ def get_step_guidance(step: int, module_path: str | None = None, **kwargs) -> di
                 "",
                 "Read the plan file now to understand what was implemented.",
             ],
-            "next": f"python3 -m {MODULE_PATH} --step 2{state_dir_arg}",
+            "next": f"uv run python -m {MODULE_PATH} --step 2{state_dir_arg}",
         }
 
     elif step == 2:
@@ -87,7 +87,7 @@ def get_step_guidance(step: int, module_path: str | None = None, **kwargs) -> di
                 "  - Modified directories: [list]",
                 "  - Key changes: [per milestone]",
             ],
-            "next": f"python3 -m {MODULE_PATH} --step 3{state_dir_arg}",
+            "next": f"uv run python -m {MODULE_PATH} --step 3{state_dir_arg}",
         }
 
     elif step == 3:
@@ -127,7 +127,7 @@ def get_step_guidance(step: int, module_path: str | None = None, **kwargs) -> di
                 "  - 'Key Invariants', 'Dependencies', 'Constraints' sections",
                 "  - Overview longer than ONE sentence",
             ],
-            "next": f"python3 -m {MODULE_PATH} --step 4{state_dir_arg}",
+            "next": f"uv run python -m {MODULE_PATH} --step 4{state_dir_arg}",
         }
 
     elif step == 4:
@@ -161,7 +161,7 @@ def get_step_guidance(step: int, module_path: str | None = None, **kwargs) -> di
                 "  If YES -> delete the sentence",
                 "  If NO -> keep it",
             ],
-            "next": f"python3 -m {MODULE_PATH} --step 5{state_dir_arg}",
+            "next": f"uv run python -m {MODULE_PATH} --step 5{state_dir_arg}",
         }
 
     elif step == 5:
@@ -188,7 +188,7 @@ def get_step_guidance(step: int, module_path: str | None = None, **kwargs) -> di
                 "This is verification, not comprehensive review.",
                 "QR already validated; spot-check for transcription accuracy.",
             ],
-            "next": f"python3 -m {MODULE_PATH} --step 6{state_dir_arg}",
+            "next": f"uv run python -m {MODULE_PATH} --step 6{state_dir_arg}",
         }
 
     elif step == 6:

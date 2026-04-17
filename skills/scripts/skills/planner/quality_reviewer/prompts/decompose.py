@@ -204,7 +204,7 @@ def dispatch_step(
     state_dir_arg = f" --state-dir {state_dir}" if state_dir else ""
 
     def next_cmd(s):
-        return f"python3 -m {module_path} --step {s}{state_dir_arg}"
+        return f"uv run python -m {module_path} --step {s}{state_dir_arg}"
 
     # Step 1: Absorb context (phase-specific)
     if step == 1:
@@ -418,7 +418,7 @@ def step_9_structural_grouping(state_dir: str, phase: str, module_path: str) -> 
             f"  uv run python -m skills.planner.cli.qr --state-dir {state_dir} --qr-phase {phase} \\",
             "    assign-group <item_id> --group-id <group_id>",
         ],
-        "next": f"python3 -m {module_path} --step 10 --state-dir {state_dir}",
+        "next": f"uv run python -m {module_path} --step 10 --state-dir {state_dir}",
     }
 
 
@@ -463,7 +463,7 @@ def step_10_component_grouping(
             "",
             f"If no component groups: # No component groups. {len(ungrouped)} items to Phase 2.",
         ],
-        "next": f"python3 -m {module_path} --step 11 --state-dir {state_dir}",
+        "next": f"uv run python -m {module_path} --step 11 --state-dir {state_dir}",
     }
 
 
@@ -503,7 +503,7 @@ def step_11_concern_grouping(
             "",
             format_assign_cmd(state_dir, phase, "concern-"),
         ],
-        "next": f"python3 -m {module_path} --step 12 --state-dir {state_dir}",
+        "next": f"uv run python -m {module_path} --step 12 --state-dir {state_dir}",
     }
 
 
@@ -537,7 +537,7 @@ def step_12_affinity_grouping(state_dir: str, phase: str, module_path: str) -> d
             "",
             "Remaining ungrouped items become singletons.",
         ],
-        "next": f"python3 -m {module_path} --step 13 --state-dir {state_dir}",
+        "next": f"uv run python -m {module_path} --step 13 --state-dir {state_dir}",
     }
 
 

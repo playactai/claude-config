@@ -242,7 +242,7 @@ def build_explore_dispatch(
 CATEGORY: $name
 MODE: $mode
 
-Start: <invoke working-dir=".claude/skills/scripts" cmd="python3 -m """
+Start: <invoke working-dir=".claude/skills/scripts" cmd="uv run python -m """
         + EXPLORE_MODULE_PATH
         + """ --step 1 --category $ref --mode $mode"""
         + scope_arg
@@ -250,7 +250,7 @@ Start: <invoke working-dir=".claude/skills/scripts" cmd="python3 -m """
     )
 
     # Command template (also has $var placeholders)
-    command = f'<invoke working-dir=".claude/skills/scripts" cmd="python3 -m {EXPLORE_MODULE_PATH} --step 1 --category $ref --mode $mode{scope_arg}" />'
+    command = f'<invoke working-dir=".claude/skills/scripts" cmd="uv run python -m {EXPLORE_MODULE_PATH} --step 1 --category $ref --mode $mode{scope_arg}" />'
 
     node = TemplateDispatchNode(
         agent_type="general-purpose",
@@ -1163,10 +1163,10 @@ DO NOT modify commands. DO NOT skip steps. DO NOT interpret.
 
     invoke_after = f"""<invoke_after>
   <if_custom>
-    <invoke working-dir=".claude/skills/scripts" cmd="python3 -m {MODULE_PATH} --step 2 --mode custom{scope_arg}" />
+    <invoke working-dir=".claude/skills/scripts" cmd="uv run python -m {MODULE_PATH} --step 2 --mode custom{scope_arg}" />
   </if_custom>
   <if_not_custom>
-    <invoke working-dir=".claude/skills/scripts" cmd="python3 -m {MODULE_PATH} --step 2 --n {n} --mode $MODE{scope_arg}" />
+    <invoke working-dir=".claude/skills/scripts" cmd="uv run python -m {MODULE_PATH} --step 2 --n {n} --mode $MODE{scope_arg}" />
   </if_not_custom>
 </invoke_after>"""
     parts.append(invoke_after)
@@ -1219,7 +1219,7 @@ DO NOT modify commands. DO NOT skip steps. DO NOT interpret.
     parts.append(
         render_invoke_after(
             InvokeAfterNode(
-                cmd=f"python3 -m {MODULE_PATH} --step 4 --mode {mode_filter}{scope_arg}"
+                cmd=f"uv run python -m {MODULE_PATH} --step 4 --mode {mode_filter}{scope_arg}"
             )
         )
     )
@@ -1292,7 +1292,7 @@ def format_step_2_custom(info: dict, scope: str | None = None) -> str:
     scope_arg = f" --scope {shlex.quote(scope)}" if scope else ""
     parts.append(
         render_invoke_after(
-            InvokeAfterNode(cmd=f"python3 -m {MODULE_PATH} --step 3 --mode custom{scope_arg}")
+            InvokeAfterNode(cmd=f"uv run python -m {MODULE_PATH} --step 3 --mode custom{scope_arg}")
         )
     )
 
@@ -1360,16 +1360,16 @@ def format_step_3_verification(info: dict, scope: str | None = None, retry: int 
         # Still have retry budget
         invoke_after = f"""<invoke_after>
   <if_revise>
-    <invoke working-dir=".claude/skills/scripts" cmd="python3 -m {MODULE_PATH} --step 3 --mode custom{scope_arg} --retry 1" />
+    <invoke working-dir=".claude/skills/scripts" cmd="uv run python -m {MODULE_PATH} --step 3 --mode custom{scope_arg} --retry 1" />
   </if_revise>
   <if_pass>
-    <invoke working-dir=".claude/skills/scripts" cmd="python3 -m {MODULE_PATH} --step 4 --mode custom{scope_arg}" />
+    <invoke working-dir=".claude/skills/scripts" cmd="uv run python -m {MODULE_PATH} --step 4 --mode custom{scope_arg}" />
   </if_pass>
 </invoke_after>"""
     else:
         # Retry budget exhausted - proceed regardless
         invoke_after = render_invoke_after(
-            InvokeAfterNode(cmd=f"python3 -m {MODULE_PATH} --step 4 --mode custom{scope_arg}")
+            InvokeAfterNode(cmd=f"uv run python -m {MODULE_PATH} --step 4 --mode custom{scope_arg}")
         )
 
     parts.append(invoke_after)
@@ -1389,7 +1389,7 @@ def format_step_4_dispatch_custom(info: dict, scope: str | None = None) -> str:
 
     scope_display = scope or "entire codebase"
     scope_arg = f" --scope {shlex.quote(scope)}" if scope else ""
-    invoke_cmd = f'<invoke working-dir=".claude/skills/scripts" cmd="python3 -m {EXPLORE_MODULE_PATH} --step 1 --category $CATEGORY_REF --mode code{scope_arg}" />'
+    invoke_cmd = f'<invoke working-dir=".claude/skills/scripts" cmd="uv run python -m {EXPLORE_MODULE_PATH} --step 1 --category $CATEGORY_REF --mode code{scope_arg}" />'
 
     actions = [
         "DISPATCH explore agents for verified categories.",
@@ -1429,7 +1429,7 @@ def format_step_4_dispatch_custom(info: dict, scope: str | None = None) -> str:
     parts.append("")
 
     # Next step: Triage (step 5 in custom mode)
-    parts.append(render_invoke_after(InvokeAfterNode(cmd=f"python3 -m {MODULE_PATH} --step 5")))
+    parts.append(render_invoke_after(InvokeAfterNode(cmd=f"uv run python -m {MODULE_PATH} --step 5")))
 
     return "\n".join(parts)
 
@@ -1447,7 +1447,7 @@ def format_step_4_triage(info: dict) -> str:
     parts.append("")
 
     # Non-custom: step 4 (triage) -> step 6 (cluster), skipping step 5
-    parts.append(render_invoke_after(InvokeAfterNode(cmd=f"python3 -m {MODULE_PATH} --step 6")))
+    parts.append(render_invoke_after(InvokeAfterNode(cmd=f"uv run python -m {MODULE_PATH} --step 6")))
 
     return "\n".join(parts)
 
@@ -1463,7 +1463,7 @@ def format_step_5_triage(info: dict) -> str:
     parts.append(render_current_action(CurrentActionNode(actions)))
     parts.append("")
 
-    parts.append(render_invoke_after(InvokeAfterNode(cmd=f"python3 -m {MODULE_PATH} --step 6")))
+    parts.append(render_invoke_after(InvokeAfterNode(cmd=f"uv run python -m {MODULE_PATH} --step 6")))
 
     return "\n".join(parts)
 
@@ -1479,7 +1479,7 @@ def format_step_6_cluster(info: dict) -> str:
     parts.append(render_current_action(CurrentActionNode(actions)))
     parts.append("")
 
-    parts.append(render_invoke_after(InvokeAfterNode(cmd=f"python3 -m {MODULE_PATH} --step 7")))
+    parts.append(render_invoke_after(InvokeAfterNode(cmd=f"uv run python -m {MODULE_PATH} --step 7")))
 
     return "\n".join(parts)
 
@@ -1495,7 +1495,7 @@ def format_step_7_contextualize(info: dict) -> str:
     parts.append(render_current_action(CurrentActionNode(actions)))
     parts.append("")
 
-    parts.append(render_invoke_after(InvokeAfterNode(cmd=f"python3 -m {MODULE_PATH} --step 8")))
+    parts.append(render_invoke_after(InvokeAfterNode(cmd=f"uv run python -m {MODULE_PATH} --step 8")))
 
     return "\n".join(parts)
 

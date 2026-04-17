@@ -56,7 +56,7 @@ def get_step_guidance(step: int, module_path: str | None = None, **kwargs) -> di
                 "  4. Run tests: pytest / tsc / go test -race",
                 "  5. Proceed to next wave",
             ],
-            "next": f"python3 -m {MODULE_PATH} --step 2{state_dir_arg}",
+            "next": f"uv run python -m {MODULE_PATH} --step 2{state_dir_arg}",
         }
 
     elif step == 2:
@@ -76,7 +76,7 @@ def get_step_guidance(step: int, module_path: str | None = None, **kwargs) -> di
                 "  - FILES: exact paths to create/modify",
                 "  - ACCEPTANCE: criteria from plan",
             ],
-            "next": f"python3 -m {MODULE_PATH} --step 3{state_dir_arg}",
+            "next": f"uv run python -m {MODULE_PATH} --step 3{state_dir_arg}",
         }
 
     elif step == 3:
@@ -95,7 +95,7 @@ def get_step_guidance(step: int, module_path: str | None = None, **kwargs) -> di
                 "  - Difficult/unclear: Task(debugger) to diagnose first",
                 "  - Uncertain: AskUserQuestion with options",
             ],
-            "next": f"python3 -m {MODULE_PATH} --step 4{state_dir_arg}",
+            "next": f"uv run python -m {MODULE_PATH} --step 4{state_dir_arg}",
         }
 
     elif step == 4:

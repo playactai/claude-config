@@ -92,12 +92,12 @@ def build_gate_output(
         return GateResult(output=format_step(body, title=title), terminal_pass=True)
 
     if qr.passed:
-        next_cmd = f"python3 -m {module_path} --step {pass_step}"
+        next_cmd = f"uv run python -m {module_path} --step {pass_step}"
         if state_dir:
             next_cmd += f" --state-dir {shlex.quote(state_dir)}"
     else:
         next_cmd = (
-            f"python3 -m {module_path} --step {work_step} --state-dir {shlex.quote(state_dir)}"
+            f"uv run python -m {module_path} --step {work_step} --state-dir {shlex.quote(state_dir)}"
         )
 
     return GateResult(

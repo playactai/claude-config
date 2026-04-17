@@ -89,7 +89,7 @@ def get_step_guidance(step: int, module_path: str | None = None, **kwargs) -> di
                 "DO NOT write any files yet. Gather understanding for step 2.",
                 "Record your analysis mentally for use in subsequent steps.",
             ],
-            "next": f"python3 -m {MODULE_PATH} --step 2 --state-dir {state_dir}",
+            "next": f"uv run python -m {MODULE_PATH} --step 2 --state-dir {state_dir}",
         }
 
     elif step == 2:
@@ -115,7 +115,7 @@ def get_step_guidance(step: int, module_path: str | None = None, **kwargs) -> di
                 "",
                 "Record discoveries for use in steps 4-6. Do NOT write files.",
             ],
-            "next": f"python3 -m {MODULE_PATH} --step 3{state_dir_arg}",
+            "next": f"uv run python -m {MODULE_PATH} --step 3{state_dir_arg}",
         }
 
     elif step == 3:
@@ -136,7 +136,7 @@ def get_step_guidance(step: int, module_path: str | None = None, **kwargs) -> di
                 "Record confirmed strategy for use in step 6.",
                 "Decisions will be recorded via CLI in step 6.",
             ],
-            "next": f"python3 -m {MODULE_PATH} --step 4{state_dir_arg}",
+            "next": f"uv run python -m {MODULE_PATH} --step 4{state_dir_arg}",
         }
 
     elif step == 4:
@@ -159,7 +159,7 @@ def get_step_guidance(step: int, module_path: str | None = None, **kwargs) -> di
                 "Use exploration findings from step 2 to ground tradeoffs.",
                 "Record approach analysis for step 6.",
             ],
-            "next": f"python3 -m {MODULE_PATH} --step 5{state_dir_arg}",
+            "next": f"uv run python -m {MODULE_PATH} --step 5{state_dir_arg}",
         }
 
     elif step == 5:
@@ -185,7 +185,7 @@ def get_step_guidance(step: int, module_path: str | None = None, **kwargs) -> di
                 "",
                 "Record assumptions and user answers for step 6.",
             ],
-            "next": f"python3 -m {MODULE_PATH} --step 6{state_dir_arg}",
+            "next": f"uv run python -m {MODULE_PATH} --step 6{state_dir_arg}",
         }
 
     elif step == 6:

@@ -46,7 +46,7 @@ def get_step_guidance(step: int, module_path: str | None = None, **kwargs) -> di
                 "Dispatching to FIX workflow.",
             ],
             "dispatch_to": target,
-            "next": f"python3 -m {target} --step 1 --state-dir {state_dir}",
+            "next": f"uv run python -m {target} --step 1 --state-dir {state_dir}",
         }
 
     # Use routing module for state-based detection
@@ -61,7 +61,7 @@ def get_step_guidance(step: int, module_path: str | None = None, **kwargs) -> di
                 "Dispatching to FIX workflow.",
             ],
             "dispatch_to": result["target_module"],
-            "next": f"python3 -m {result['target_module']} --step 1 --state-dir {state_dir}",
+            "next": f"uv run python -m {result['target_module']} --step 1 --state-dir {state_dir}",
         }
     else:
         return {
@@ -71,7 +71,7 @@ def get_step_guidance(step: int, module_path: str | None = None, **kwargs) -> di
                 "Dispatching to EXECUTE workflow.",
             ],
             "dispatch_to": result["target_module"],
-            "next": f"python3 -m {result['target_module']} --step 1 --state-dir {state_dir}",
+            "next": f"uv run python -m {result['target_module']} --step 1 --state-dir {state_dir}",
         }
 
 

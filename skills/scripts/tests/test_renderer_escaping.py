@@ -131,8 +131,8 @@ class TestSkillsDirShellQuoting:
         assert f"cd {self._EXPECTED} && run --step 2" in out
 
     def test_sub_agent_invoke_quotes_skills_dir(self):
-        out = sub_agent_invoke("python3 -m foo --step 1")
-        assert f"cd {self._EXPECTED} && python3 -m foo --step 1" in out
+        out = sub_agent_invoke("uv run python -m foo --step 1")
+        assert f"cd {self._EXPECTED} && uv run python -m foo --step 1" in out
 
 
 class TestIncoherenceRoundTrip:

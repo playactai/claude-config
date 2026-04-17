@@ -90,7 +90,7 @@ def format_next_step(
     """Format the invoke-after block for next step."""
     scope_arg = f" --scope {shlex.quote(scope)}" if scope else ""
     cmd = (
-        f"python3 -m {MODULE_PATH} --step {step} --category {category_ref} --mode {mode}{scope_arg}"
+        f"uv run python -m {MODULE_PATH} --step {step} --category {category_ref} --mode {mode}{scope_arg}"
     )
     return render_invoke_after(InvokeAfterNode(cmd=cmd))
 

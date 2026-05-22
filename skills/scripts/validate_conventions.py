@@ -23,28 +23,50 @@ def extract_convention_calls(script_path: Path) -> list[tuple[str, int]]:
     return calls
 
 
-def infer_role_from_path(script_path: Path) -> str:
-    """Infer AgentRole from script location."""
-    parts = script_path.parts
-    if "qr" in parts:
-        return "quality_reviewer"
-    elif "dev" in parts:
-        return "developer"
-    elif "tw" in parts:
-        return "technical_writer"
-    elif "refactor" in parts:
-        return "refactor"
+# Role directory name -> registry role. Full directory names plus the `qr` alias
+# for the shared QR helpers under planner/shared/qr/. REGISTRY.yaml is the
+# authority for which role names exist; main() guards this map against it.
+ROLE_BY_DIR = {
+    "quality_reviewer": "quality_reviewer",
+    "qr": "quality_reviewer",
+    "developer": "developer",
+    "technical_writer": "technical_writer",
+    "refactor": "refactor",
+}
+
+
+def infer_role_from_path(script_path: Path, package_root: Path) -> str:
+    """Infer AgentRole from a script's location within the package.
+
+    Match against the role directory name (see ROLE_BY_DIR). Only the
+    package-relative path is scanned, so a role-named directory in the *checkout*
+    path above package_root (e.g. /tmp/developer/...) cannot misclassify a script
+    whose real role directory lives inside the package. A script outside
+    package_root is "unknown" -- fail closed, never trust an ancestor directory.
+    """
+    try:
+        parts = script_path.relative_to(package_root).parts
+    except ValueError:
+        return "unknown"
+    for part in parts:
+        if part in ROLE_BY_DIR:
+            return ROLE_BY_DIR[part]
     return "unknown"
 
 
 def main():
-    get_registry()
+    registry = get_registry()
+    stray_roles = set(ROLE_BY_DIR.values()) - set(registry)
+    if stray_roles:
+        print(f"ROLE_BY_DIR maps to roles absent from REGISTRY.yaml: {sorted(stray_roles)}")
+        sys.exit(1)
+
     skills_dir = Path(__file__).parent / "skills"
     errors = []
 
     for script in skills_dir.rglob("*.py"):
         calls = extract_convention_calls(script)
-        role = infer_role_from_path(script)
+        role = infer_role_from_path(script, skills_dir)
 
         for convention, lineno in calls:
             if not validate_convention_access(role, convention):

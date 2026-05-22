@@ -95,11 +95,11 @@ SEVERITY ASSIGNMENT for plan-docs (doc_diff focused):
     - INVALID_DIFF_FORMAT: doc_diff not valid unified diff
     - TEMPORAL_CONTAMINATION: change-relative language in doc_diff
 
-  SHOULD (iterations 1-4):
+  SHOULD (iterations 1-3):
     - WHY_NOT_WHAT: doc_diff comment describes code, not reasoning
     - MISSING_DOCSTRING: function in diff lacks docstring in doc_diff
 
-  COULD (iterations 1-3):
+  COULD (iterations 1-2):
     - FORMATTING: minor diff formatting issues
 
 DO NOT generate items about:

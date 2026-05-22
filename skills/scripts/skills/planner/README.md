@@ -195,8 +195,8 @@ Blocking severity by iteration:
 | Iteration | Blocks              |
 | --------- | ------------------- |
 | 1-2       | MUST, SHOULD, COULD |
-| 3-4       | MUST, SHOULD        |
-| 5+        | MUST only           |
+| 3         | MUST, SHOULD        |
+| 4+        | MUST only           |
 
 ## Step Handler Architecture
 
@@ -237,4 +237,4 @@ STEPS = {
 3. plan.json is self-contained for execution
 4. Frozen plan.json is immutable (frozen_at timestamp means no writes)
 5. qr-{phase}.json files are ephemeral (exist only during QR cycle)
-6. QR iteration blocking: iter 1-2 all; iter 3-4 MUST/SHOULD; iter 5+ MUST only
+6. QR iteration blocking: iter 1-2 all; iter 3 MUST/SHOULD; iter 4+ MUST only

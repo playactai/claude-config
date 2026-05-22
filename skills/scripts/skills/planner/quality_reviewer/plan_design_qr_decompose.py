@@ -87,12 +87,12 @@ SEVERITY ASSIGNMENT (per conventions/severity.md, plan-design scope):
       * POLICY_UNJUSTIFIED: policy default without Tier 1 backing
       * ASSUMPTION_UNVALIDATED: architectural assumption without citation
 
-  SHOULD (iterations 1-4):
+  SHOULD (iterations 1-3):
     - Shallow reasoning chains (premise without implication)
     - Missing risk mitigations
     - Incomplete constraint documentation
 
-  COULD (iterations 1-3):
+  COULD (iterations 1-2):
     - Cosmetic plan formatting
     - Minor inconsistencies in naming"""
 

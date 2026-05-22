@@ -5,8 +5,8 @@
 | Level  | Meaning                  | Progressive De-Escalation |
 | ------ | ------------------------ | ------------------------- |
 | MUST   | Unrecoverable if missed  | All iterations            |
-| SHOULD | Maintainability debt     | Iterations 1-4            |
-| COULD  | Auto-fixable, low impact | Iterations 1-3            |
+| SHOULD | Maintainability debt     | Iterations 1-3            |
+| COULD  | Auto-fixable, low impact | Iterations 1-2            |
 
 ## Categories by Recoverability
 
@@ -37,6 +37,20 @@ Maintainability debt. Compounds but detectable later.
 | INCONSISTENT_ERROR_HANDLING | Mixed exceptions/codes in same module        |
 | CONVENTION_VIOLATION        | Violates documented project convention       |
 | TESTING_STRATEGY_VIOLATION  | Tests don't follow confirmed strategy        |
+| MISSED_SIMPLIFICATION       | Behavior-preserving restructuring would delete branches/helpers/layers, not taken |
+| FILE_SIZE_EXPLOSION         | Diff grows a file past 1000 lines without decomposition or compelling reason |
+| SPAGHETTI_CONDITIONAL       | Ad-hoc special-case branch/flag bolted onto an existing or shared flow |
+| THIN_ABSTRACTION            | Identity wrapper, pass-through, or "magic" mechanism adding indirection without clarity |
+| BOUNDARY_TYPE_EROSION       | Needless cast/`any`/`unknown`/optional papering over an invariant a type boundary should make explicit |
+| CANONICAL_DUPLICATION       | Bespoke near-duplicate of an existing canonical utility/helper |
+| LAYER_LEAK                  | Feature logic placed in a shared path, or logic/detail in the wrong layer or package |
+| NON_ATOMIC_ORCHESTRATION    | Avoidable serialization of independent work, or related updates that can leave half-applied state |
+
+These structural-simplification categories carry SHOULD severity: high-conviction
+and concrete, never vague "could be cleaner" notes. Each flag must name the
+specific behavior-preserving restructuring and what it deletes. Like all SHOULD
+findings they de-escalate (see `get_blocking_severities`), so an unfixed
+simplification never blocks a plan indefinitely.
 
 ### DIAGRAM (MUST for semantic, COULD for format)
 

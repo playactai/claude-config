@@ -56,6 +56,84 @@ Exception: Project specifies different handling per error category
 
 ---
 
+## Structural Simplification Conventions
+
+These push the structural checks toward ambition: prefer deleting complexity over
+rearranging it. Flag only when a concrete, behavior-preserving restructuring is
+visible -- name the simpler structure and what it removes. A vague "could be
+cleaner" is not a finding.
+
+<default-conventions domain="missed-simplification">
+**Missed Simplification**: A behavior-preserving restructuring is available that would delete whole branches, helpers, modes, or layers ("code judo"), but the change rearranges or preserves the complexity instead.
+Severity: SHOULD
+Test: Can you name the simpler structure and the concepts it removes? If not, do not flag.
+</default-conventions>
+
+<default-conventions domain="file-size-explosion">
+**File-Size Explosion**: A diff grows a single file from under 1000 lines to over 1000 lines.
+Severity: SHOULD
+Treatment: Presumptive decomposition trigger, not an automatic defect. Ask whether the new code should be extracted into focused modules/helpers first.
+Exception: Compelling structural reason AND the file stays clearly organized (e.g., generated code, one cohesive lookup table).
+</default-conventions>
+
+<default-conventions domain="spaghetti-conditional">
+**Spaghetti Conditional Growth**: New ad-hoc special-case branches, one-off booleans, or nullable modes threaded into an existing or shared flow, increasing tangle.
+Severity: SHOULD
+Remedy: Push the logic behind a dedicated abstraction, dispatcher, or explicit state model instead of an unrelated path.
+Exception: One documented special case at a natural boundary.
+</default-conventions>
+
+<default-conventions domain="thin-abstraction">
+**Thin Abstraction**: Identity wrappers, pass-through helpers, or generic "magic" mechanisms that add indirection without buying clarity, often hiding a simple data-shape assumption.
+Severity: SHOULD
+Remedy: Delete the wrapper and keep the direct flow, or replace the generic mechanism with the explicit structure it obscures.
+Exception: Wrapper enforces a real boundary (stable public API, test seam, adapter over a volatile dependency).
+</default-conventions>
+
+<default-conventions domain="boundary-type-erosion">
+**Boundary Type Erosion**: Unnecessary cast, `any`/`unknown`, or optionality that papers over an invariant a clearer type boundary should make explicit.
+Severity: SHOULD
+Remedy: Make the boundary explicit (typed model, narrowed union, parse-don't-validate) so downstream branches and fallbacks disappear.
+Exception: Genuinely dynamic boundary (deserialization edge, untyped third-party surface) with validation at the seam.
+</default-conventions>
+
+<default-conventions domain="canonical-duplication">
+**Canonical Duplication**: A bespoke helper reimplements something the codebase already provides as a canonical utility.
+Severity: SHOULD
+Remedy: Reuse the canonical helper; extend it if the new case is legitimate.
+Exception: The canonical contract genuinely does not fit and extending it would couple unrelated concerns.
+</default-conventions>
+
+<default-conventions domain="layer-leak">
+**Layer Leak**: Feature-specific logic placed in a shared/general-purpose path, an implementation detail leaking through an API, or logic living in the wrong package/layer.
+Severity: SHOULD
+Remedy: Move the logic to the package/module/layer that already owns the concept; keep shared paths feature-agnostic.
+Exception: Project documents the placement, or a deliberate shared-kernel boundary.
+</default-conventions>
+
+<default-conventions domain="non-atomic-orchestration">
+**Non-Atomic Orchestration**: Independent work serialized for no reason, or related updates structured so a failure can leave half-applied state, where an atomic or parallel structure is obvious.
+Severity: SHOULD
+Remedy: Run independent steps in parallel, or group related updates so they apply (and roll back) together.
+Exception: Ordering is a real dependency, or atomicity is provided at another layer (transaction, idempotent retry).
+</default-conventions>
+
+---
+
+## Conformance Conventions
+
+<default-conventions domain="convention-violation">
+**Convention Violation**: Code or plan violates a convention documented in project docs (CLAUDE.md, README.md, CONTRIBUTING). Project documentation is the specification -- cite the exact standard when flagging; never report a personal style preference as a convention violation.
+Severity: SHOULD
+</default-conventions>
+
+<default-conventions domain="testing-strategy-violation">
+**Testing Strategy Violation**: Tests contradict the confirmed or default test strategy. See "Testing Conventions" and "Testing Strategy Defaults" below for the strategy detail.
+Severity: SHOULD
+</default-conventions>
+
+---
+
 ## File Organization Conventions
 
 <default-conventions domain="test-organization">

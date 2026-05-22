@@ -166,7 +166,7 @@ These checks run at module load time, so malformed workflows surface as `ValueEr
 - Every skill module listed in `tests/conftest.py::SKILL_MODULES` exposes a `WORKFLOW = Workflow(...)` constant at module level.
 - `discover_workflows()` silently skips modules with no `WORKFLOW` attribute; any import error aborts discovery (aggregated report across all failures).
 - `len(workflow._step_order) == workflow.total_steps`; CLI `--step N` corresponds to index N (1-based) in `_step_order`.
-- QR iteration blocking severities (defined in `skills/planner/shared/qr/constants.py`): iterations 1–2 block MUST/SHOULD/COULD; iterations 3–4 block MUST/SHOULD; iteration 5+ blocks MUST only. Progressive de-escalation prevents infinite retry loops on low-severity items.
+- QR iteration blocking severities (defined in `skills/planner/shared/qr/constants.py`): iterations 1–2 block MUST/SHOULD/COULD; iteration 3 blocks MUST/SHOULD; iterations 4+ block MUST only. Progressive de-escalation prevents infinite retry loops on low-severity items.
 - Handler behavior lives in the skill's own `format_output()`, not in `StepDef`. The framework is deliberately metadata-only.
 
 ## Design Decisions

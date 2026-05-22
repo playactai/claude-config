@@ -74,12 +74,12 @@ SEVERITY ASSIGNMENT (per conventions/severity.md, impl-docs scope):
     - TEMPORAL_CONTAMINATION: change-relative language in comments
     - BASELINE_REFERENCE: comment references removed code
 
-  SHOULD (iterations 1-4):
+  SHOULD (iterations 1-3):
     - CLAUDE.md format violations
     - README.md missing where scope warrants
     - WHY-not-WHAT violations
 
-  COULD (iterations 1-3):
+  COULD (iterations 1-2):
     - Minor formatting inconsistencies
     - Documentation style variations"""
 

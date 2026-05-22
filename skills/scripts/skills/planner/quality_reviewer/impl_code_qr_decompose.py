@@ -75,13 +75,23 @@ SEVERITY ASSIGNMENT (per conventions/severity.md, impl-code scope):
     - Acceptance criterion not met
     - MARKER_INVALID: intent marker without valid explanation
 
-  SHOULD (iterations 1-4) - STRUCTURE categories:
+  SHOULD (iterations 1-3) - STRUCTURE categories:
     - GOD_OBJECT: >15 methods OR >10 deps
     - GOD_FUNCTION: >50 lines OR >3 nesting
     - CONVENTION_VIOLATION: violates documented project convention
     - INCONSISTENT_ERROR_HANDLING: mixed exceptions/codes
 
-  COULD (iterations 1-3) - COSMETIC:
+  SHOULD (iterations 1-3) - STRUCTURAL SIMPLIFICATION (flag only with a concrete, behavior-preserving fix named):
+    - MISSED_SIMPLIFICATION: restructuring would delete branches/helpers/layers
+    - FILE_SIZE_EXPLOSION: diff grows a file past 1000 lines without decomposition
+    - SPAGHETTI_CONDITIONAL: ad-hoc special-case branch bolted onto an existing/shared flow
+    - THIN_ABSTRACTION: identity wrapper / pass-through adding indirection, not clarity
+    - BOUNDARY_TYPE_EROSION: needless cast/any/unknown/optional papering over an invariant
+    - CANONICAL_DUPLICATION: bespoke near-duplicate of an existing canonical helper
+    - LAYER_LEAK: feature logic in a shared path OR logic in the wrong layer
+    - NON_ATOMIC_ORCHESTRATION: avoidable serialization OR half-applied partial-update state
+
+  COULD (iterations 1-2) - COSMETIC:
     - DEAD_CODE: unused functions, impossible branches
     - FORMATTER_FIXABLE: style issues"""
 

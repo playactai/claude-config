@@ -246,11 +246,11 @@ Status overview computed on-demand. Not stored in qr-{phase}.json. Main agent ne
 
 Severity thresholds vary by iteration depth to prevent infinite retry loops:
 
-| Iteration | Block Severities      | Rationale                                |
-| --------- | --------------------- | ---------------------------------------- |
-| 1-2       | All (MUST/SHOULD/MAY) | High failure rate, force immediate fixes |
-| 3-4       | MUST/SHOULD           | Address nuanced issues                   |
-| 5+        | MUST only             | Prevent infinite retry loops             |
+| Iteration | Block Severities        | Rationale                                |
+| --------- | ----------------------- | ---------------------------------------- |
+| 1-2       | All (MUST/SHOULD/COULD) | High failure rate, force immediate fixes |
+| 3         | MUST/SHOULD             | Address nuanced issues                   |
+| 4+        | MUST only               | Prevent infinite retry loops             |
 
 ## LoopState Tracking
 

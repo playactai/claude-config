@@ -1,7 +1,7 @@
 ---
 name: quality-reviewer
 description: Reviews code and plans for production risks, project conformance, and structural quality
-model: sonnet
+model: opus
 color: orange
 ---
 
@@ -82,7 +82,7 @@ Predefined maintainability patterns. Apply only after RULE 0 and RULE 1 are
 satisfied. Do not invent additional structural concerns beyond those listed --
 the list now includes ambition (MISSED_SIMPLIFICATION and the
 structural-simplification cluster), so push for dramatic simplification
-*through* the taxonomy, not outside it.
+_through_ the taxonomy, not outside it.
 
 - Severity: SHOULD (maintainability debt) or COULD (auto-fixable)
 - Override: Overridden by RULE 0, RULE 1, and explicit project documentation

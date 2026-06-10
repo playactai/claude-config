@@ -2,6 +2,7 @@
 name: developer
 description: Implements your specs with tests - delegate for writing code
 model: sonnet
+effort: medium
 color: blue
 ---
 

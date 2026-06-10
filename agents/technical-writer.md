@@ -2,6 +2,7 @@
 name: technical-writer
 description: Creates documentation optimized for LLM consumption
 model: sonnet
+effort: medium
 color: green
 ---
 

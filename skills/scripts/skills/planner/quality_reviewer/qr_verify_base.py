@@ -16,31 +16,32 @@ This works by:
 2. Calculate total steps from item count
 3. Route step number to (CONTEXT, ANALYZE, CONFIRM, SUMMARY)
 4. ANALYZE: explore codebase, form preliminary conclusion
-5. CONFIRM: verify confidence, invoke cli/qr.py to record result
+5. CONFIRM: verify confidence, record the verdict via this script's
+   --result PASS|FAIL flag (verify_main delegates to cli/qr.py's locked update)
 6. SUMMARY: aggregate pass/fail, output single word
 
 Invariants:
 - Verify agent mutates only assigned items
 - PASS means check succeeded; no finding
 - FAIL means check failed; finding explains what
-- cli/qr.py handles file locking; script doesn't touch JSON
+- Recording delegates to cli/qr.py's locked update path; this script never
+  writes qr-{phase}.json directly
 """
 
 from __future__ import annotations
 
+import sys
 from abc import ABC, abstractmethod
 from typing import ClassVar
 
-from skills.planner.shared.qr.phases import get_phase_config
+from skills.lib.workflow.prompts import pin_cwd
+from skills.planner.shared.qr.phases import get_phase_config, is_execution_phase
 from skills.planner.shared.qr.utils import (
     format_qr_item_for_verification,
     get_qr_item,
     load_qr_state,
 )
 from skills.planner.shared.resources import get_context_path, render_context_file
-
-# CLI module for atomic QR updates
-CLI_MODULE = "skills.planner.cli.qr"
 
 
 class VerifyBase(ABC):
@@ -89,7 +90,7 @@ class VerifyBase(ABC):
             return ("SUMMARY", None)
         # Steps 2..final_step-1 are item steps
         item_offset = step - 2  # 0-indexed from step 2
-        item_index = item_offset // 2
+        item_index = _item_index_for_step(step)
         phase = item_offset % 2  # 0=ANALYZE, 1=CONFIRM
         return ("ANALYZE" if phase == 0 else "CONFIRM", item_index)
 
@@ -141,8 +142,13 @@ class VerifyBase(ABC):
         state_dir_arg = f" --state-dir {state_dir}"
         item_flags = " ".join(f"--qr-item {id}" for id in item_ids)
 
+        # Execution-phase (impl-*) state dirs have no context.json (the executor
+        # writes plan.json only), so degrade gracefully there; plan phases stay
+        # strict. get_context_path always returns a Path, so render decides.
         context_file = get_context_path(state_dir)
-        context_display = render_context_file(context_file) if context_file else ""
+        context_display = render_context_file(
+            context_file, missing_ok=is_execution_phase(self.PHASE)
+        )
 
         qr_state = load_qr_state(state_dir, self.PHASE)
         if not qr_state:
@@ -263,6 +269,17 @@ class VerifyBase(ABC):
             # This was the last item, proceed to SUMMARY
             next_action = f"uv run python -m {module_path} --step {next_step}{state_dir_arg} {item_flags}"
 
+        # Record the verdict via THIS script's --result flag (verify_main routes
+        # it to cli.qr's locked update). One tool instead of two: the agent
+        # records with the same command family it is already running, so the
+        # natural guess succeeds (audit §3b NEW-C). --step pins which grouped
+        # item the verdict applies to; pin_cwd keeps it cwd-independent.
+        record_base = (
+            f"uv run python -m {module_path} --step {current_step}{state_dir_arg} {item_flags}"
+        )
+        record_pass = pin_cwd(f"{record_base} --result PASS")
+        record_fail = pin_cwd(f"{record_base} --result FAIL --finding '<one-line explanation>'")
+
         return {
             "title": f"QR Verify Step {current_step}/{total_steps}: Confirm {item_id} ({self.PHASE})",
             "actions": [
@@ -274,17 +291,16 @@ class VerifyBase(ABC):
                 "- Did you verify against actual code/plan content?",
                 "- Is your evidence specific and verifiable?",
                 "",
-                "RECORD RESULT via CLI:",
+                f"RECORD RESULT for {item_id} (run ONE, then run the NEXT STEP below):",
                 "",
                 "If PASS:",
-                f"  uv run python -m {CLI_MODULE} --state-dir {state_dir} --qr-phase {self.PHASE} \\",
-                f"    update-item {item_id} --status PASS",
+                f"  {record_pass}",
                 "",
                 "If FAIL:",
-                f"  uv run python -m {CLI_MODULE} --state-dir {state_dir} --qr-phase {self.PHASE} \\",
-                f"    update-item {item_id} --status FAIL --finding '<one-line explanation>'",
+                f"  {record_fail}",
                 "",
-                "Execute ONE of the above commands, then proceed.",
+                "Recording writes the verdict (lock-safe) and prints a confirmation;",
+                "it does not advance the workflow -- run the NEXT STEP afterwards.",
             ],
             "next": next_action,
         }
@@ -333,3 +349,121 @@ class VerifyBase(ABC):
             ],
             "next": "",
         }
+
+
+def _item_index_for_step(step: int) -> int:
+    """0-based item index for an ANALYZE/CONFIRM step.
+
+    Steps 2..2N+1 pair ANALYZE (even offset) and CONFIRM (odd offset) per item,
+    so both steps of item i map to index i. Single source of truth for the
+    step<->item mapping, shared by VerifyBase._get_step_type (forward routing)
+    and _resolve_target_item (recording a verdict) so the two cannot drift.
+    CONTEXT (step 1) and SUMMARY (final step) are not item steps; callers gate
+    those out before relying on the result.
+    """
+    return (step - 2) // 2
+
+
+def _resolve_target_item(step: int | None, items: list[str]) -> str:
+    """Pick which item a --result flag refers to.
+
+    A single --qr-item is unambiguous. For a grouped agent carrying several
+    items, the CONFIRM step number identifies the target via
+    _item_index_for_step (the same mapping VerifyBase._get_step_type uses for
+    forward routing). Exits with a clear message when the target cannot be
+    resolved rather than recording the wrong item.
+    """
+    if len(items) == 1:
+        return items[0]
+    if not items:
+        sys.exit("Error: --qr-item is required to record a result.")
+    if step is not None and step >= 2:
+        idx = _item_index_for_step(step)
+        if 0 <= idx < len(items):
+            return items[idx]
+    sys.exit(
+        "Error: multiple --qr-item values and no CONFIRM --step to disambiguate. "
+        "Re-run at the item's CONFIRM step, or pass exactly one --qr-item with --result."
+    )
+
+
+def _record_verify_result(
+    phase: str,
+    step: int | None,
+    state_dir: str | None,
+    qr_items: list[str] | None,
+    result: str,
+    finding: str | None,
+) -> None:
+    """Record a verify verdict via the shared, lock-safe QR update path.
+
+    Lets an agent record a result with the SAME script it is already running
+    (`..._qr_verify ... --result PASS`) instead of switching to the separate
+    `cli.qr update-item` tool -- the two-tool split made the natural guess
+    hard-fail with 'unrecognized arguments' (audit §3b NEW-C). Delegates to
+    cmd_update_item, which holds the phase write lock, validates the transition
+    (FAIL needs a finding, PASS forbids one, PASS is terminal), writes
+    atomically, and prints the structured result.
+    """
+    from skills.planner.cli.qr import cmd_update_item
+
+    if not state_dir:
+        sys.exit("Error: --state-dir is required to record a result.")
+
+    item_id = _resolve_target_item(step, qr_items or [])
+    update_args = [item_id, "--status", result.upper()]
+    if finding:
+        update_args += ["--finding", finding]
+    cmd_update_item(state_dir, phase, update_args)
+
+
+def verify_main(script_file: str, get_step_guidance, description: str, phase: str) -> None:
+    """Entry point for QR verify scripts: mode_main plus a result-recording path.
+
+    Without a result flag this behaves like lib.workflow.cli.mode_main: parse
+    --step/--state-dir/--qr-item, route to the step handler, render via the
+    shared render_step. With --result/--status PASS|FAIL (optionally --finding),
+    it records the verdict directly and exits, so an agent appending the verdict
+    to the verify command succeeds instead of erroring with 'unrecognized
+    arguments' (audit §3b NEW-C). The CONFIRM step's own NEXT STEP pointer (read
+    before recording) carries the agent onward.
+    """
+    import argparse
+
+    from skills.lib.workflow.cli import _compute_module_path, render_step
+
+    parser = argparse.ArgumentParser(description=description)
+    parser.add_argument("--step", type=int, default=None)
+    parser.add_argument("--state-dir", type=str, default=None)
+    parser.add_argument("--qr-item", action="append")
+    parser.add_argument(
+        "--result",
+        "--status",
+        dest="result",
+        type=str,
+        default=None,
+        help="Record this item's verdict (PASS|FAIL) directly, then exit.",
+    )
+    parser.add_argument("--finding", type=str, default=None, help="Required with --result FAIL.")
+    parsed = parser.parse_args()
+
+    if parsed.result is not None:
+        _record_verify_result(
+            phase, parsed.step, parsed.state_dir, parsed.qr_item, parsed.result, parsed.finding
+        )
+        return
+
+    if parsed.step is None:
+        parser.error("--step is required")
+
+    module_path = _compute_module_path(script_file)
+    guidance = get_step_guidance(
+        parsed.step,
+        module_path,
+        state_dir=parsed.state_dir or "",
+        qr_item=parsed.qr_item,
+    )
+    if "error" in guidance:
+        print(f"Error: {guidance['error']}", file=sys.stderr)
+        sys.exit(1)
+    print(render_step(parsed.step, guidance))

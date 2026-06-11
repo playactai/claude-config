@@ -136,6 +136,21 @@ def get_phases_for_workflow(workflow: str) -> list[str]:
     return [phase for phase, config in QR_PHASES.items() if config["workflow"] == workflow]
 
 
+def is_execution_phase(phase: str) -> bool:
+    """True for executor-workflow phases (impl-code, impl-docs).
+
+    Execution-phase state dirs carry no planning context.json: the executor
+    creates plan.json in step 1 but never context.json (that lives only in the
+    planner's separate state dir). Plan-phase state dirs always have it -- the
+    planner writes context.json in step 2 -- so its absence there is a real
+    orchestrator bug, not a tolerated condition. Callers use this to decide
+    whether a missing context.json should degrade gracefully (exec) or raise
+    (plan). Unknown phases return False (strict), the conservative default.
+    """
+    cfg = QR_PHASES.get(phase)
+    return bool(cfg and cfg.get("workflow") == "executor")
+
+
 def get_orchestrator_module(phase: str) -> str:
     """Get orchestrator module path for a phase.
 

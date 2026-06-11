@@ -63,6 +63,23 @@ def get_user_answer(args) -> UserInputResponse | None:
     return None
 
 
+def render_step(step: int, guidance: dict) -> str:
+    """Assemble a step's printable output: body + cd-pinned NEXT STEP footer.
+
+    Shared by mode_main and the QR verify entry point so both render steps
+    identically. Step 1 gets the THINKING_EFFICIENCY preamble; the trailing
+    invoke directive (with its absolute cd) is supplied by format_step.
+    """
+    body_parts: list[str] = []
+    if step == 1:
+        body_parts.append(THINKING_EFFICIENCY)
+        body_parts.append("")
+    for action in guidance["actions"]:
+        body_parts.append(str(action))
+    body = "\n".join(body_parts)
+    return format_step(body, guidance.get("next", ""), title=guidance["title"])
+
+
 def mode_main(
     script_file: str,
     get_step_guidance: Callable[..., dict],
@@ -104,20 +121,8 @@ def mode_main(
     # Router scripts signal invalid input by returning {"error": msg}.
     # Without this check, the downstream guidance_dict["title"]/["actions"]
     # lookups raise KeyError with a traceback instead of a clean exit.
-    if isinstance(guidance_dict, dict) and "error" in guidance_dict:
+    if "error" in guidance_dict:
         print(f"Error: {guidance_dict['error']}", file=sys.stderr)
         sys.exit(1)
 
-    # Build body from actions list
-    body_parts = []
-    if parsed.step == 1:
-        body_parts.append(THINKING_EFFICIENCY)
-        body_parts.append("")
-
-    for action in guidance_dict["actions"]:
-        body_parts.append(str(action))
-
-    body = "\n".join(body_parts)
-    next_cmd = guidance_dict.get("next", "")
-
-    print(format_step(body, next_cmd, title=guidance_dict["title"]))
+    print(render_step(parsed.step, guidance_dict))

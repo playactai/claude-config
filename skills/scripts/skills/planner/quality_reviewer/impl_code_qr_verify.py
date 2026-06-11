@@ -185,14 +185,11 @@ def get_step_guidance(step: int, module_path: str | None = None, **kwargs) -> di
 
 
 if __name__ == "__main__":
-    from skills.lib.workflow.cli import mode_main
+    from .qr_verify_base import verify_main
 
-    mode_main(
+    verify_main(
         __file__,
         get_step_guidance,
         "QR-Impl-Code: Post-implementation code quality review workflow",
-        extra_args=[
-            (["--state-dir"], {"type": str, "help": "State directory path"}),
-            (["--qr-item"], {"action": "append", "help": "Item ID (repeatable)"}),
-        ],
+        PHASE,
     )

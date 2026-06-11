@@ -237,17 +237,32 @@ def load_context_block(context_file: str | None) -> list[str]:
         return []  # Graceful fallback
 
 
-def render_context_file(context_file: str | Path) -> str:
+def render_context_file(context_file: str | Path, *, missing_ok: bool = False) -> str:
     """Load and format context.json for sub-agent consumption.
 
     WHY logical name: LLM sees "context.json" (semantic) not
     "/tmp/planner_xyz/context.json" (implementation detail).
+
+    missing_ok: when True, a missing context.json degrades to a placeholder
+    note instead of raising. Execution-phase QR (impl-code/impl-docs) runs in a
+    state dir the executor populated with plan.json but no context.json, so its
+    absence there is expected, not an error. Plan-phase callers keep the default
+    (strict): the planner writes context.json in step 2, so a missing file there
+    is a real dispatch-ordering bug worth surfacing loudly. See
+    qr.phases.is_execution_phase, which callers pass through to this flag.
     """
     from skills.lib.workflow.prompts import format_file_content
 
     try:
         content = Path(context_file).read_text()
     except FileNotFoundError as e:
+        if missing_ok:
+            return format_file_content(
+                "context.json",
+                "(No planning context.json in this execution state directory. "
+                "Plan-phase context is not carried into execution; verify against "
+                "plan.json -- the source of truth for acceptance criteria.)",
+            )
         raise FileNotFoundError(
             f"Context file not found: {context_file}. "
             "Orchestrator must create context.json before sub-agent dispatch."

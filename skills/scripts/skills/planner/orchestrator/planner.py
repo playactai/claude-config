@@ -31,7 +31,7 @@ from skills.lib.workflow.constants import (
     QUESTION_RELAY_HANDLER,
     SUB_AGENT_QUESTION_FORMAT,
 )
-from skills.lib.workflow.prompts import subagent_dispatch, template_dispatch
+from skills.lib.workflow.prompts import pin_cwd, subagent_dispatch, template_dispatch
 from skills.lib.workflow.prompts.step import format_step
 from skills.lib.workflow.types import AgentRole
 from skills.planner.shared.builders import THINKING_EFFICIENCY, format_forbidden
@@ -459,11 +459,17 @@ def qr_verify_step(title, phase):
             for gid, group_items in groups.items()
         ]
 
+        # pin_cwd: the prose "Start:" line is a command the agent may copy and
+        # run directly, so it carries the absolute cd that the invoke block below
+        # already has -- otherwise a drifted cwd yields "No module named 'skills'".
+        start_cmd = pin_cwd(
+            f"uv run python -m {verify_script} --step 1 --state-dir {state_dir} $qr_item_flags"
+        )
         tmpl = f"""Verify QR group: $group_id ($item_count items)
 Items: $item_ids
 Checks: $checks_summary
 
-Start: uv run python -m {verify_script} --step 1 --state-dir {state_dir} $qr_item_flags"""
+Start: {start_cmd}"""
 
         command = f"uv run python -m {verify_script} --step 1 --state-dir {state_dir} $qr_item_flags"
 

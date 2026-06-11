@@ -26,6 +26,8 @@ Called via: python3 -m {module_path} --step N --state-dir {dir}
 import json
 from pathlib import Path
 
+from skills.lib.workflow.prompts import pin_cwd
+from skills.planner.shared.qr.phases import is_execution_phase
 from skills.planner.shared.qr.utils import load_qr_state
 from skills.planner.shared.resources import get_context_path, render_context_file
 
@@ -70,10 +72,15 @@ def format_assign_cmd(state_dir: str, phase: str, prefix: str) -> str:
     """Format CLI command template for group assignment.
 
     WHY CLI: Group assignments use the qr CLI tool for state mutation.
+
+    pin_cwd: this command is meant to be copy-run by the agent, so it carries an
+    absolute cd -- a bare `uv run python -m skills...` fails from a drifted cwd.
     """
-    return f"""OUTPUT:
-  uv run python -m skills.planner.cli.qr --state-dir {state_dir} --qr-phase {phase} \\
-    assign-group <item_id> --group-id {prefix}<name>"""
+    cmd = pin_cwd(
+        f"uv run python -m skills.planner.cli.qr --state-dir {state_dir} --qr-phase {phase} "
+        f"assign-group <item_id> --group-id {prefix}<name>"
+    )
+    return f"OUTPUT:\n  {cmd}"
 
 
 def write_qr_state(state_dir: str, phase: str, items: list[dict]) -> None:
@@ -208,7 +215,15 @@ def dispatch_step(
 
     # Step 1: Absorb context (phase-specific)
     if step == 1:
-        context_display = render_context_file(get_context_path(state_dir)) if state_dir else ""
+        # Execution-phase (impl-*) state dirs carry no context.json -- the
+        # executor writes plan.json only. Degrade gracefully there; keep the
+        # plan phase strict (its orchestrator must write context.json in step 2,
+        # so absence is a real bug worth surfacing). See is_execution_phase.
+        context_display = (
+            render_context_file(get_context_path(state_dir), missing_ok=is_execution_phase(phase))
+            if state_dir
+            else ""
+        )
         return {
             "title": f"QR Decomposition Step 1: Absorb Context ({phase})",
             "actions": [
@@ -396,6 +411,11 @@ def step_9_structural_grouping(state_dir: str, phase: str, module_path: str) -> 
             "next": "",  # Terminal error
         }
 
+    # pin_cwd: copy-run command needs the absolute cd (drifted-cwd safety).
+    assign_cmd = pin_cwd(
+        f"uv run python -m skills.planner.cli.qr --state-dir {state_dir} --qr-phase {phase} "
+        "assign-group <item_id> --group-id <group_id>"
+    )
     return {
         "title": f"QR Decomposition Step 9: Structural Grouping ({phase})",
         "actions": [
@@ -415,8 +435,7 @@ def step_9_structural_grouping(state_dir: str, phase: str, module_path: str) -> 
             "   - Set group_id = 'umbrella'",
             "",
             "Execute via CLI:",
-            f"  uv run python -m skills.planner.cli.qr --state-dir {state_dir} --qr-phase {phase} \\",
-            "    assign-group <item_id> --group-id <group_id>",
+            f"  {assign_cmd}",
         ],
         "next": f"uv run python -m {module_path} --step 10 --state-dir {state_dir}",
     }

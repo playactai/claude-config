@@ -13,6 +13,20 @@ SKILLS_DIR = Path(__file__).resolve().parent.parent.parent.parent.parent
 _SKILLS_DIR_Q = shlex.quote(str(SKILLS_DIR))
 
 
+def pin_cwd(command: str) -> str:
+    """Prefix a shell command with an absolute ``cd`` into SKILLS_DIR.
+
+    The structured next-step and sub-agent-invoke paths already embed this
+    prefix (see format_step below and prompts.subagent.sub_agent_invoke). Use
+    this for commands that appear in PROSE an agent may copy and run directly:
+    a bare ``uv run python -m skills...`` fails with "No module named 'skills'"
+    when the agent's cwd has drifted (e.g. into a /tmp state dir) between Bash
+    calls, because the Bash tool does not persist cwd. The absolute, shlex-quoted
+    cd makes the invocation cwd-independent regardless of where the agent stands.
+    """
+    return f"cd {_SKILLS_DIR_Q} && {command}"
+
+
 def format_step(
     body: str, next_cmd: str = "", title: str = "", if_pass: str = "", if_fail: str = ""
 ) -> str:

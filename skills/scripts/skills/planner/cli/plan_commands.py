@@ -63,6 +63,10 @@ class PlanContext:
     def plan_path(self) -> Path:
         return self.state_dir / "plan.json"
 
+    def state_file(self) -> Path:
+        """Single mutable state file (used by batch snapshot/rollback)."""
+        return self.plan_path()
+
     def load_plan(self) -> Plan:
         schema = _get_schema()
         path = self.plan_path()
@@ -72,11 +76,10 @@ class PlanContext:
         return schema["Plan"].model_validate(data)
 
     def save_plan(self, plan: Plan) -> None:
+        from skills.lib.io import atomic_write_text
+
         schema = _get_schema()
-        path = self.plan_path()
-        tmp_path = path.with_suffix(".tmp")
-        tmp_path.write_text(plan.model_dump_json(indent=2))
-        tmp_path.rename(path)
+        atomic_write_text(self.plan_path(), plan.model_dump_json(indent=2))
         schema["validate_state"](str(self.state_dir))
 
 
@@ -404,10 +407,23 @@ def set_change(
     version: int | None = None,
     intent_ref: str | None = None,
     comments: str | None = None,
+    diff_file: str | None = None,
 ) -> dict:
-    """Create or update code change."""
+    """Create or update code change.
+
+    diff_file (a path the agent wrote with the Write tool) takes precedence over
+    inline diff. Prefer it for real diffs: passing diff text inline forces the
+    caller to shell-quote apostrophes/backslashes, which routinely corrupts the
+    stored hunk. A file (or batch-from-stdin) carries the bytes verbatim.
+    """
     schema = _get_schema()
     plan = ctx.load_plan()
+
+    if diff_file is not None:
+        diff_path = Path(diff_file)
+        if not diff_path.exists():
+            raise FileNotFoundError(f"Diff file not found: {diff_file}")
+        diff = diff_path.read_text()
 
     ms = plan.get_milestone(milestone)
     if not ms:

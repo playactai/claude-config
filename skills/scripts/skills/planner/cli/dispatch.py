@@ -8,6 +8,8 @@ import inspect
 from collections.abc import Callable
 from typing import Any
 
+from skills.lib.io import atomic_write_text
+
 
 def discover_methods(module) -> dict[str, Callable[..., Any]]:
     """Find all public functions with 'ctx' as first parameter.
@@ -64,12 +66,74 @@ def dispatch(methods: dict, method: str, params: dict, ctx) -> Any:
     return func(ctx, **kwargs)
 
 
+def _snapshot_state(ctx) -> str | None:
+    """Capture the RPC target's state file so a failed batch can roll back.
+
+    Returns the file's current text, or None when no state file exists yet (so
+    a rollback after a create removes the file). Contexts that do not expose
+    state_file() get no snapshot and therefore run without rollback.
+    """
+    state_file = getattr(ctx, "state_file", None)
+    if state_file is None:
+        return None
+    path = state_file()
+    return path.read_text() if path.exists() else None
+
+
+def _restore_state(ctx, snapshot: str | None) -> None:
+    """Revert the state file to a pre-batch snapshot (None => remove it).
+
+    Restores through atomic_write_text so a reader never sees a torn rollback.
+    """
+    state_file = getattr(ctx, "state_file", None)
+    if state_file is None:
+        return
+    path = state_file()
+    if snapshot is None:
+        path.unlink(missing_ok=True)
+    else:
+        atomic_write_text(path, snapshot)
+
+
 def batch(methods: dict, requests: list[dict], ctx) -> list[dict]:
-    """Execute batch of RPC requests sequentially.
+    """Execute a batch of RPC requests as an all-or-nothing transaction.
 
     Each request: {"method": str, "params": dict, "id": any}
     Each response: {"id": any, "result": any} or {"id": any, "error": {...}}
+
+    Commands persist incrementally (each save_plan/save_qr renames into place),
+    so a mid-batch failure would otherwise leave earlier requests applied. To
+    make the batch atomic the target state file is snapshotted up front and
+    restored on the first failure, which also stops processing -- the response
+    still lists every request's outcome, with the failing entry flagged
+    rolled_back so the caller knows nothing was persisted.
+
+    Scope: all-or-nothing covers exactly ctx.state_file() (plan.json or
+    qr-{phase}.json); a command that mutates any other file is not rolled back.
+    Assumes a single batch writer -- batch runs sequentially in one process and
+    is not issued concurrently with the per-item, separately-locked update-item
+    writers.
+
+    Raises:
+        ValueError: if two requests share the same non-null id (ambiguous
+            results / accidental duplicate replays).
     """
+    seen_ids: set = set()
+    duplicate_ids: list = []
+    for req in requests:
+        rid = req.get("id")
+        if rid is None:
+            continue
+        if rid in seen_ids:
+            if rid not in duplicate_ids:
+                duplicate_ids.append(rid)
+        else:
+            seen_ids.add(rid)
+    if duplicate_ids:
+        raise ValueError(f"Duplicate request id(s) in batch: {duplicate_ids}")
+
+    snapshot = _snapshot_state(ctx)
+
     results = []
     for req in requests:
         req_id = req.get("id")
@@ -80,7 +144,11 @@ def batch(methods: dict, requests: list[dict], ctx) -> list[dict]:
             result = dispatch(methods, method, params, ctx)
             results.append({"id": req_id, "result": result})
         except Exception as e:
-            results.append({"id": req_id, "error": {"code": -32000, "message": str(e)}})
+            _restore_state(ctx, snapshot)
+            results.append(
+                {"id": req_id, "error": {"code": -32000, "message": str(e), "rolled_back": True}}
+            )
+            break
     return results
 
 

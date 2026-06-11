@@ -5,7 +5,7 @@ Simplified renderer handling only the core node types: TextNode, CodeNode, Eleme
 
 import shlex
 from typing import Protocol
-from xml.sax.saxutils import quoteattr
+from xml.sax.saxutils import escape, quoteattr
 
 from skills.lib.workflow.ast.nodes import (
     CodeNode,
@@ -46,10 +46,15 @@ class XMLRenderer:
         return f"```\n{node.content}\n```"
 
     def render_element(self, node: ElementNode) -> str:
-        """Render generic element with attributes and children."""
+        """Render generic element with attributes and children.
+
+        Attribute values go through quoteattr so a value containing a quote,
+        ``&``, or ``<`` cannot break out of the attribute (matches
+        render_invoke_after).
+        """
         attrs_str = ""
         if node.attrs:
-            attrs_str = " " + " ".join(f'{k}="{v}"' for k, v in node.attrs.items())
+            attrs_str = " " + " ".join(f"{k}={quoteattr(str(v))}" for k, v in node.attrs.items())
 
         if not node.children:
             return f"<{node.tag}{attrs_str} />"
@@ -68,10 +73,15 @@ class XMLRenderer:
         """
         # Escape "]]>" sequences to prevent premature CDATA termination
         escaped = node.content.replace("]]>", "]]]]><![CDATA[>")
-        return f'<file path="{node.path}"><![CDATA[\n{escaped}\n]]></file>'
+        return f"<file path={quoteattr(node.path)}><![CDATA[\n{escaped}\n]]></file>"
 
     def render_step_header(self, node: StepHeaderNode) -> str:
-        """Render step header with title as content, metadata as attributes."""
+        """Render step header with title as content, metadata as attributes.
+
+        Attributes go through quoteattr and the title through escape so a
+        quote/ampersand/angle bracket (or a literal ``</step_header>``) in any
+        value cannot malform the element.
+        """
         attrs = {"script": node.script, "step": str(node.step)}
         if node.category:
             attrs["category"] = node.category
@@ -80,8 +90,8 @@ class XMLRenderer:
         if node.total is not None:
             attrs["total"] = str(node.total)
 
-        attrs_str = " " + " ".join(f'{k}="{v}"' for k, v in attrs.items())
-        return f"<step_header{attrs_str}>{node.title}</step_header>"
+        attrs_str = " " + " ".join(f"{k}={quoteattr(str(v))}" for k, v in attrs.items())
+        return f"<step_header{attrs_str}>{escape(node.title)}</step_header>"
 
     def render_current_action(self, node: CurrentActionNode) -> str:
         """Render current_action with actions as text children."""

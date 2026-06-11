@@ -418,11 +418,17 @@ def qr_verify_step(title, phase):
         if not qr_state or "items" not in qr_state:
             return {"error": f"qr-{phase}.json not found or malformed in {state_dir}"}
 
+        # Capture the incremented iteration (executor.py does the same). Reading
+        # qr_state["iteration"] after the increment would use the stale
+        # pre-increment value loaded above, lagging de-escalation by one
+        # iteration.
+        iteration = qr_state.get("iteration", 1)
         if qr.state == LoopState.RETRY:
-            increment_qr_iteration(state_dir, phase)
+            new_iter = increment_qr_iteration(state_dir, phase)
+            if new_iter is not None:
+                iteration = new_iter
 
         # Dispatch only items at blocking severity for current iteration.
-        iteration = qr_state.get("iteration", 1)
         items = query_items(qr_state, by_status("TODO", "FAIL"), by_blocking_severity(iteration))
         if not items:
             next_step = step + 1
@@ -559,7 +565,6 @@ def qr_route_step(title, phase, work_step, pass_step, pass_message, fix_target=N
 
         return build_gate_output(
             module_path=MODULE_PATH,
-            script_name="planner",
             qr_name=title,
             qr=qr,
             step=step,
@@ -568,6 +573,7 @@ def qr_route_step(title, phase, work_step, pass_step, pass_message, fix_target=N
             pass_message=effective_pass_message,
             fix_target=fix_target,
             state_dir=state_dir,
+            phase=phase,
         )
 
     handler.phase = phase

@@ -201,6 +201,14 @@ def format_step_2(qr: QRState, state_dir: str) -> str:
             "     - Milestone: [number and name]",
             "     - Files: [exact paths to create/modify]",
             "     - Acceptance criteria: [from plan]",
+            # Bug #8 mitigation (audit §3): hand the QR-approved diffs to the
+            # developer so they are not orphaned. This is interim steering, NOT
+            # enforcement -- nothing asserts applied == approved. The full fix is
+            # the §1 redesign (execution-time re-validation gate), out of scope here.
+            "     - Approved code_changes[].diff for this milestone (from plan.json):",
+            "       apply these as the implementation source -- QR already reviewed them.",
+            "       Treat them as authoritative; re-anchor only where the file genuinely",
+            "       drifted and keep the result equivalent to the approved diff.",
             "",
             "  3. Wait for ALL agents in wave to complete",
             "",
@@ -405,7 +413,6 @@ def format_qr_gate(step: int, phase: str, state_dir: str, qr: QRState) -> str:
 
     result = build_gate_output(
         module_path=MODULE_PATH,
-        script_name="executor",
         qr_name=qr_name,
         qr=qr,
         step=step,
@@ -414,6 +421,7 @@ def format_qr_gate(step: int, phase: str, state_dir: str, qr: QRState) -> str:
         pass_message=pass_message,
         fix_target=fix_target,
         state_dir=state_dir,
+        phase=phase,
     )
 
     return result.output

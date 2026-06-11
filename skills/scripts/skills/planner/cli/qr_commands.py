@@ -5,12 +5,12 @@ Each public function with 'ctx' as first param is auto-discovered as RPC method.
 
 from __future__ import annotations
 
-import fcntl
 import json
-import os
-import tempfile
 from dataclasses import dataclass
 from pathlib import Path
+
+from skills.lib.io import atomic_write_text
+from skills.planner.shared.qr.utils import qr_write_lock
 
 VALID_STATUSES = frozenset({"PASS", "FAIL"})
 TERMINAL_STATUSES = frozenset({"PASS"})
@@ -28,30 +28,25 @@ class QRContext:
     def qr_path(self) -> Path:
         return self.state_dir / f"qr-{self.phase}.json"
 
+    def state_file(self) -> Path:
+        """Single mutable state file (used by batch snapshot/rollback)."""
+        return self.qr_path()
 
-def _load_qr_state_locked(fd) -> dict:
-    """Load QR state from file descriptor (assumes lock held)."""
-    fd.seek(0)
-    content = fd.read()
+
+def _load_qr_state_under_lock(qr_path: Path) -> dict:
+    """Read QR state from qr_path. Caller must hold the phase write lock."""
+    content = qr_path.read_text() if qr_path.exists() else ""
     if not content:
         return {"phase": "", "items": []}
     return json.loads(content)
 
 
 def _save_qr_state_atomic(ctx: QRContext, qr_state: dict) -> None:
-    """Write QR state atomically via tempfile + rename."""
-    qr_path = ctx.qr_path()
-    fd, tmp_path = tempfile.mkstemp(
-        dir=str(ctx.state_dir), prefix=f"qr-{ctx.phase}.", suffix=".tmp"
-    )
-    try:
-        with os.fdopen(fd, "w") as f:
-            json.dump(qr_state, f, indent=2)
-        os.rename(tmp_path, qr_path)
-    except Exception:
-        if os.path.exists(tmp_path):
-            os.unlink(tmp_path)
-        raise
+    """Write QR state atomically (unique temp + rename via the shared helper).
+
+    Caller must hold qr_write_lock(ctx.state_dir, ctx.phase) across the RMW.
+    """
+    atomic_write_text(ctx.qr_path(), json.dumps(qr_state, indent=2))
 
 
 def _find_item(qr_state: dict, item_id: str) -> tuple[int, dict | None]:
@@ -79,10 +74,8 @@ def update_item(ctx: QRContext, item_id: str, status: str, finding: str | None =
     if not qr_path.exists():
         raise FileNotFoundError(f"QR state file not found: {qr_path}")
 
-    with open(qr_path, "r+") as f:
-        fcntl.flock(f.fileno(), fcntl.LOCK_EX)
-
-        qr_state = _load_qr_state_locked(f)
+    with qr_write_lock(ctx.state_dir, ctx.phase):
+        qr_state = _load_qr_state_under_lock(qr_path)
 
         idx, item = _find_item(qr_state, item_id)
         if idx < 0:
@@ -184,9 +177,8 @@ def assign_group(ctx: QRContext, item_id: str, group_id: str) -> dict:
     if not qr_path.exists():
         raise FileNotFoundError(f"QR state file not found: {qr_path}")
 
-    with open(qr_path, "r+") as f:
-        fcntl.flock(f.fileno(), fcntl.LOCK_EX)
-        qr_state = _load_qr_state_locked(f)
+    with qr_write_lock(ctx.state_dir, ctx.phase):
+        qr_state = _load_qr_state_under_lock(qr_path)
 
         idx, item = _find_item(qr_state, item_id)
         if idx < 0:

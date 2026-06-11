@@ -853,7 +853,7 @@ Rendered format:
 
 **QR file lifecycle**. qr-{phase}.json is created by decompose step, updated by verify agents, deleted by route step on PASS. The file's existence signals "QR in progress"; its absence signals "no QR done yet" or "QR passed and cleaned up".
 
-**QR iteration limit**. Maximum 5 iterations per QR phase. All severity levels block on all iterations.
+**QR iteration limit**. Maximum 5 iterations (`QR_ITERATION_LIMIT`) per QR phase, enforced at the gate: once the limit is reached with blocking findings still open, the gate escalates to the user (accept-as-is or abort) instead of looping again. Blocking scope narrows by iteration via progressive de-escalation (iterations 1–2: MUST + SHOULD + COULD; iteration 3: MUST + SHOULD; iteration 4+: MUST only). MUST never de-escalates, which is exactly why the enforced ceiling exists — an unfixable MUST would otherwise loop forever.
 
 ## QR Workflow
 

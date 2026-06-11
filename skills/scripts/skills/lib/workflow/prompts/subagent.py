@@ -222,15 +222,18 @@ def template_dispatch(
     Returns:
         Complete dispatch prompt with expanded agent entries
 
-    Raises:
-        KeyError: If template contains $var not present in target dict
+    Notes:
+        Uses Template.safe_substitute (not substitute) so a literal "$" in an
+        interpolated path/state_dir (e.g. /tmp/x$y) does not raise ValueError.
+        A genuinely missing $var is left as the literal "$var" in the expanded
+        prompt rather than crashing dispatch.
     """
     expanded = []
     for t in targets:
         expanded.append(
             {
-                "prompt": Template(template).substitute(t),
-                "command": Template(command).substitute(t),
+                "prompt": Template(template).safe_substitute(t),
+                "command": Template(command).safe_substitute(t),
             }
         )
 

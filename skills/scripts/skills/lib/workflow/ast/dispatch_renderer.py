@@ -9,7 +9,6 @@ Separate from ast/renderer.py because:
    (model selection, parallel constraints) that don't belong in core AST.
 """
 
-import re
 from string import Template
 
 from skills.lib.workflow.ast.dispatch import (
@@ -17,11 +16,6 @@ from skills.lib.workflow.ast.dispatch import (
     SubagentDispatchNode,
     TemplateDispatchNode,
 )
-
-
-def _extract_template_vars(s: str) -> list[str]:
-    """Extract $var names from template string."""
-    return [m.group(1) for m in re.finditer(r"\$(\w+)", s)]
 
 
 def _expand_template_targets(
@@ -40,22 +34,21 @@ def _expand_template_targets(
     Returns:
         List of dicts with "prompt" and "command" keys, values substituted
 
-    Raises:
-        ValueError: If template contains $var not present in target dict
+    Notes:
+        Uses Template.safe_substitute (not substitute) so a literal "$" in an
+        interpolated path/state_dir (e.g. /tmp/x$y) is left intact instead of
+        raising ValueError. A genuinely missing $var is left as the literal
+        "$var" in the expanded output -- visible to the agent -- rather than
+        crashing dispatch for both orchestrators.
     """
     result = []
-    for i, t in enumerate(targets):
-        try:
-            prompt = Template(template).substitute(t)
-            cmd = Template(command).substitute(t)
-        except KeyError as e:
-            required = set(_extract_template_vars(template) + _extract_template_vars(command))
-            provided = set(t.keys())
-            raise ValueError(
-                f"Template variable {e} missing in target {i}. "
-                f"Required: {sorted(required)}. Provided: {sorted(provided)}"
-            ) from e
-        result.append({"prompt": prompt, "command": cmd})
+    for t in targets:
+        result.append(
+            {
+                "prompt": Template(template).safe_substitute(t),
+                "command": Template(command).safe_substitute(t),
+            }
+        )
     return result
 
 

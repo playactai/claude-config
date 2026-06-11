@@ -9,6 +9,7 @@ defines the criteria once and provides formatters for each use case.
 """
 
 from dataclasses import dataclass
+from xml.sax.saxutils import quoteattr
 
 
 @dataclass
@@ -81,7 +82,8 @@ def format_as_xml() -> str:
     lines = ['<detection_questions category="temporal-contamination">']
     for q in TEMPORAL_DETECTION_QUESTIONS:
         signals = ", ".join(f"'{s}'" for s in q.signals)
-        lines.append(f'  <question id="{q.id}" text="{q.text} Signal: {signals}" />')
+        text_attr = quoteattr(f"{q.text} Signal: {signals}")
+        lines.append(f"  <question id={quoteattr(q.id)} text={text_attr} />")
     lines.append("</detection_questions>")
     return "\n".join(lines)
 

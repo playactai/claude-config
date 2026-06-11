@@ -18,8 +18,8 @@ import pytest
 from hypothesis import given
 from hypothesis import strategies as st
 
-from skills.lib.workflow.ast.nodes import InvokeAfterNode
-from skills.lib.workflow.ast.renderer import render_invoke_after
+from skills.lib.workflow.ast.nodes import ElementNode, InvokeAfterNode, StepHeaderNode, TextNode
+from skills.lib.workflow.ast.renderer import XMLRenderer, render_invoke_after, render_step_header
 from skills.lib.workflow.prompts.step import SKILLS_DIR, format_step
 from skills.lib.workflow.prompts.subagent import sub_agent_invoke
 
@@ -159,6 +159,37 @@ class TestIncoherenceRoundTrip:
         # After XML decoding the attribute, the placeholder survives intact.
         assert '--thoughts "<ACCUMULATED_CONTEXT>"' in cmd
         assert "--step-number 2" in cmd
+
+
+class TestSpecializedNodeEscaping:
+    """render_step_header / render_element must XML-escape hostile attrs/title.
+
+    Guards 2026-06-11 audit bug #9: these emitted attrs/text via raw f-strings,
+    so a quote / & / < (or a literal </step_header>) in a title or attribute
+    could malform the element. render_invoke_after already did this correctly.
+    """
+
+    def test_step_header_title_with_markup(self):
+        node = StepHeaderNode(title='x </step_header> & "q" <b>', script="s", step=1)
+        root = ET.fromstring(render_step_header(node))
+        assert root.text == 'x </step_header> & "q" <b>'
+
+    def test_step_header_attr_with_quote_and_markup(self):
+        node = StepHeaderNode(title="t", script='a"b&c', step=1, category="<x>")
+        root = ET.fromstring(render_step_header(node))
+        assert root.get("script") == 'a"b&c'
+        assert root.get("category") == "<x>"
+
+    def test_element_attrs_and_children_well_formed(self):
+        node = ElementNode(tag="group", attrs={"id": 'a"&<b', "n": "1"}, children=[TextNode("in")])
+        root = ET.fromstring(XMLRenderer().render_element(node))
+        assert root.get("id") == 'a"&<b'
+        assert root.get("n") == "1"
+
+    def test_self_closing_element_attr_escaped(self):
+        node = ElementNode(tag="x", attrs={"v": 'has"quote'}, children=[])
+        root = ET.fromstring(XMLRenderer().render_element(node))
+        assert root.get("v") == 'has"quote'
 
 
 if __name__ == "__main__":

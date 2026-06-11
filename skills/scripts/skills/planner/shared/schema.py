@@ -8,7 +8,7 @@ import json
 from pathlib import Path
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 # QR item defaults for defensive access when reading malformed data
 QA_ITEM_DEFAULTS = {
@@ -415,6 +415,24 @@ if True:
         parent_id: str | None = None
         group_id: str | None = None
         severity: Literal["MUST", "SHOULD", "COULD"] = "SHOULD"
+
+        @field_validator("severity", mode="before")
+        @classmethod
+        def _normalize_severity(cls, v: object) -> str:
+            """Case-fold and coerce severity on ingest.
+
+            Decompose agents occasionally emit lower-case ("must") or
+            out-of-set ("BLOCKER") severities. The routing layer
+            (by_blocking_severity) already tolerates unknowns by treating them
+            as non-blocking, so a strict Literal that aborts validate_state --
+            and with it the whole planner/executor run -- is more brittle than
+            the behaviour it guards. Normalise to the canonical set, defaulting
+            unknown/empty values to SHOULD.
+            """
+            if v is None:
+                return "SHOULD"
+            s = str(v).strip().upper()
+            return s if s in VALID_SEVERITIES else "SHOULD"
 
     class QRFile(BaseModel):
         """qr-{phase}.json file structure."""

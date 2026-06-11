@@ -15,28 +15,34 @@ Without coordination, race conditions corrupt the file:
 This CLI serializes access via file locking and prevents corruption.
 
 This works by:
-1. fcntl.flock(LOCK_EX) blocks until exclusive lock acquired
-2. Read qr-{phase}.json inside critical section
+1. flock(LOCK_EX) on a stable sentinel file (qr-{phase}.lock) that is never
+   renamed -- this is what provides real mutual exclusion
+2. Read qr-{phase}.json inside the critical section
 3. Mutate single item in memory
-4. Write to tempfile, os.rename() for atomicity
-5. Release lock on file descriptor close
+4. Write via skills.lib.io.atomic_write_text (unique tempfile + os.replace)
+5. Release the lock on context exit
+
+WHY a sentinel and not the data file: the data file is replaced via rename on
+every write, so a writer that blocks on flock() of the data file wakes holding
+a lock on the orphaned pre-rename inode and clobbers the writer that won the
+race. The sentinel inode is never renamed, so all writers serialize on one lock.
 
 Invariants:
 - Lock holder is sole writer; readers may see stale data but never partial writes
-- os.rename() is atomic on POSIX; no reader sees half-written JSON
+- os.replace() is atomic on POSIX; no reader sees half-written JSON
 - PASS is terminal; PASS->FAIL transition errors immediately
 - FAIL requires --finding; prevents silent status changes
 """
 
 from __future__ import annotations
 
-import fcntl
 import json
-import os
 import sys
-import tempfile
 from pathlib import Path
 from typing import NoReturn
+
+from skills.lib.io import atomic_write_text
+from skills.planner.shared.qr.utils import qr_write_lock
 
 from . import qr_commands
 from .dispatch import batch as batch_dispatch
@@ -72,35 +78,21 @@ def get_qr_path(state_dir: str, phase: str) -> Path:
     return Path(state_dir) / f"qr-{phase}.json"
 
 
-def load_qr_state_locked(fd) -> dict:
-    """Load QR state from file descriptor (assumes lock held)."""
-    fd.seek(0)
-    content = fd.read()
+def load_qr_state_under_lock(qr_path: Path) -> dict:
+    """Read QR state from qr_path. Caller must hold the phase write lock."""
+    content = qr_path.read_text() if qr_path.exists() else ""
     if not content:
         return {"phase": "", "items": []}
     return json.loads(content)
 
 
 def save_qr_state_atomic(state_dir: str, phase: str, qr_state: dict):
-    """Write QR state atomically via tempfile + rename.
+    """Write QR state atomically (unique temp + rename via the shared helper).
 
-    tempfile in same directory ensures same filesystem (rename can't cross mounts).
-    os.rename() is atomic on POSIX filesystems.
+    Caller must hold qr_write_lock(state_dir, phase) across the read -> mutate ->
+    save cycle: atomic_write_text gives per-write atomicity but no RMW exclusion.
     """
-    qr_path = get_qr_path(state_dir, phase)
-
-    # Create tempfile in same directory as target
-    fd, tmp_path = tempfile.mkstemp(dir=state_dir, prefix=f"qr-{phase}.", suffix=".tmp")
-    try:
-        with os.fdopen(fd, "w") as f:
-            json.dump(qr_state, f, indent=2)
-        # Atomic rename
-        os.rename(tmp_path, qr_path)
-    except Exception:
-        # Clean up on failure
-        if os.path.exists(tmp_path):
-            os.unlink(tmp_path)
-        raise
+    atomic_write_text(get_qr_path(state_dir, phase), json.dumps(qr_state, indent=2))
 
 
 def find_item(qr_state: dict, item_id: str) -> tuple[int, dict | None]:
@@ -178,13 +170,11 @@ def cmd_update_item(state_dir: str, phase: str, args: list[str]):
     if not qr_path.exists():
         error_exit(f"QR state file not found: {qr_path}")
 
-    # File locking for concurrent access
-    # fcntl.flock() with LOCK_EX blocks until exclusive lock acquired
-    # Lock is released automatically when file descriptor is closed
-    with open(qr_path, "r+") as f:
-        fcntl.flock(f.fileno(), fcntl.LOCK_EX)
-
-        qr_state = load_qr_state_locked(f)
+    # Serialize concurrent verify agents on a stable sentinel lock, then run the
+    # read -> mutate -> atomic-write cycle. See module docstring for why the data
+    # file itself cannot be the lock target.
+    with qr_write_lock(state_dir, phase):
+        qr_state = load_qr_state_under_lock(qr_path)
 
         idx, item = find_item(qr_state, item_id)
         if idx < 0:
@@ -207,10 +197,8 @@ def cmd_update_item(state_dir: str, phase: str, args: list[str]):
 
         qr_state["items"][idx] = item
 
-        # Atomic write
+        # Atomic write under the held lock.
         save_qr_state_atomic(state_dir, phase, qr_state)
-
-        # Lock released when f closes
 
     # Structured output matching plan.py format
     print_entity_result(EntityResult(id=item_id, version=item["version"], operation="updated"))
@@ -320,9 +308,8 @@ def cmd_assign_group(state_dir: str, phase: str, args: list[str]):
             f"Invalid group_id '{group_id}'. Must be 'umbrella' or start with: parent-, component-, concern-, affinity-"
         )
 
-    with open(qr_path, "r+") as f:
-        fcntl.flock(f.fileno(), fcntl.LOCK_EX)
-        qr_state = load_qr_state_locked(f)
+    with qr_write_lock(state_dir, phase):
+        qr_state = load_qr_state_under_lock(qr_path)
 
         idx, item = find_item(qr_state, item_id)
         if idx < 0:

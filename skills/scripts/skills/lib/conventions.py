@@ -162,42 +162,40 @@ def _validate_parsed_structure(result: dict) -> None:
                     raise ValueError(f"Role '{role}' mode_specific.{mode} must be list")
 
 
-def _parse_yaml_simple(text: str) -> dict:
-    """Simple YAML parser for registry (subset of YAML needed for our structure)."""
-    try:
-        import yaml  # pyright: ignore[reportMissingModuleSource]
+def _parse_registry(text: str) -> dict:
+    """Parse the role-convention registry.
 
-        result = yaml.safe_load(text)
-        _validate_parsed_structure(result)
-        return result
-    except ImportError:
-        result = {}
-        current_role = None
-        current_key = None
-        current_phase = None
+    A purpose-built indentation parser for the small REGISTRY.yaml subset
+    (roles -> receives / phase_specific / mode_specific / rationale). pyyaml is
+    not a project dependency, so this is the single parser used both at runtime
+    and by the CI drift-guard (validate_conventions.py) -- there is no second
+    code path to drift against.
+    """
+    result: dict = {}
+    current_role = None
+    current_key = None
+    current_phase = None
 
-        for line in text.split("\n"):
-            if not line.strip() or line.strip().startswith("#"):
-                continue
+    for line in text.split("\n"):
+        if not line.strip() or line.strip().startswith("#"):
+            continue
 
-            indent = len(line) - len(line.lstrip())
-            content = line.strip()
+        indent = len(line) - len(line.lstrip())
+        content = line.strip()
 
-            if indent == 0 and ":" in content and not content.startswith("-"):
-                current_role, current_key, current_phase = _parse_indent_0_role(content, result)
-            elif indent == 2 and current_role and ":" in content:
-                current_key, current_phase = _parse_indent_2_keys(content, current_role, result)
-            elif indent == 4 and current_role and current_key:
-                phase_update = _parse_indent_4_items(content, current_role, current_key, result)
-                if phase_update is not None:
-                    current_phase = phase_update
-            elif indent == 6 and current_role and current_key:
-                _parse_indent_6_phase_items(
-                    content, current_role, current_key, current_phase, result
-                )
+        if indent == 0 and ":" in content and not content.startswith("-"):
+            current_role, current_key, current_phase = _parse_indent_0_role(content, result)
+        elif indent == 2 and current_role and ":" in content:
+            current_key, current_phase = _parse_indent_2_keys(content, current_role, result)
+        elif indent == 4 and current_role and current_key:
+            phase_update = _parse_indent_4_items(content, current_role, current_key, result)
+            if phase_update is not None:
+                current_phase = phase_update
+        elif indent == 6 and current_role and current_key:
+            _parse_indent_6_phase_items(content, current_role, current_key, current_phase, result)
 
-        _validate_parsed_structure(result)
-        return result
+    _validate_parsed_structure(result)
+    return result
 
 
 def get_registry() -> dict:
@@ -205,7 +203,7 @@ def get_registry() -> dict:
     global _registry_cache
     if _registry_cache is None:
         registry_path = Path(__file__).resolve().parents[4] / "conventions" / "REGISTRY.yaml"
-        _registry_cache = _parse_yaml_simple(registry_path.read_text())
+        _registry_cache = _parse_registry(registry_path.read_text())
     return _registry_cache
 
 

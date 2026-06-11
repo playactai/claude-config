@@ -9,12 +9,36 @@ Provides centralized access to qr-<phase>.json state files:
 - format_*: Prompt formatting for different workflows
 """
 
+import contextlib
+import fcntl
 import json
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from pathlib import Path
 
 from skills.planner.shared.qr.constants import QR_ROUTING
 from skills.planner.shared.schema import QA_ITEM_DEFAULTS
+
+
+@contextlib.contextmanager
+def qr_write_lock(state_dir: str | Path, phase: str) -> Iterator[None]:
+    """Serialize qr-{phase}.json writers on a stable sentinel inode.
+
+    The data file is replaced via atomic rename on every write, so locking it
+    directly provides NO mutual exclusion: a writer that blocks on flock()
+    wakes holding a lock on the orphaned pre-rename inode and clobbers the
+    writer that won the race (roughly half of concurrent writes are lost
+    under load). Locking a sentinel file that is never renamed gives true
+    exclusion, while the atomic rename of the data file still gives lock-free
+    readers (summary/list/get and the orchestrator's has_qr_failures()) an
+    all-or-nothing view.
+
+    Hold this lock across the full read -> mutate -> atomic-write cycle.
+    """
+    lock_path = Path(state_dir) / f"qr-{phase}.lock"
+    with open(lock_path, "a") as lock_f:
+        fcntl.flock(lock_f.fileno(), fcntl.LOCK_EX)
+        yield
+        # Lock released when lock_f closes on context exit.
 
 
 def load_qr_state(state_dir: str, phase: str) -> dict | None:
@@ -98,11 +122,16 @@ def by_blocking_severity(iteration: int) -> ItemPredicate:
     Default "SHOULD" for missing severity field because SHOULD is the
     middle tier -- neither blocks indefinitely (MUST) nor is trivially
     skippable (COULD). See shared/schema.py QA_ITEM_DEFAULTS.
+
+    Severity is upper-cased before the membership test so a decompose agent
+    that writes lower-case "must"/"should" is not silently downgraded to
+    non-blocking. Genuinely out-of-set values stay non-blocking (the tolerant
+    runtime contract; schema ingest coerces them to SHOULD for validation).
     """
     from skills.planner.shared.qr.constants import get_blocking_severities
 
     blocking = get_blocking_severities(iteration)
-    return lambda item: item.get("severity", "SHOULD") in blocking
+    return lambda item: str(item.get("severity") or "SHOULD").strip().upper() in blocking
 
 
 def query_items(qr_state: dict, *predicates: ItemPredicate) -> list[dict]:
@@ -299,10 +328,15 @@ def increment_qr_iteration(state_dir: str, phase: str) -> int | None:
     not decomposition invocations. Decompose always writes iteration=1;
     verify increments on RETRY after fixes applied.
 
+    WHY lock-free is safe here (unlike the item writers): this is the sole
+    writer of the `iteration` field and the orchestrator calls it at the
+    verify-dispatch step in a single process, BEFORE the parallel verify agents
+    fan out. The single-writer invariant is positional (run-before-fan-out), so
+    no qr_write_lock is needed; the agents only mutate items[].
+
     WHY atomic write:
-    POSIX rename is atomic; prevents corruption if process terminates
-    mid-write. Temp file + rename ensures reader sees complete state
-    or old state, never partial JSON.
+    atomic_write_text writes a unique temp file then os.replace()s it in, so a
+    reader sees complete old-or-new state, never partial JSON.
 
     WHY returns None instead of raising:
     File may be deleted between decompose and verify (user intervention,
@@ -316,8 +350,7 @@ def increment_qr_iteration(state_dir: str, phase: str) -> int | None:
     Returns:
         New iteration value, or None if file doesn't exist
     """
-    import os
-    import tempfile
+    from skills.lib.io import atomic_write_text
 
     path = Path(state_dir) / f"qr-{phase}.json"
     if not path.exists():
@@ -326,18 +359,7 @@ def increment_qr_iteration(state_dir: str, phase: str) -> int | None:
     qr_state = json.loads(path.read_text())
     iteration = qr_state.get("iteration", 1) + 1
     qr_state["iteration"] = iteration
-
-    # Atomic write via temp file
-    fd, tmp_path = tempfile.mkstemp(dir=state_dir, suffix=".tmp")
-    try:
-        with os.fdopen(fd, "w") as tmp:
-            json.dump(qr_state, tmp, indent=2)
-        os.rename(tmp_path, str(path))
-    except Exception:
-        if os.path.exists(tmp_path):
-            os.unlink(tmp_path)
-        raise
-
+    atomic_write_text(path, json.dumps(qr_state, indent=2))
     return iteration
 
 

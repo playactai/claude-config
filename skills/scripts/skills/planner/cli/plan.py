@@ -181,11 +181,14 @@ def load_plan(state_dir: Path) -> Plan:
 
 
 def save_plan(state_dir: Path, plan: Plan):
-    """Atomic write: write to .tmp then rename."""
-    path = get_plan_path(state_dir)
-    tmp_path = path.with_suffix(".tmp")
-    tmp_path.write_text(plan.model_dump_json(indent=2))
-    tmp_path.rename(path)
+    """Atomic write via a unique temp file + rename under a lock.
+
+    Uses a unique mkstemp temp (not a shared fixed plan.tmp that a concurrent
+    writer would clobber) -- see skills.lib.io.atomic_write_text.
+    """
+    from skills.lib.io import atomic_write_text
+
+    atomic_write_text(get_plan_path(state_dir), plan.model_dump_json(indent=2))
     # Catch schema violations immediately after mutation
     from ..shared.schema import validate_state
 
@@ -639,13 +642,28 @@ class SetChangeCommand(Command):
         parser.add_argument("--milestone", required=True, help="Parent milestone ID")
         parser.add_argument("--intent-ref", help="Intent ID this implements")
         parser.add_argument("--file", help="Changed file path (required for create)")
-        parser.add_argument("--diff", help="Diff content (required for create)")
+        parser.add_argument("--diff", help="Diff content (required for create unless --diff-file)")
+        parser.add_argument(
+            "--diff-file",
+            help="Path to a file containing the diff. Preferred over --diff: it carries "
+            "apostrophes/backslashes verbatim instead of forcing fragile shell quoting. "
+            "Takes precedence over --diff.",
+        )
         parser.add_argument("--comments", help="Change-level comments")
 
     @classmethod
     def run(cls, args: argparse.Namespace) -> None:
         state_dir = get_state_dir()
         plan = load_plan(state_dir)
+
+        # --diff-file (a file the agent wrote with the Write tool) wins over
+        # inline --diff so real diffs never have to survive shell quoting.
+        diff_value = args.diff
+        if args.diff_file:
+            diff_path = Path(args.diff_file)
+            if not diff_path.exists():
+                error_exit(f"Diff file not found: {args.diff_file}")
+            diff_value = diff_path.read_text()
 
         ms = plan.get_milestone(args.milestone)
         if not ms:
@@ -692,8 +710,8 @@ class SetChangeCommand(Command):
                 cc.intent_ref = args.intent_ref if args.intent_ref else None
             if args.file:
                 cc.file = args.file
-            if args.diff:
-                cc.diff = args.diff
+            if diff_value:
+                cc.diff = diff_value
             if args.comments is not None:
                 cc.comments = args.comments
 
@@ -705,10 +723,10 @@ class SetChangeCommand(Command):
             # CREATE path
             if args.version is not None:
                 error_exit("--version only valid for updates (when --id provided)")
-            if not args.file or not args.diff:
-                error_exit("--file and --diff required for create")
+            if not args.file or not diff_value:
+                error_exit("--file and --diff (or --diff-file) required for create")
 
-            diff_content = args.diff
+            diff_content = diff_value
 
             num = len(ms.code_changes) + 1
             ccid = f"CC-{ms.id}-{num:03d}"

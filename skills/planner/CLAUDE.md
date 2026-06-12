@@ -12,10 +12,10 @@ Planning and execution skill with quality review gates.
 
 ## Subdirectories
 
-| Directory    | What                   | When to read                        |
-| ------------ | ---------------------- | ----------------------------------- |
-| `resources/` | Plan format, diff spec | Editing plan structure, diff format |
-| `architect/` | Plan design sub-agent  | Understanding planning workflow     |
+| Directory    | What                   | When to read                          |
+| ------------ | ---------------------- | ------------------------------------- |
+| `resources/` | Plan format reference  | Editing plan structure                |
+| `architect/` | Plan design sub-agent  | Understanding planning workflow       |
 
 Python code: `scripts/skills/planner/` (planner.py, executor.py, explore.py, qr/, tw/, dev/)
 

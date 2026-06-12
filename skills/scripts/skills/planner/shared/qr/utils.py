@@ -46,7 +46,7 @@ def load_qr_state(state_dir: str, phase: str) -> dict | None:
 
     Args:
         state_dir: Path to state directory
-        phase: QR phase name (plan-design, plan-code, plan-docs, impl-code, impl-docs)
+        phase: QR phase name (plan-design, impl-code, impl-docs)
 
     Returns:
         Parsed QR state dict or None if file doesn't exist/is invalid
@@ -259,7 +259,7 @@ def get_qr_iteration(state_dir: str, phase: str) -> int:
 
     Args:
         state_dir: Path to state directory
-        phase: QR phase name (plan-design, plan-code, plan-docs, impl-code, impl-docs)
+        phase: QR phase name (plan-design, impl-code, impl-docs)
 
     Returns:
         Current iteration (1 if file missing or no iteration field)
@@ -283,7 +283,7 @@ def has_qr_failures(state_dir: str, phase: str) -> bool:
 
     Args:
         state_dir: Path to state directory
-        phase: QR phase name (plan-design, plan-code, plan-docs, impl-code, impl-docs)
+        phase: QR phase name (plan-design, impl-code, impl-docs)
 
     Returns:
         True if qr-{phase}.json has FAIL items at blocking severity
@@ -309,7 +309,7 @@ def qr_file_exists(state_dir: str, phase: str) -> bool:
 
     Args:
         state_dir: Path to state directory
-        phase: QR phase name (plan-design, plan-code, plan-docs, impl-code, impl-docs)
+        phase: QR phase name (plan-design, impl-code, impl-docs)
 
     Returns:
         True if qr-{phase}.json exists, False otherwise
@@ -368,7 +368,7 @@ def get_pending_qr_items(state_dir: str, phase: str) -> list[str]:
 
     Args:
         state_dir: Path to state directory
-        phase: QR phase name (plan-design, plan-code, plan-docs, impl-code, impl-docs)
+        phase: QR phase name (plan-design, impl-code, impl-docs)
 
     Returns:
         List of item IDs with TODO or FAIL status

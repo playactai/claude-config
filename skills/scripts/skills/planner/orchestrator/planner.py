@@ -2,23 +2,23 @@
 """
 Interactive Sequential Planner - Orchestrator with parallel QR verification.
 
-14-step planning workflow per INTENT.md:
+6-step planning workflow per INTENT.md:
 
 Flow:
   1. plan-init (orchestrator captures context categories)
   2. context-verify (orchestrator self-checks handover completeness)
-  3. plan-design-work (architect sub-agent)
-  4. plan-design-qr-decompose -> 5. verify(N) -> 6. route
-  7. plan-code-work (developer)
-  8. plan-code-qr-decompose -> 9. verify(N) -> 10. route
-  11. plan-docs-work (technical-writer)
-  12. plan-docs-qr-decompose -> 13. verify(N) -> 14. route -> Plan Approved
+  3. plan-design-work (architect: Code Intent contract + decisions + diagram IR/render)
+  4. plan-design-qr-decompose -> 5. verify(N) -> 6. route -> Plan Approved
+
+Code Intent is the durable contract: at execution the developer regenerates the
+implementation just-in-time per wave against the live file (see executor.py), and
+impl-code QR is the single authoritative code review. There are no plan-time diffs.
 
 QR Block Pattern (4 steps per phase):
-  N   work        1 agent (architect/dev/TW)    Modified plan.json
+  N   work        1 agent (architect)          Modified plan.json
   N+1 decompose   1 agent (QR)                  qr-{phase}.json
   N+2 verify      N agents (parallel, expanded) Each: PASS or FAIL
-  N+3 route       0 agents (orchestrator)       Loop to N or proceed to N+4
+  N+3 route       0 agents (orchestrator)       Loop to N or approve plan
 """
 
 import argparse
@@ -43,7 +43,7 @@ from skills.planner.shared.gates import GateResult, build_gate_output
 from skills.planner.shared.qr.cli import add_qr_args
 from skills.planner.shared.qr.types import LoopState, QRState, QRStatus
 from skills.planner.shared.qr.utils import increment_qr_iteration, qr_file_exists
-from skills.planner.shared.resources import PlannerResourceProvider, get_mode_script_path
+from skills.planner.shared.resources import get_mode_script_path
 
 MODULE_PATH = "skills.planner.orchestrator.planner"
 
@@ -163,14 +163,7 @@ def _save_plan_to_docs(state_dir: str) -> "Path | None":
         return None
 
 
-_provider = PlannerResourceProvider()
-
 QUESTION_RELAY_INSTRUCTION = SUB_AGENT_QUESTION_FORMAT
-
-
-def get_plan_format() -> str:
-    """Read the plan format template from resources."""
-    return _provider.get_resource("plan-format.md")
 
 
 def _build_fix_mode_output(title, agent, agent_role, script, mode_total_steps, qr, ctx):
@@ -471,7 +464,9 @@ Checks: $checks_summary
 
 Start: {start_cmd}"""
 
-        command = f"uv run python -m {verify_script} --step 1 --state-dir {state_dir} $qr_item_flags"
+        command = (
+            f"uv run python -m {verify_script} --step 1 --state-dir {state_dir} $qr_item_flags"
+        )
 
         dispatch_text = template_dispatch(
             agent_type="quality-reviewer",
@@ -520,39 +515,11 @@ Start: {start_cmd}"""
     return handler
 
 
-def _all_milestones_doc_only(state_dir: str) -> bool:
-    """Return True when every milestone in plan.json is documentation-only.
-
-    Used by step 6 (plan-design gate) to skip plan-code (steps 7-10) for
-    pure documentation plans. Routing through plan-code runs QR-Code checks
-    (context lines, format rules, test coverage) against prose, which never
-    converges and produces infinite fix loops.
-
-    Returns False on any read/parse failure or when milestones list is empty
-    so behaviour stays conservative (goes through plan-code) when in doubt.
-    """
-    import json
-
-    try:
-        plan_path = Path(state_dir) / "plan.json"
-        plan_data = json.loads(plan_path.read_text())
-        milestones = plan_data.get("milestones", [])
-        if not milestones:
-            return False
-        return all(m.get("is_documentation_only", False) for m in milestones)
-    except (OSError, json.JSONDecodeError):
-        return False
-
-
 def qr_route_step(title, phase, work_step, pass_step, pass_message, fix_target=None):
-    """Steps 6, 10, 14: Route based on aggregated QR results.
+    """Step 6: Route based on aggregated QR results.
 
-    PASS: delete qr file, proceed to pass_step
+    PASS: delete qr file, approve the plan (pass_step=None -> terminal pass)
     FAIL: loop to work_step (fix mode detected via qr-{phase}.json inspection)
-
-    Step 6 has doc-only fast-path: when all milestones are is_documentation_only,
-    a PASS routes to step 11 (plan-docs-work) instead of step 7 (plan-code-work)
-    because code phase QR never converges on prose.
     """
 
     def handler(ctx):
@@ -560,23 +527,14 @@ def qr_route_step(title, phase, work_step, pass_step, pass_message, fix_target=N
         state_dir = ctx.get("state_dir", "")
         step = ctx["step"]
 
-        effective_pass_step = pass_step
-        effective_pass_message = pass_message
-        if step == 6 and state_dir and _all_milestones_doc_only(state_dir):
-            effective_pass_step = 11
-            effective_pass_message = (
-                "All milestones are documentation-only. "
-                "Skipping plan-code phase. Proceed to step 11 (plan-docs-work)."
-            )
-
         return build_gate_output(
             module_path=MODULE_PATH,
             qr_name=title,
             qr=qr,
             step=step,
             work_step=work_step,
-            pass_step=effective_pass_step,
-            pass_message=effective_pass_message,
+            pass_step=pass_step,
+            pass_message=pass_message,
             fix_target=fix_target,
             state_dir=state_dir,
             phase=phase,
@@ -587,7 +545,7 @@ def qr_route_step(title, phase, work_step, pass_step, pass_message, fix_target=N
 
 
 # =============================================================================
-# Step Definitions (1-14)
+# Step Definitions (1-6)
 # =============================================================================
 
 STEPS = {
@@ -671,68 +629,9 @@ STEPS = {
         title="plan-design-qr-route",
         phase="plan-design",
         work_step=3,
-        pass_step=7,
-        pass_message="Proceed to step 7 (plan-code-work).",
-    ),
-    # Plan-code phase (steps 7-10)
-    7: execute_dispatch_step(
-        title="plan-code-work",
-        agent="developer",
-        agent_role="developer",
-        script="developer/plan_code.py",
-        mode_total_steps=4,
-        phase="plan-code",
-        post_dispatch=[
-            QUESTION_RELAY_HANDLER,
-        ],
-    ),
-    8: qr_decompose_step(
-        title="plan-code-qr-decompose",
-        phase="plan-code",
-        script="quality_reviewer/plan_code_qr_decompose.py",
-        model="opus",
-    ),
-    9: qr_verify_step(
-        title="plan-code-qr-verify",
-        phase="plan-code",
-    ),
-    10: qr_route_step(
-        title="plan-code-qr-route",
-        phase="plan-code",
-        work_step=7,
-        pass_step=11,
-        pass_message="Proceed to step 11 (plan-docs-work).",
-        fix_target=AgentRole.DEVELOPER,
-    ),
-    # Plan-docs phase (steps 11-14)
-    11: execute_dispatch_step(
-        title="plan-docs-work",
-        agent="technical-writer",
-        agent_role="tw",
-        script="technical_writer/plan_docs.py",
-        mode_total_steps=6,
-        phase="plan-docs",
-        post_dispatch=[
-            QUESTION_RELAY_HANDLER,
-        ],
-    ),
-    12: qr_decompose_step(
-        title="plan-docs-qr-decompose",
-        phase="plan-docs",
-        script="quality_reviewer/plan_docs_qr_decompose.py",
-        model="opus",
-    ),
-    13: qr_verify_step(
-        title="plan-docs-qr-verify",
-        phase="plan-docs",
-    ),
-    14: qr_route_step(
-        title="plan-docs-qr-route",
-        phase="plan-docs",
-        work_step=11,
         pass_step=None,
         pass_message="PLAN APPROVED. Ready for execution.",
-        fix_target=AgentRole.TECHNICAL_WRITER,
+        fix_target=AgentRole.ARCHITECT,
     ),
 }
 
@@ -802,8 +701,8 @@ def format_output(step: int, qr_status, state_dir) -> str | GateResult:
 def main():
     """CLI entry point for planner orchestration."""
     parser = argparse.ArgumentParser(
-        description="Interactive Sequential Planner (14-step orchestration workflow)",
-        epilog="Step 1: init | Step 2: context-verify | Steps 3-14: work + QR phases",
+        description="Interactive Sequential Planner (6-step orchestration workflow)",
+        epilog="Step 1: init | Step 2: context-verify | Steps 3-6: plan-design work + QR",
     )
 
     parser.add_argument("--step", type=int, required=True)
@@ -830,7 +729,7 @@ def main():
 
     # Route steps require --qr-status; provide helpful output if missing
     if args.step in PLANNER_GATE_STEPS and not args.qr_status:
-        gate_names = {6: "plan-design-qr-route", 10: "plan-code-qr-route", 14: "plan-docs-qr-route"}
+        gate_names = {6: "plan-design-qr-route"}
         print(f"PLANNER - Step {args.step}/{PLANNER_TOTAL_STEPS}: {gate_names[args.step]}")
         print()
         print("This is a route step. Re-invoke with --qr-status pass or --qr-status fail")

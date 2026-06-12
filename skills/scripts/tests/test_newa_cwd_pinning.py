@@ -1,10 +1,11 @@
 """Guard test for audit §3b NEW-A: every prose uv-run command is cwd-pinned.
 
-For each of the 6 planner sub-agent modules, and for each of its steps,
-the test calls get_step_guidance() and flattens all string lines in the
-returned actions list.  It then asserts that every line containing
-'uv run python -m skills.planner.cli' also contains 'cd ' at an earlier
-index, proving the line is cwd-pinned.
+For the plan-design sub-agent modules (the plan-phase work/fix scripts that emit
+cli.plan commands after the rigid-diff redesign removed plan-code/plan-docs), and
+for each of their steps, the test calls get_step_guidance() and flattens all string
+lines in the returned actions list. It then asserts that every line containing
+'uv run python -m skills.planner.cli' also contains 'cd ' at an earlier index,
+proving the line is cwd-pinned.
 
 A missing pin_cwd() call on any prose command will cause this test to fail.
 """
@@ -74,8 +75,6 @@ MODULES: list[ModuleSpec] = []
 
 def _register() -> None:
     from skills.planner.architect import plan_design_execute, plan_design_qr_fix
-    from skills.planner.developer import plan_code_execute, plan_code_qr_fix
-    from skills.planner.technical_writer import plan_docs_execute, plan_docs_qr_fix
 
     MODULES.extend(
         [
@@ -90,30 +89,6 @@ def _register() -> None:
                 plan_design_qr_fix.get_step_guidance,
                 list(plan_design_qr_fix.STEPS.keys()),
                 "plan-design",
-            ),
-            (
-                "developer/plan_code_execute",
-                plan_code_execute.get_step_guidance,
-                list(plan_code_execute.STEPS.keys()),
-                None,
-            ),
-            (
-                "developer/plan_code_qr_fix",
-                plan_code_qr_fix.get_step_guidance,
-                list(plan_code_qr_fix.STEPS.keys()),
-                "plan-code",
-            ),
-            (
-                "technical_writer/plan_docs_execute",
-                plan_docs_execute.get_step_guidance,
-                list(plan_docs_execute.STEPS.keys()),
-                None,
-            ),
-            (
-                "technical_writer/plan_docs_qr_fix",
-                plan_docs_qr_fix.get_step_guidance,
-                list(plan_docs_qr_fix.STEPS.keys()),
-                "plan-docs",
             ),
         ]
     )

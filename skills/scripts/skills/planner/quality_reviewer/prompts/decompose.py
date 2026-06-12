@@ -1,6 +1,6 @@
 """Shared utilities for QR decomposition scripts.
 
-Mechanical utilities and truly-generic prompts (identical across all 5 phases).
+Mechanical utilities and truly-generic prompts (identical across all 3 phases).
 Phase-SPECIFIC cognitive prompts (steps 1-3, 5) belong in per-phase scripts.
 
 WHY "truly-generic": GAP_ANALYSIS_PROMPT, ATOMICITY_RULES, COVERAGE_VALIDATION_PROMPT
@@ -12,8 +12,8 @@ only required utilities. No forced inheritance hierarchy.
 
 CRITICAL INVARIANT - Phase-Severity Alignment:
 Each phase uses severity categories matching agent capabilities:
-  - plan-docs: KNOWLEDGE categories only (TW cannot fix code issues)
-  - plan-code: STRUCTURE + COSMETIC (Dev can fix code)
+  - impl-docs: KNOWLEDGE categories only (TW cannot fix code issues)
+  - impl-code: STRUCTURE + COSMETIC (Dev can fix code)
   - plan-design: DIAGRAM + subset of KNOWLEDGE
 Violating this causes unrecoverable QR loops.
 
@@ -94,7 +94,7 @@ def write_qr_state(state_dir: str, phase: str, items: list[dict]) -> None:
 
 
 # =============================================================================
-# SHARED PROMPTS (truly identical across all 5 phases)
+# SHARED PROMPTS (truly identical across all 3 phases)
 # =============================================================================
 
 GAP_ANALYSIS_PROMPT = """\
@@ -192,13 +192,13 @@ def dispatch_step(
 ) -> dict:
     """Route step to appropriate handler.
 
-    WHY this function: Eliminates duplicate if-elif control flow across 5 phase scripts.
+    WHY this function: Eliminates duplicate if-elif control flow across the phase scripts.
     Each script provides phase-specific content (phase_prompts, grouping_config),
     this function handles the common routing logic.
 
     Args:
         step: Current step number (1-13)
-        phase: Phase name (plan-docs, plan-code, etc.)
+        phase: Phase name (plan-design, impl-code, impl-docs)
         module_path: Module path for next step command
         phase_prompts: Dict mapping step numbers to phase-specific prompt strings
                       Required keys: 1, 2, 3, 5

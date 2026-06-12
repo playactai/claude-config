@@ -97,18 +97,27 @@ def get_step_guidance(step: int, module_path: str | None = None, **kwargs) -> di
                 "SINGLE COMMAND EXAMPLES:",
                 "",
                 "Missing decision_log entry:",
-                "  " + pin_cwd("uv run python -m skills.planner.cli.plan --state-dir $STATE_DIR set-decision \\"),
+                "  "
+                + pin_cwd(
+                    "uv run python -m skills.planner.cli.plan --state-dir $STATE_DIR set-decision \\"
+                ),
                 "    --decision '<what was decided>' \\",
                 "    --reasoning '<premise -> implication -> conclusion>'",
                 "",
                 "Missing code_intent:",
-                "  " + pin_cwd("uv run python -m skills.planner.cli.plan --state-dir $STATE_DIR set-intent \\"),
+                "  "
+                + pin_cwd(
+                    "uv run python -m skills.planner.cli.plan --state-dir $STATE_DIR set-intent \\"
+                ),
                 "    --milestone <milestone-id> --file <path> \\",
                 "    --behavior '<what to implement>' \\",
                 "    --decision-refs '<DL-001,DL-002>'",
                 "",
                 "Updating existing intent (requires --version from current state):",
-                "  " + pin_cwd("uv run python -m skills.planner.cli.plan --state-dir $STATE_DIR set-intent \\"),
+                "  "
+                + pin_cwd(
+                    "uv run python -m skills.planner.cli.plan --state-dir $STATE_DIR set-intent \\"
+                ),
                 "    --id <intent-id> --version <current-version> \\",
                 "    --behavior '<updated description>'",
                 "",

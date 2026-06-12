@@ -75,7 +75,7 @@ Plan
     invariants: string[]  -- must-preserve properties
     tradeoffs: string[]   -- known compromises
 
-  diagram_graphs: DiagramGraph[]   -- populated by Architect (IR), rendered by TW
+  diagram_graphs: DiagramGraph[]   -- populated by Architect (IR + ascii_render)
     id: "DIAG-001"
     type: "architecture" | "state" | "sequence" | "dataflow"
     scope: string         -- "overview" | "invisible_knowledge" | "milestone:M-XXX"
@@ -89,7 +89,7 @@ Plan
       target: string      -- node id (validated: must exist)
       label: string       -- free-form, e.g. "validates", "sends", "reads"
       protocol: string | null  -- free-form, e.g. "gRPC", "HTTP"
-    ascii_render: string | null  -- populated by TW, null until rendered
+    ascii_render: string | null  -- populated by Architect at plan-design
 
   milestones: Milestone[]
     id: "M-001"
@@ -102,17 +102,11 @@ Plan
                           -- "scenario:EDGE empty token returns 401"
                           -- "skip:no integration environment"
 
-    code_intents: CodeIntent[]  -- populated by Architect
+    code_intents: CodeIntent[]  -- binding behavioral contract; populated by Architect
       id: "CI-001"
       file: string
       behavior: string    -- what the code should do, includes function/params
       decision_refs: string[]
-
-    code_changes: CodeChange[]  -- populated by Developer, amended by TW
-      intent_ref: "CI-XXX" | null  -- null for cross-cutting docs (README.md)
-      file: string
-      diff: string                 -- unified diff, includes all documentation
-      comments: string             -- change-level context, may reference decisions
 
     is_documentation_only: bool
     delegated_to: string | null
@@ -126,7 +120,6 @@ Waves execute in array order. All milestones in W-001 complete before W-002 begi
 
 Cross-reference validation: `Plan.validate_refs()` checks:
 
-- `code_changes.intent_ref` -> `code_intents.id` (within same milestone, when not null)
 - `code_intents.decision_refs` -> `decisions.id`
 - `rejected_alternatives.decision_ref` -> `decisions.id`
 - `risks.decision_ref` -> `decisions.id`
@@ -136,7 +129,7 @@ Cross-reference validation: `Plan.validate_refs()` checks:
 
 ### qr-{phase}.json
 
-Ephemeral QR state. Created during QR decomposition. Deleted after phase passes. Five phases: plan-design, plan-code, plan-docs, impl-code, impl-docs.
+Ephemeral QR state. Created during QR decomposition. Deleted after phase passes. Three phases: plan-design, impl-code, impl-docs.
 
 ```json
 {
@@ -263,7 +256,7 @@ uv run --project "${CLAUDE_PROJECT_DIR:-$HOME}/.claude/skills/scripts" python -m
 
 Arguments:
   --state-dir    State directory containing qr-{phase}.json (required)
-  --qr-phase     One of: plan-design, plan-code, plan-docs, impl-code, impl-docs (required)
+  --qr-phase     One of: plan-design, impl-code, impl-docs (required)
   --status       PASS or FAIL (required)
   --finding      Explanation text (required when FAIL, forbidden when PASS)
 ```
@@ -369,27 +362,25 @@ On success, the CLI prints the entity ID and new version:
 
 **Unified set-X commands:**
 
-| Command            | Entity        | Role      |
-| ------------------ | ------------- | --------- |
-| set-milestone      | Milestone     | architect |
-| set-intent         | CodeIntent    | architect |
-| set-decision       | Decision      | architect |
-| set-diagram        | DiagramGraph  | architect |
-| add-diagram-node   | DiagramNode   | architect |
-| add-diagram-edge   | DiagramEdge   | architect |
-| set-change         | CodeChange    | developer |
-| set-doc            | Documentation | tw        |
-| set-diagram-render | DiagramGraph  | tw        |
+| Command            | Entity       | Role      |
+| ------------------ | ------------ | --------- |
+| set-milestone      | Milestone    | architect |
+| set-intent         | CodeIntent   | architect |
+| set-decision       | Decision     | architect |
+| set-diagram        | DiagramGraph | architect |
+| add-diagram-node   | DiagramNode  | architect |
+| add-diagram-edge   | DiagramEdge  | architect |
+| set-diagram-render | DiagramGraph | architect |
 
 The legacy add-X and update-X commands have been removed. All mutation uses set-X with CAS versioning.
 
 ## Documentation Model
 
-Documentation falls into two categories based on scope:
+Documentation is authored by exec-docs (Technical Writer) directly in the real implemented source files after impl-code QR passes.
 
 ### Code-Local Documentation
 
-Documentation that lives in source files. Delivered via diff amendment by Technical Writer.
+Documentation that lives in source files. Written by exec-docs against the actual implemented code, sourced from the Decision Log and Invisible Knowledge.
 
 | Tier           | What                                      | Where       | Example                                                |
 | -------------- | ----------------------------------------- | ----------- | ------------------------------------------------------ |
@@ -397,28 +388,16 @@ Documentation that lives in source files. Delivered via diff amendment by Techni
 | Docstring      | Function-level: what it does, when to use | On function | `def validate(token): """Validate JWT..."""`           |
 | Inline comment | Logic explanation: algorithms, decisions  | Above code  | `# xxhash for speed; collisions acceptable (DL-003)`   |
 
-TW amends Developer's diffs to add these. The diff IS the documentation delivery mechanism.
+The developer adds no comments. exec-docs authors all documentation after code is implemented and reviewed.
 
 ### Cross-Cutting Documentation
 
-Documentation spanning multiple files/components. Created as separate code_changes with `intent_ref: null`.
+Documentation spanning multiple files/components. Created directly by exec-docs as new files in the source tree.
 
-| Type      | What                                    | Handling                            |
-| --------- | --------------------------------------- | ----------------------------------- |
-| README.md | Design decisions, architecture overview | code_change with `intent_ref: null` |
-
-Example:
-
-```json
-{
-  "intent_ref": null,
-  "file": "src/auth/README.md",
-  "diff": "--- /dev/null\n+++ b/src/auth/README.md\n...",
-  "comments": "Cross-cutting auth design decisions"
-}
-```
-
-README.md files don't implement code behavior, so `intent_ref` is null. They're still code_changes because they're file modifications tracked in the plan.
+| Type      | What                                    | Handling                                        |
+| --------- | --------------------------------------- | ----------------------------------------------- |
+| README.md | Design decisions, architecture overview | exec-docs creates file directly in source tree  |
+| CLAUDE.md | Navigation index for LLMs               | exec-docs creates file directly in source tree  |
 
 ## Diagram Model
 
@@ -447,23 +426,18 @@ Scope determines where the diagram appears in rendered output:
 
 Multiple diagrams per scope are allowed. First diagram in list with matching scope is primary.
 
-### Two-Phase Workflow
+### Architect-Owned Workflow
 
-Diagrams use a graph IR (intermediate representation) to separate correctness from rendering:
+Diagrams are fully owned by the Architect at plan-design:
 
-**Phase 1 -- Architect (plan-design-work):**
+**Architect (plan-design-work):**
 
 - Creates diagram_graphs with nodes and edges
 - Validates semantic correctness: no orphan nodes, valid edge references
-- Leaves ascii_render as null
-
-**Phase 2 -- Technical Writer (plan-docs-work):**
-
-- Renders each diagram_graph to ASCII
-- Populates ascii_render field
+- Renders ASCII via `cli.plan set-diagram-render` and populates ascii_render
 - Validates format: width, box alignment
 
-This separation ensures the Architect focuses on WHAT to communicate (graph structure) while the TW focuses on HOW to communicate (visual rendering).
+The Architect owns both WHAT to communicate (graph structure) and HOW to communicate (visual rendering). No separate rendering step exists.
 
 ### ASCII Conventions
 
@@ -504,47 +478,47 @@ When skipping, diagram_graphs remains empty. This is valid state.
 
 ### Documentation Workflow
 
-**Developer (plan-code-work)**: Creates code_changes implementing code_intents. May include obvious comments.
+**exec-docs (impl-docs phase)**:
 
-**TW (plan-docs-work)**:
+1. Reads Decision Log and Invisible Knowledge from plan.json
+2. Authors inline comments and docstrings directly in the real implemented source files
+3. Creates CLAUDE.md and code-adjacent README.md files directly in the source tree
 
-1. Amends each code_change diff to add module comments, docstrings, inline comments
-2. Creates new code_changes for README.md files (`intent_ref: null`)
-
-The `comments` field on code_changes is for change-level context that doesn't belong in the code itself. May reference decisions inline: "Uses xxhash for speed (DL-003)".
+The developer writes no comments during implementation. exec-docs is the sole author of all documentation after impl-code QR passes.
 
 ## Mutation Ownership
 
-| File                | Step | Agent            | Mutation                                                                    |
-| ------------------- | ---- | ---------------- | --------------------------------------------------------------------------- |
-| plan.json           | 1    | orchestrator     | Create skeleton                                                             |
-| context.json        | 2    | orchestrator     | Create and freeze                                                           |
-| plan.json           | 3    | architect        | Add overview, milestones, code_intents, decisions, diagram_graphs (IR)      |
-| qr-plan-design.json | 4    | quality-reviewer | Create items with status: TODO                                              |
-| qr-plan-design.json | 5    | quality-reviewer | Update individual item status to PASS/FAIL                                  |
-| plan.json           | 7    | developer        | Add code_changes                                                            |
-| qr-plan-code.json   | 8    | quality-reviewer | Create items with status: TODO                                              |
-| qr-plan-code.json   | 9    | quality-reviewer | Update individual item status to PASS/FAIL                                  |
-| plan.json           | 11   | technical-writer | Amend code_changes diffs with documentation, render diagram_graphs to ASCII |
-| qr-plan-docs.json   | 12   | quality-reviewer | Create items with status: TODO                                              |
-| qr-plan-docs.json   | 13   | quality-reviewer | Update individual item status to PASS/FAIL                                  |
-| qr-plan-design.json | 6    | orchestrator     | Delete file (all PASS)                                                      |
-| qr-plan-code.json   | 10   | orchestrator     | Delete file (all PASS)                                                      |
-| qr-plan-docs.json   | 14   | orchestrator     | Delete file (all PASS)                                                      |
-| qr-impl-code.json   | E3   | quality-reviewer | Create items with status: TODO                                              |
-| qr-impl-code.json   | E4   | quality-reviewer | Update individual item status to PASS/FAIL                                  |
-| qr-impl-code.json   | E5   | orchestrator     | Delete file (all PASS)                                                      |
-| qr-impl-docs.json   | E7   | quality-reviewer | Create items with status: TODO                                              |
-| qr-impl-docs.json   | E8   | quality-reviewer | Update individual item status to PASS/FAIL                                  |
-| qr-impl-docs.json   | E9   | orchestrator     | Delete file (all PASS)                                                      |
+**Planning phase (plan.json mutations):**
+
+| File                | Step | Agent            | Mutation                                                                              |
+| ------------------- | ---- | ---------------- | ------------------------------------------------------------------------------------- |
+| plan.json           | 1    | orchestrator     | Create skeleton                                                                       |
+| context.json        | 2    | orchestrator     | Create and freeze                                                                     |
+| plan.json           | 3    | architect        | Add overview, milestones, code_intents (binding contract), decisions, diagram IR + ascii_render |
+| qr-plan-design.json | 4    | quality-reviewer | Create items with status: TODO                                                        |
+| qr-plan-design.json | 5    | quality-reviewer | Update individual item status to PASS/FAIL                                            |
+| qr-plan-design.json | 6    | orchestrator     | Delete file (all PASS) → PLAN APPROVED                                                |
+
+**Execution phase (source file mutations; plan.json not mutated):**
+
+| Files              | Step | Agent            | Mutation                                                                              |
+| ------------------ | ---- | ---------------- | ------------------------------------------------------------------------------------- |
+| source files       | E2   | developer        | Implement code_intents JIT against current live files (no plan.json write)            |
+| qr-impl-code.json  | E3   | quality-reviewer | Create items with status: TODO                                                        |
+| qr-impl-code.json  | E4   | quality-reviewer | Update individual item status to PASS/FAIL                                            |
+| qr-impl-code.json  | E5   | orchestrator     | Delete file (all PASS)                                                                |
+| source files       | E6   | technical-writer | exec-docs authors inline comments, docstrings, CLAUDE.md, README.md directly in source |
+| qr-impl-docs.json  | E7   | quality-reviewer | Create items with status: TODO                                                        |
+| qr-impl-docs.json  | E8   | quality-reviewer | Update individual item status to PASS/FAIL                                            |
+| qr-impl-docs.json  | E9   | orchestrator     | Delete file (all PASS)                                                                |
 
 ## Workflows
 
 ### Planning Workflow (orchestrator/planner.py)
 
-14 steps. Transforms user request into executable plan (the IR).
+6 steps. Transforms user request into an approved plan (the IR). The plan-code and plan-docs phases are eliminated; the plan is complete after plan-design QR passes.
 
-Each QR-able phase follows a 4-step block pattern:
+The single QR-able phase (plan-design) follows a 4-step block pattern:
 
 - Work step (1 sub-agent): Execute or fix based on state detection. Sub-agent validates written state before returning.
 - QR decompose (1 sub-agent): Create verification items. Sub-agent validates qr-{phase}.json before returning.
@@ -567,7 +541,8 @@ Step 3: plan-design-work
   Script: architect/plan_design.py (router)
   Routing: If qr-plan-design.json has FAIL items -> architect/plan_design_qr_fix.py
            Otherwise -> architect/plan_design_execute.py
-  Output: plan.json with overview, milestones, code_intents, decisions, diagram_graphs (IR only)
+  Output: plan.json with overview, milestones, code_intents (binding contract),
+          decisions, diagram_graphs (IR + ascii_render)
   Validation: Sub-agent validates plan.json against schema before returning
   Next: Step 4
 
@@ -587,59 +562,8 @@ Step 5: plan-design-qr-verify
 
 Step 6: plan-design-qr-route
   Action: Orchestrator script determines routing from qr-plan-design.json
-  Route: All PASS -> delete qr file, proceed to Step 7
+  Route: All PASS -> delete qr file, PLAN APPROVED (terminal)
          Any FAIL -> loop to Step 3 (router will dispatch to qr_fix)
-
-Step 7: plan-code-work
-  Agent: developer
-  Script: developer/plan_code.py (router)
-  Routing: If qr-plan-code.json has FAIL items -> developer/plan_code_qr_fix.py
-           Otherwise -> developer/plan_code_execute.py
-  Output: code_changes[] added to milestones
-  Next: Step 8
-
-Step 8: plan-code-qr-decompose
-  Agent: quality-reviewer
-  Script: quality_reviewer/plan_code_qr_decompose.py
-  Output: qr-plan-code.json with items (status: TODO)
-  Output: parallel_dispatch block listing all --qr-item IDs
-  Next: Step 9
-
-Step 9: plan-code-qr-verify
-  Agent: quality-reviewer (N parallel instances)
-  Script: quality_reviewer/plan_code_qr_verify.py --qr-item {id}
-  Output: Each agent updates one item in qr-plan-code.json to PASS/FAIL
-  Next: Step 10
-
-Step 10: plan-code-qr-route
-  Route: All PASS -> delete qr file, proceed to Step 11
-         Any FAIL -> loop to Step 7
-
-Step 11: plan-docs-work
-  Agent: technical-writer
-  Script: technical_writer/plan_docs.py (router)
-  Routing: If qr-plan-docs.json has FAIL items -> technical_writer/plan_docs_qr_fix.py
-           Otherwise -> technical_writer/plan_docs_execute.py
-  Output: code_changes diffs amended with documentation; README.md changes added;
-          diagram_graphs.ascii_render populated for each diagram
-  Next: Step 12
-
-Step 12: plan-docs-qr-decompose
-  Agent: quality-reviewer
-  Script: quality_reviewer/plan_docs_qr_decompose.py
-  Output: qr-plan-docs.json with items (status: TODO)
-  Output: parallel_dispatch block listing all --qr-item IDs
-  Next: Step 13
-
-Step 13: plan-docs-qr-verify
-  Agent: quality-reviewer (N parallel instances)
-  Script: quality_reviewer/plan_docs_qr_verify.py --qr-item {id}
-  Output: Each agent updates one item in qr-plan-docs.json to PASS/FAIL
-  Next: Step 14
-
-Step 14: plan-docs-qr-route
-  Route: All PASS -> delete qr file, PLAN APPROVED
-         Any FAIL -> loop to Step 11
 ```
 
 ### Execution Workflow (orchestrator/executor.py)
@@ -655,7 +579,9 @@ Step 2: impl-code-work
   Script: developer/exec_implement.py (router)
   Routing: If qr-impl-code.json has FAIL items -> developer/exec_implement_qr_fix.py
            Otherwise -> developer/exec_implement_execute.py
-  Output: Code changes applied to files
+  Dispatch carries: files, acceptance_criteria, Code Intent (code_intents[]),
+                    decision/IK context -- NOT code_changes[].diff (no diffs exist)
+  Output: code_intents implemented JIT against current live files (regenerated per wave)
   Next: Step 3
 
 Step 3: impl-code-qr-decompose
@@ -676,11 +602,12 @@ Step 5: impl-code-qr-route
          Any FAIL -> loop to Step 2
 
 Step 6: impl-docs-work
-  Agent: technical-writer
+  Agent: technical-writer (exec-docs)
   Script: technical_writer/exec_docs.py (router)
   Routing: If qr-impl-docs.json has FAIL items -> technical_writer/exec_docs_qr_fix.py
            Otherwise -> technical_writer/exec_docs_execute.py
-  Output: Documentation written to files
+  Output: All documentation authored directly in source: inline comments, docstrings
+          (sourced from Decision Log + Invisible Knowledge), CLAUDE.md, README.md
   Next: Step 7
 
 Step 7: impl-docs-qr-decompose
@@ -719,37 +646,28 @@ Scripts follow router-dispatch pattern. Each QR-able phase has:
 ```
 skills/planner/
   orchestrator/
-    planner.py       -- 14-step planning workflow
-    executor.py      -- 12-step execution workflow
+    planner.py       -- 6-step planning workflow
+    executor.py      -- 10-step execution workflow
   architect/
     plan_design.py            -- router (detects state, dispatches)
     plan_design_execute.py    -- first execution (6 steps)
     plan_design_qr_fix.py     -- post-QR fix workflow
   developer/
-    plan_code.py              -- router
-    plan_code_execute.py      -- first execution (4 steps)
-    plan_code_qr_fix.py       -- post-QR fix workflow
     exec_implement.py         -- router
     exec_implement_execute.py -- implementation (4 steps)
     exec_implement_qr_fix.py  -- post-QR fix workflow
   technical_writer/
-    plan_docs.py              -- router
-    plan_docs_execute.py      -- first execution (6 steps)
-    plan_docs_qr_fix.py       -- post-QR fix workflow
     exec_docs.py              -- router
     exec_docs_execute.py      -- impl-docs (6 steps)
     exec_docs_qr_fix.py       -- post-QR fix workflow
   quality_reviewer/
     plan_design_qr_decompose.py -- decomposition workflow
     plan_design_qr_verify.py    -- single-item verification
-    plan_code_qr_decompose.py   -- decomposition workflow
-    plan_code_qr_verify.py      -- single-item verification
-    plan_docs_qr_decompose.py   -- decomposition workflow
-    plan_docs_qr_verify.py      -- single-item verification
     impl_code_qr_decompose.py   -- decomposition workflow
     impl_code_qr_verify.py      -- single-item verification
     impl_docs_qr_decompose.py   -- decomposition workflow
     impl_docs_qr_verify.py      -- single-item verification
+    qr_verify_base.py           -- shared verification base
   shared/
     schema.py         -- Pydantic v2 schemas (context, plan, qr), validation
     resources.py      -- Path helpers, resource provider
@@ -878,7 +796,7 @@ Read plan.json and context.json. Summarize understanding in 2-3 sentences. Estab
 Brainstorm freely: "If reviewing this phase output, what would I check?" Captures high-level validity, cross-cutting patterns, quality aspects, and risks. Output is an unfiltered bulleted list of concerns. This step identifies what structural enumeration cannot see.
 
 **Step 3: Structural Enumeration (Bottom-Up)**
-List what EXISTS in the plan for this phase. Phase-specific: decisions/constraints/risks for plan-design, code_changes for plan-code, acceptance_criteria for impl-code. Output is a structured enumeration with IDs and counts. This becomes the completeness checklist in Step 7.
+List what EXISTS in the plan for this phase. Phase-specific: decisions/constraints/risks/code_intents for plan-design, acceptance_criteria/code_intents for impl-code. Output is a structured enumeration with IDs and counts. This becomes the completeness checklist in Step 7.
 
 **Step 4: Gap Analysis**
 Compare Step 2 concerns vs Step 3 elements. Identify which concerns need umbrella items (cross-cutting), which map to specific elements, which elements need targeted items, and gaps in both directions.
@@ -908,7 +826,7 @@ Write qr-{phase}.json with final items. Output parallel_dispatch block. Item cou
 
 ### Adaptive Item Generation
 
-The workflow produces variable item counts based on plan complexity. Simple phases with few decisions and straightforward code_changes yield fewer items. Complex phases with many architectural decisions, cross-cutting concerns, and intricate code patterns yield more items.
+The workflow produces variable item counts based on plan complexity. Simple phases with few decisions and straightforward code_intents yield fewer items. Complex phases with many architectural decisions, cross-cutting concerns, and intricate code patterns yield more items.
 
 The 8-step workflow provides natural termination without artificial bounds:
 
@@ -975,13 +893,11 @@ Handover prompts should be concise. Initial handover (step 2->3) includes full d
 
 **CLI mutation commands in prompts**: Sub-agents that mutate state files must have the relevant CLI commands surfaced in their prompts. The agent cannot use tools it doesn't know about. Scripts emit CLI usage examples as part of the prompt:
 
-| Sub-agent | CLI commands to surface                                                |
-| --------- | ---------------------------------------------------------------------- |
-| architect | `cli.plan set-milestone`, `set-intent`, `set-decision`, `set-diagram`, |
-|           | `add-diagram-node`, `add-diagram-edge`                                 |
-| developer | `cli.plan set-change`                                                  |
-| tw        | `cli.plan set-doc`, `set-diagram-render`                               |
-| qr-verify | `cli.qr update-item`                                                   |
+| Sub-agent | CLI commands to surface                                                              |
+| --------- | ------------------------------------------------------------------------------------ |
+| architect | `cli.plan set-milestone`, `set-intent`, `set-decision`, `set-diagram`,               |
+|           | `add-diagram-node`, `add-diagram-edge`, `set-diagram-render`                         |
+| qr-verify | `cli.qr update-item`                                                                 |
 
 Example prompt fragment for architect:
 

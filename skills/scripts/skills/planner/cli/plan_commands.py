@@ -18,20 +18,14 @@ if TYPE_CHECKING:
 def _get_schema():
     """Lazy import to avoid circular deps."""
     from ..shared.schema import (
-        CodeChange,
         CodeIntent,
         Decision,
         DiagramEdge,
         DiagramGraph,
         DiagramNode,
-        Docstring,
-        Documentation,
-        FunctionBlock,
-        InlineComment,
         Milestone,
         Overview,
         Plan,
-        ReadmeEntry,
         validate_state,
     )
 
@@ -40,13 +34,7 @@ def _get_schema():
         "Overview": Overview,
         "Milestone": Milestone,
         "CodeIntent": CodeIntent,
-        "CodeChange": CodeChange,
         "Decision": Decision,
-        "Documentation": Documentation,
-        "Docstring": Docstring,
-        "FunctionBlock": FunctionBlock,
-        "InlineComment": InlineComment,
-        "ReadmeEntry": ReadmeEntry,
         "DiagramGraph": DiagramGraph,
         "DiagramNode": DiagramNode,
         "DiagramEdge": DiagramEdge,
@@ -142,6 +130,7 @@ def set_milestone(
     requirements: str | None = None,
     acceptance_criteria: str | None = None,
     tests: str | None = None,
+    documentation_only: bool = False,
 ) -> dict:
     """Create or update milestone."""
     schema = _get_schema()
@@ -174,6 +163,8 @@ def set_milestone(
             ms.acceptance_criteria = acceptance_list
         if tests_list:
             ms.tests = tests_list
+        if documentation_only:
+            ms.is_documentation_only = True
 
         _bump_version(ms)
         ctx.save_plan(plan)
@@ -198,6 +189,7 @@ def set_milestone(
             requirements=requirements_list,
             acceptance_criteria=acceptance_list,
             tests=tests_list,
+            is_documentation_only=documentation_only,
         )
         plan.milestones.append(ms)
         ctx.save_plan(plan)
@@ -394,188 +386,8 @@ def add_diagram_edge(
 
 
 # -----------------------------------------------------------------------------
-# Developer Phase
+# Diagram Render
 # -----------------------------------------------------------------------------
-
-
-def set_change(
-    ctx: PlanContext,
-    milestone: str,
-    file: str | None = None,
-    diff: str | None = None,
-    id: str | None = None,
-    version: int | None = None,
-    intent_ref: str | None = None,
-    comments: str | None = None,
-    diff_file: str | None = None,
-) -> dict:
-    """Create or update code change.
-
-    diff_file (a path the agent wrote with the Write tool) takes precedence over
-    inline diff. Prefer it for real diffs: passing diff text inline forces the
-    caller to shell-quote apostrophes/backslashes, which routinely corrupts the
-    stored hunk. A file (or batch-from-stdin) carries the bytes verbatim.
-    """
-    schema = _get_schema()
-    plan = ctx.load_plan()
-
-    if diff_file is not None:
-        diff_path = Path(diff_file)
-        if not diff_path.exists():
-            raise FileNotFoundError(f"Diff file not found: {diff_file}")
-        diff = diff_path.read_text()
-
-    ms = plan.get_milestone(milestone)
-    if not ms:
-        ids = [m.id for m in plan.milestones]
-        raise ValueError(f"Milestone {milestone} not found. Valid: {ids}")
-
-    if intent_ref:
-        _, ci = plan.get_intent(intent_ref)
-        if not ci:
-            all_intents = [c.id for m in plan.milestones for c in m.code_intents]
-            raise ValueError(f"Intent {intent_ref} not found. Valid: {all_intents}")
-
-    if id:
-        # UPDATE
-        _, cc = plan.get_change(id)
-        if not cc:
-            all_changes = [c.id for m in plan.milestones for c in m.code_changes]
-            raise ValueError(f"Change {id} not found. Valid: {all_changes}")
-
-        _check_version(cc, version, id)
-
-        if intent_ref is not None:
-            cc.intent_ref = intent_ref if intent_ref else None
-        if file:
-            cc.file = file
-        if diff:
-            cc.diff = diff
-        if comments is not None:
-            cc.comments = comments
-
-        _bump_version(cc)
-        ctx.save_plan(plan)
-        return {"id": cc.id, "version": cc.version, "operation": "updated"}
-    else:
-        # CREATE
-        if version is not None:
-            raise ValueError("--version only valid for updates")
-        if not file or not diff:
-            raise ValueError("--file and --diff required for create")
-
-        num = len(ms.code_changes) + 1
-        ccid = f"CC-{ms.id}-{num:03d}"
-
-        cc = schema["CodeChange"](
-            id=ccid,
-            version=1,
-            intent_ref=intent_ref,
-            file=file,
-            diff=diff,
-            comments=comments or "",
-        )
-        ms.code_changes.append(cc)
-
-        errors = plan.validate_refs()
-        if errors:
-            raise ValueError("\n".join(errors))
-
-        ctx.save_plan(plan)
-        return {"id": ccid, "version": 1, "operation": "created"}
-
-
-# -----------------------------------------------------------------------------
-# TW Phase
-# -----------------------------------------------------------------------------
-
-
-def set_doc(
-    ctx: PlanContext,
-    milestone: str,
-    type: str,
-    content_file: str,
-    function: str | None = None,
-    location: str | None = None,
-    decision_ref: str | None = None,
-    source: str | None = None,
-) -> dict:
-    """Create documentation entry."""
-    schema = _get_schema()
-    plan = ctx.load_plan()
-
-    ms = plan.get_milestone(milestone)
-    if not ms:
-        ids = [m.id for m in plan.milestones]
-        raise ValueError(f"Milestone {milestone} not found. Valid: {ids}")
-
-    content_path = Path(content_file)
-    if not content_path.exists():
-        raise FileNotFoundError(f"Content file not found: {content_file}")
-
-    content = content_path.read_text().strip()
-
-    if type == "module":
-        ms.documentation.module_comment = content
-    elif type == "docstring":
-        if not function:
-            raise ValueError("--function required for docstring type")
-        ms.documentation.docstrings.append(
-            schema["Docstring"](function=function, docstring=content)
-        )
-    elif type == "function_block":
-        if not function:
-            raise ValueError("--function required for function_block type")
-        if decision_ref and not plan.get_decision(decision_ref):
-            dids = [d.id for d in plan.planning_context.decisions]
-            raise ValueError(f"Decision {decision_ref} not found. Valid: {dids}")
-        ms.documentation.function_blocks.append(
-            schema["FunctionBlock"](
-                function=function,
-                comment=content,
-                decision_ref=decision_ref,
-                source=source,
-            )
-        )
-    elif type == "inline":
-        if not location:
-            raise ValueError("--location required for inline type")
-        if decision_ref and not plan.get_decision(decision_ref):
-            dids = [d.id for d in plan.planning_context.decisions]
-            raise ValueError(f"Decision {decision_ref} not found. Valid: {dids}")
-        ms.documentation.inline_comments.append(
-            schema["InlineComment"](
-                location=location, comment=content, decision_ref=decision_ref, source=source
-            )
-        )
-    else:
-        raise ValueError(f"Unknown doc type: {type}")
-
-    ctx.save_plan(plan)
-    return {"milestone": milestone, "type": type, "operation": "created"}
-
-
-def set_readme(ctx: PlanContext, path: str, content_file: str) -> dict:
-    """Create or update plan-level README entry."""
-    schema = _get_schema()
-    plan = ctx.load_plan()
-
-    content_path = Path(content_file)
-    if not content_path.exists():
-        raise FileNotFoundError(f"Content file not found: {content_file}")
-
-    content = content_path.read_text().strip()
-
-    # Upsert: one README per directory path
-    for i, entry in enumerate(plan.readme_entries):
-        if entry.path == path:
-            plan.readme_entries[i] = schema["ReadmeEntry"](path=path, content=content)
-            ctx.save_plan(plan)
-            return {"path": path, "operation": "updated"}
-
-    plan.readme_entries.append(schema["ReadmeEntry"](path=path, content=content))
-    ctx.save_plan(plan)
-    return {"path": path, "operation": "created"}
 
 
 def set_diagram_render(ctx: PlanContext, diagram: str, content_file: str) -> dict:
@@ -594,60 +406,6 @@ def set_diagram_render(ctx: PlanContext, diagram: str, content_file: str) -> dic
     ctx.save_plan(plan)
 
     return {"diagram": diagram, "operation": "updated"}
-
-
-def set_doc_diff(ctx: PlanContext, change: str, version: int, content_file: str) -> dict:
-    """Set documentation diff for an existing code change."""
-    plan = ctx.load_plan()
-
-    _, cc = plan.get_change(change)
-    if not cc:
-        all_changes = [c.id for m in plan.milestones for c in m.code_changes]
-        raise ValueError(f"Change {change} not found. Valid: {all_changes}")
-
-    _check_version(cc, version, change)
-
-    content_path = Path(content_file)
-    if not content_path.exists():
-        raise FileNotFoundError(f"Content file not found: {content_file}")
-
-    cc.doc_diff = content_path.read_text()
-    _bump_version(cc)
-    ctx.save_plan(plan)
-
-    return {"id": cc.id, "version": cc.version, "operation": "updated"}
-
-
-def create_doc_change(ctx: PlanContext, milestone: str, file: str, content_file: str) -> dict:
-    """Create a documentation-only change."""
-    schema = _get_schema()
-    plan = ctx.load_plan()
-
-    ms = plan.get_milestone(milestone)
-    if not ms:
-        ids = [m.id for m in plan.milestones]
-        raise ValueError(f"Milestone {milestone} not found. Valid: {ids}")
-
-    content_path = Path(content_file)
-    if not content_path.exists():
-        raise FileNotFoundError(f"Content file not found: {content_file}")
-
-    num = len(ms.code_changes) + 1
-    ccid = f"CC-{ms.id}-{num:03d}"
-
-    cc = schema["CodeChange"](
-        id=ccid,
-        version=1,
-        intent_ref=None,
-        file=file,
-        diff="",
-        doc_diff=content_path.read_text(),
-        comments="",
-    )
-    ms.code_changes.append(cc)
-    ctx.save_plan(plan)
-
-    return {"id": ccid, "version": 1, "operation": "created"}
 
 
 def _translate(ctx: PlanContext, output: str) -> dict:
@@ -703,21 +461,6 @@ def list_intents(ctx: PlanContext, milestone_id: str) -> list[dict]:
     return [
         {"id": ci.id, "version": ci.version, "file": ci.file, "behavior": ci.behavior[:50]}
         for ci in ms.code_intents
-    ]
-
-
-def list_changes(ctx: PlanContext, milestone_id: str) -> list[dict]:
-    """List changes in milestone."""
-    plan = ctx.load_plan()
-
-    ms = plan.get_milestone(milestone_id)
-    if not ms:
-        ids = [m.id for m in plan.milestones]
-        raise ValueError(f"Milestone {milestone_id} not found. Valid: {ids}")
-
-    return [
-        {"id": cc.id, "version": cc.version, "intent_ref": cc.intent_ref, "file": cc.file}
-        for cc in ms.code_changes
     ]
 
 

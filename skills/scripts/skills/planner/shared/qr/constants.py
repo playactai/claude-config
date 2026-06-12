@@ -8,11 +8,9 @@ QR_ITERATION_LIMIT = 5
 QR_ITERATION_DEFAULT = 1
 
 # Routing: (workflow, phase) -> (route_step, module_path, total_steps)
-# Updated for 14-step planner (was 11) and 10-step executor (was 9)
+# 6-step planner (plan-design only; plan approved at step 6) and 10-step executor
 QR_ROUTING = {
-    ("planner", "plan-design"): (6, "skills.planner.orchestrator.planner", 14),
-    ("planner", "plan-code"): (10, "skills.planner.orchestrator.planner", 14),
-    ("planner", "plan-docs"): (14, "skills.planner.orchestrator.planner", 14),
+    ("planner", "plan-design"): (6, "skills.planner.orchestrator.planner", 6),
     ("executor", "impl-code"): (5, "skills.planner.orchestrator.executor", 10),
     ("executor", "impl-docs"): (9, "skills.planner.orchestrator.executor", 10),
 }

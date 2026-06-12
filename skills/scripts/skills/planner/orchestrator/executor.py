@@ -189,6 +189,11 @@ def format_step_2(qr: QRState, state_dir: str) -> str:
             "",
             "Use waves identified in step 1.",
             "",
+            "DOC-ONLY MILESTONES: skip any milestone flagged is_documentation_only in",
+            "plan.json -- it has no code_intents to implement. The Documentation phase",
+            "(step 6) authors all docs (CLAUDE.md, README, inline comments) against the",
+            "real code, so doc-only milestones need no developer dispatch here.",
+            "",
             ORCHESTRATOR_CONSTRAINT,
             "",
             "FOR EACH WAVE:",
@@ -200,15 +205,15 @@ def format_step_2(qr: QRState, state_dir: str) -> str:
             "     - Plan file: $PLAN_FILE",
             "     - Milestone: [number and name]",
             "     - Files: [exact paths to create/modify]",
-            "     - Acceptance criteria: [from plan]",
-            # Bug #8 mitigation (audit §3): hand the QR-approved diffs to the
-            # developer so they are not orphaned. This is interim steering, NOT
-            # enforcement -- nothing asserts applied == approved. The full fix is
-            # the §1 redesign (execution-time re-validation gate), out of scope here.
-            "     - Approved code_changes[].diff for this milestone (from plan.json):",
-            "       apply these as the implementation source -- QR already reviewed them.",
-            "       Treat them as authoritative; re-anchor only where the file genuinely",
-            "       drifted and keep the result equivalent to the approved diff.",
+            "     - Acceptance criteria: [from plan, milestones[].acceptance_criteria]",
+            # Code Intent is the durable contract (audit §1 redesign): there are no
+            # plan-time diffs. The developer regenerates the implementation JIT
+            # against the live file; impl-code QR reviews exactly what ships.
+            "     - Code Intent: the milestone's code_intents[] from plan.json",
+            "       ({file, function, behavior, decision_refs}) -- the durable contract.",
+            "       Implement these behaviors just-in-time against the CURRENT file:",
+            "       read the live file, then write code satisfying the Code Intent +",
+            "       acceptance criteria. No precomputed diffs, nothing to re-anchor.",
             "",
             "  3. Wait for ALL agents in wave to complete",
             "",
@@ -298,7 +303,9 @@ def format_qr_verify(step: int, phase: str, state_dir: str, qr: QRState) -> str:
     if not qr_state or "items" not in qr_state:
         decompose_step = step - 1
         body = f"Error: qr-{phase}.json not found or malformed. Routing back to decompose step."
-        retry_cmd = f"uv run python -m {MODULE_PATH} --step {decompose_step} --state-dir {_q(state_dir)}"
+        retry_cmd = (
+            f"uv run python -m {MODULE_PATH} --step {decompose_step} --state-dir {_q(state_dir)}"
+        )
         return format_step(body, retry_cmd, title=title)
 
     iteration = qr_state.get("iteration", 1)
@@ -346,7 +353,9 @@ Checks: $checks_summary
 
 Start: {start_cmd}"""
 
-    command = f"uv run python -m {verify_script} --step 1 --state-dir {_q(state_dir)} $qr_item_flags"
+    command = (
+        f"uv run python -m {verify_script} --step 1 --state-dir {_q(state_dir)} $qr_item_flags"
+    )
 
     dispatch_text = template_dispatch(
         agent_type="quality-reviewer",
@@ -513,7 +522,9 @@ def format_step_10() -> str:
 # =============================================================================
 
 
-def format_output(step: int, state_dir: str, qr_status: str | None, reconciliation_check: bool) -> str:
+def format_output(
+    step: int, state_dir: str, qr_status: str | None, reconciliation_check: bool
+) -> str:
     """Format output for display."""
 
     # Derive QR state from on-disk qr-{phase}.json (planner.py does the same).

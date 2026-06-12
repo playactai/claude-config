@@ -51,9 +51,7 @@ Plan
   milestones[]:
     id (M-XXX), number, name, files[], flags[], requirements[], acceptance_criteria[]
     tests: files[], type?, backing?, scenarios{normal[], edge[], error[]}, skip_reason?
-    code_intents[]: id (CI-XXX), file, function?, behavior, decision_refs[], params{}
-    code_changes[]: id (CC-XXX), intent_ref, file, diff, context_lines, why_comments[]
-    documentation: module_comment?, docstrings[], algorithm_blocks[], inline_comments[]
+    code_intents[]: id (CI-XXX), file, function?, behavior, decision_refs[]
     is_documentation_only, delegated_to?
 
   milestone_dependencies:
@@ -61,7 +59,7 @@ Plan
     waves[]: wave number, milestones[]
 ```
 
-Reference integrity: code_change.intent_ref -> code_intent.id, decision_refs -> decision_log.id
+Reference integrity: code_intent.decision_refs -> decision_log.id
 
 ### context.json Schema
 
@@ -82,7 +80,7 @@ User-provided context captured during planning:
 
 ### qr-{phase}.json Schema
 
-Phases: `qr-plan-design`, `qr-plan-code`, `qr-plan-docs`, `qr-impl-code`, `qr-impl-docs`
+Phases: `qr-plan-design`, `qr-impl-code`, `qr-impl-docs`
 
 ```json
 {
@@ -102,67 +100,66 @@ Phases: `qr-plan-design`, `qr-plan-code`, `qr-plan-docs`, `qr-impl-code`, `qr-im
 
 ## Workflow Phases and Mutations
 
-### Planner Workflow (11 steps)
+### Planner Workflow (6 steps)
 
-| Step | Name                | Pattern Function          | Mutates              | Agent        |
-| ---- | ------------------- | ------------------------- | -------------------- | ------------ |
-| 1    | plan-init           | `init_step()`             | Creates plan.json    | Orchestrator |
-| 2    | context-verify      | `verify_step()`           | Creates context.json | Orchestrator |
-| 3    | plan-design-execute | `execute_dispatch_step()` | plan.json            | Architect    |
-| 4    | plan-design-qr      | `qr_dispatch_step()`      | qr-plan-design.json  | QR           |
-| 5    | plan-design-qr-gate | `qr_gate_step()`          | -                    | Orchestrator |
-| 6    | plan-code-execute   | `execute_dispatch_step()` | plan.json            | Developer    |
-| 7    | plan-code-qr        | `qr_dispatch_step()`      | qr-plan-code.json    | QR           |
-| 8    | plan-code-qr-gate   | `qr_gate_step()`          | -                    | Orchestrator |
-| 9    | plan-docs-execute   | `execute_dispatch_step()` | plan.json            | TW           |
-| 10   | plan-docs-qr        | `qr_dispatch_step()`      | qr-plan-docs.json    | QR           |
-| 11   | plan-docs-qr-gate   | `qr_gate_step()`          | Sets frozen_at       | Orchestrator |
+| Step | Name                    | Pattern Function          | Mutates              | Agent        |
+| ---- | ----------------------- | ------------------------- | -------------------- | ------------ |
+| 1    | plan-init               | `init_step()`             | Creates plan.json    | Orchestrator |
+| 2    | context-verify          | `verify_step()`           | Creates context.json | Orchestrator |
+| 3    | plan-design-work        | `execute_dispatch_step()` | plan.json            | Architect    |
+| 4    | plan-design-qr-decompose| `qr_dispatch_step()`      | qr-plan-design.json  | QR           |
+| 5    | plan-design-qr-verify   | `qr_dispatch_step()`      | qr-plan-design.json  | QR           |
+| 6    | plan-design-qr-route    | `qr_gate_step()`          | Sets frozen_at       | Orchestrator |
+
+Terminal on PASS at step 6: **PLAN APPROVED**.
 
 **Mutation details**:
 
-- Step 3 (Architect): Populates planning_context, milestones[], code_intents[], invisible_knowledge
-- Step 6 (Developer): Populates code_changes[] per milestone
-- Step 9 (TW): Populates documentation[] per milestone, creates plan.md
+- Step 3 (Architect): Populates planning_context, milestones[], code_intents[], invisible_knowledge, renders diagram ASCII via `cli.plan set-diagram-render`
 
-### Executor Workflow (9 steps)
+Code Intent (`code_intents[]`) is the binding behavioral contract. There are no plan-time unified diffs. At execution the developer regenerates implementation just-in-time per wave against the live file from Code Intent.
+
+### Executor Workflow (10 steps)
 
 | Step | Name              | Mutates           | Agent        |
 | ---- | ----------------- | ----------------- | ------------ |
 | 1    | init              | -                 | Orchestrator |
 | 2    | load-verify       | -                 | Orchestrator |
 | 3    | impl-execute      | Codebase files    | Developer    |
-| 4    | impl-code-qr      | qr-impl-code.json | QR           |
-| 5    | impl-code-qr-gate | -                 | Orchestrator |
-| 6    | impl-docs-execute | Codebase docs     | TW           |
-| 7    | impl-docs-qr      | qr-impl-docs.json | QR           |
-| 8    | impl-docs-qr-gate | -                 | Orchestrator |
-| 9    | reconcile         | -                 | QR           |
+| 4    | impl-code-qr-decompose | qr-impl-code.json | QR      |
+| 5    | impl-code-qr-verify   | qr-impl-code.json | QR      |
+| 6    | impl-code-qr-gate | -                 | Orchestrator |
+| 7    | impl-docs-execute | Codebase docs     | TW           |
+| 8    | impl-docs-qr-decompose | qr-impl-docs.json | QR     |
+| 9    | impl-docs-qr-verify   | qr-impl-docs.json | QR     |
+| 10   | impl-docs-qr-gate | -                 | Orchestrator |
+
+impl-code QR is the single authoritative code review. exec-docs (impl-docs phase) authors ALL documentation directly in the real implemented source (inline comments, docstrings from Decision Log + Invisible Knowledge, plus CLAUDE.md and README).
 
 ## Components
 
 ```
 orchestrator/
-  planner.py      11-step planning workflow
-  executor.py     9-step execution workflow
+  planner.py      6-step planning workflow
+  executor.py     10-step execution workflow
 
 architect/
-  plan_design.py  Plan creation (exploration, milestones, code_intents)
+  plan_design.py  Plan creation (exploration, milestones, code_intents, diagram render)
 
 developer/
-  plan_code.py    Code Intent -> Code Changes (unified diffs)
-  exec_implement.py  Wave-aware implementation
+  exec_implement.py  Wave-aware implementation (just-in-time from code_intents)
 
 technical_writer/
-  plan_docs.py    Documentation planning (WHY comments, temporal cleanup)
-  exec_docs.py    Post-implementation docs (CLAUDE.md, README.md)
+  exec_docs.py    Post-implementation docs (inline comments, docstrings, CLAUDE.md, README)
 
 quality_reviewer/
-  plan_design_qr.py   Plan completeness validation
-  plan_code_qr.py     Code diff validation
-  plan_docs_qr.py     Documentation quality
-  impl_code_qr.py     Post-impl code review
-  impl_docs_qr.py     Post-impl doc review
-  exec_reconcile.py   Plan vs implementation reconciliation
+  plan_design_qr_decompose.py  Plan completeness decompose
+  plan_design_qr_verify.py     Plan completeness verify
+  impl_code_qr_decompose.py    Post-impl code review decompose
+  impl_code_qr_verify.py       Post-impl code review verify
+  impl_docs_qr_decompose.py    Post-impl docs review decompose
+  impl_docs_qr_verify.py       Post-impl docs review verify
+  qr_verify_base.py            VerifyBase ABC
 
 shared/
   resources.py    Path derivation, context loading

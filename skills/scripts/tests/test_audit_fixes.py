@@ -5,7 +5,6 @@ Each class guards one correctness bug from docs/planner-workflow-audit.md §3:
 - #2  enforced QR iteration ceiling with user escalation
 - #3  lenient severity ingest (no whole-run abort on "must"/"blocker")
 - #4  gate routes on severity-aware on-disk state, not the --qr-status word
-- #5  set-change diff via file (survives apostrophes/backslashes)
 - #6  Template.safe_substitute (literal "$" in a path no longer crashes)
 - #10 batch is all-or-nothing and rejects duplicate ids
 
@@ -74,12 +73,12 @@ def _write_qr(tmp_path: Path, phase: str, iteration: int, items: list[dict]) -> 
     )
 
 
-def _gate(tmp_path: Path, qr: QRState, *, phase="plan-code", work_step=7, pass_step=11):
+def _gate(tmp_path: Path, qr: QRState, *, phase="impl-code", work_step=2, pass_step=6):
     return build_gate_output(
         module_path="m",
         qr_name="QR",
         qr=qr,
-        step=10,
+        step=5,
         work_step=work_step,
         pass_step=pass_step,
         pass_message="proceed",
@@ -100,7 +99,7 @@ class TestSeverityCoercion:
     def test_validate_state_does_not_abort_on_bad_severity(self, tmp_path: Path):
         _write_qr(
             tmp_path,
-            "plan-code",
+            "impl-code",
             1,
             [{"id": "q1", "scope": "*", "check": "x", "status": "TODO", "severity": "blocker"}],
         )
@@ -117,7 +116,7 @@ class TestSeverityCoercion:
         # Globbing qr-*.json and validating each as a QRFile dict aborted the whole
         # run (audit #3 field evidence ab1dc60a: "input_type=list"). The canonical
         # file must still validate while non-canonical scratch files are ignored.
-        _write_qr(tmp_path, "plan-code", 1, [])
+        _write_qr(tmp_path, "impl-code", 1, [])
         (tmp_path / "qr-items.json").write_text(json.dumps([1, 2, 3]))
         (tmp_path / "qr-items-draft.json").write_text(json.dumps([{"id": "z"}]))
         validate_state(str(tmp_path))  # must not raise
@@ -125,7 +124,7 @@ class TestSeverityCoercion:
     def test_validate_state_still_aborts_on_corrupt_canonical_file(self, tmp_path: Path):
         # Restricting the glob to canonical names must NOT weaken validation of a
         # real qr-{phase}.json: a list-shaped canonical file is still a hard error.
-        (tmp_path / "qr-plan-code.json").write_text(json.dumps([{"id": "bad"}]))
+        (tmp_path / "qr-impl-code.json").write_text(json.dumps([{"id": "bad"}]))
         with pytest.raises(SchemaValidationError):
             validate_state(str(tmp_path))
 
@@ -156,7 +155,7 @@ class TestGateSourceOfTruth:
         # iteration 4 blocks only MUST; a SHOULD FAIL is below threshold.
         _write_qr(
             tmp_path,
-            "plan-code",
+            "impl-code",
             4,
             [{"id": "q1", "scope": "*", "check": "x", "status": "FAIL", "severity": "SHOULD"}],
         )
@@ -167,14 +166,14 @@ class TestGateSourceOfTruth:
     def test_fail_when_blocking_failure_despite_status_pass(self, tmp_path: Path):
         _write_qr(
             tmp_path,
-            "plan-code",
+            "impl-code",
             1,
             [{"id": "q1", "scope": "*", "check": "x", "status": "FAIL", "severity": "MUST"}],
         )
         qr = QRState(iteration=1, state=LoopState.RETRY, status=QRStatus.PASS)
         out = _gate(tmp_path, qr).output
         assert "GATE RESULT: FAIL" in out
-        assert "--step 7" in out  # routes to the fixer (work_step)
+        assert "--step 2" in out  # routes to the fixer (work_step)
 
 
 # --- Bug #2: enforced iteration ceiling with user escalation -----------------
@@ -182,7 +181,7 @@ class TestGateIterationCap:
     def test_escalates_at_iteration_limit(self, tmp_path: Path):
         _write_qr(
             tmp_path,
-            "plan-code",
+            "impl-code",
             QR_ITERATION_LIMIT,
             [
                 {
@@ -200,20 +199,20 @@ class TestGateIterationCap:
         assert "ITERATION LIMIT" in res.output
         assert "AskUserQuestion" in res.output
         assert "unfixable" in res.output  # unresolved finding surfaced
-        assert "--step 7" not in res.output  # does NOT auto-loop to the fixer
+        assert "--step 2" not in res.output  # does NOT auto-loop to the fixer
         assert res.terminal_pass is False
 
     def test_no_escalation_below_limit(self, tmp_path: Path):
         _write_qr(
             tmp_path,
-            "plan-code",
+            "impl-code",
             QR_ITERATION_LIMIT - 1,
             [{"id": "q1", "scope": "*", "check": "x", "status": "FAIL", "severity": "MUST"}],
         )
         qr = QRState(iteration=QR_ITERATION_LIMIT - 1, state=LoopState.RETRY, status=QRStatus.FAIL)
         out = _gate(tmp_path, qr).output
         assert "ITERATION LIMIT" not in out
-        assert "--step 7" in out  # still loops to the fixer
+        assert "--step 2" in out  # still loops to the fixer
 
 
 # --- Bug #10: batch is all-or-nothing and rejects duplicate ids -------------
@@ -246,8 +245,8 @@ class TestBatchTransaction:
             [
                 {"method": "set-milestone", "params": {"name": "A"}, "id": 1},
                 {
-                    "method": "set-change",
-                    "params": {"milestone": "M-999", "file": "x", "diff": "d"},
+                    "method": "set-intent",
+                    "params": {"milestone": "M-999", "file": "x", "behavior": "b"},
                     "id": 2,
                 },
             ],
@@ -258,28 +257,10 @@ class TestBatchTransaction:
         assert results[-1]["error"]["rolled_back"] is True
 
 
-# --- Bug #5: set-change diff via file survives shell-hostile content ---------
-class TestDiffFile:
-    def test_set_change_reads_diff_from_file_with_apostrophes(self, tmp_path: Path):
-        ctx = _init_plan(tmp_path)
-        plan_commands.set_milestone(ctx, name="M")
-        diff_path = tmp_path / "cc.diff"
-        diff_path.write_text(
-            '--- a/x.py\n+++ b/x.py\n@@ -1 +1 @@\n-pass\n+raise ValueError("can\'t \\\\n")\n'
-        )
-        res = plan_commands.set_change(
-            ctx, milestone="M-001", file="x.py", diff_file=str(diff_path)
-        )
-        assert res["operation"] == "created"
-        stored = ctx.load_plan().milestones[0].code_changes[0].diff
-        assert "can't" in stored
-        assert "\\n" in stored  # backslash preserved verbatim
-
-
 # --- Bug #1: concurrent QR writes must not be lost --------------------------
 class TestQrWriteLock:
     def test_concurrent_updates_no_lost_writes(self, tmp_path: Path):
-        phase = "plan-code"
+        phase = "impl-code"
         n = 24
         _write_qr(
             tmp_path,
@@ -314,9 +295,9 @@ class TestQrWriteLock:
 
     def test_lock_released_on_exception(self, tmp_path: Path):
         with pytest.raises(RuntimeError):
-            with qr_write_lock(str(tmp_path), "plan-code"):
+            with qr_write_lock(str(tmp_path), "impl-code"):
                 raise RuntimeError("boom")
-        assert _sentinel_is_free(tmp_path / "qr-plan-code.lock")
+        assert _sentinel_is_free(tmp_path / "qr-impl-code.lock")
 
 
 class TestQrCliUpdatePath:
@@ -325,21 +306,21 @@ class TestQrCliUpdatePath:
     def test_update_writes_and_reports(self, tmp_path: Path, capsys):
         _write_qr(
             tmp_path,
-            "plan-code",
+            "impl-code",
             1,
             [{"id": "q0", "scope": "*", "check": "c", "status": "TODO", "severity": "MUST"}],
         )
-        qr_cli.cmd_update_item(str(tmp_path), "plan-code", ["q0", "--status", "PASS"])
+        qr_cli.cmd_update_item(str(tmp_path), "impl-code", ["q0", "--status", "PASS"])
         assert "q0" in capsys.readouterr().out  # item is in scope after the with-block
-        state = json.loads((tmp_path / "qr-plan-code.json").read_text())
+        state = json.loads((tmp_path / "qr-impl-code.json").read_text())
         assert state["items"][0]["status"] == "PASS"
         assert state["items"][0]["version"] == 2
 
     def test_missing_item_exits_and_releases_lock(self, tmp_path: Path):
-        _write_qr(tmp_path, "plan-code", 1, [])
+        _write_qr(tmp_path, "impl-code", 1, [])
         with pytest.raises(SystemExit):
-            qr_cli.cmd_update_item(str(tmp_path), "plan-code", ["qX", "--status", "PASS"])
-        assert _sentinel_is_free(tmp_path / "qr-plan-code.lock")
+            qr_cli.cmd_update_item(str(tmp_path), "impl-code", ["qX", "--status", "PASS"])
+        assert _sentinel_is_free(tmp_path / "qr-impl-code.lock")
 
 
 # =============================================================================
@@ -381,11 +362,11 @@ class TestCwdPinnedCommands:
     def test_planner_verify_start_line_is_pinned(self, tmp_path: Path):
         _write_qr(
             tmp_path,
-            "plan-code",
+            "plan-design",
             1,
             [{"id": "qa-001", "scope": "*", "check": "c", "status": "TODO", "severity": "MUST"}],
         )
-        out = planner_orch.format_output(9, None, str(tmp_path))
+        out = planner_orch.format_output(5, None, str(tmp_path))
         assert isinstance(out, str)  # verify step returns str, not a GateResult
         assert f"Start: cd {SKILLS_DIR} && uv run python -m" in out
 
@@ -420,7 +401,7 @@ class TestExecContextOptional:
 
     def test_plan_decompose_step1_without_context_still_raises(self, tmp_path: Path):
         with pytest.raises(FileNotFoundError, match="Context file not found"):
-            dispatch_step(1, "plan-code", "m", {1: "ABSORB"}, {}, state_dir=str(tmp_path))
+            dispatch_step(1, "plan-design", "m", {1: "ABSORB"}, {}, state_dir=str(tmp_path))
 
     def test_exec_verify_context_step_without_context_does_not_raise(self, tmp_path: Path):
         _write_qr(
@@ -439,11 +420,9 @@ class TestExecContextOptional:
 
 
 # Every verify entry point shares VerifyBase._step_confirm, which now emits the
-# self-recording `--result` command -- so all five must route through verify_main.
+# self-recording `--result` command -- so all three must route through verify_main.
 _VERIFY_MODULES = [
     ("skills.planner.quality_reviewer.plan_design_qr_verify", "plan-design"),
-    ("skills.planner.quality_reviewer.plan_code_qr_verify", "plan-code"),
-    ("skills.planner.quality_reviewer.plan_docs_qr_verify", "plan-docs"),
     ("skills.planner.quality_reviewer.impl_code_qr_verify", "impl-code"),
     ("skills.planner.quality_reviewer.impl_docs_qr_verify", "impl-docs"),
 ]
@@ -453,13 +432,12 @@ _VERIFY_MODULES = [
 class TestVerifyResultRecording:
     @pytest.mark.parametrize("module,phase", _VERIFY_MODULES)
     def test_every_verify_script_accepts_result_flag(self, tmp_path: Path, module, phase):
-        """All five verify entry points (not just impl-*) must accept --result.
+        """All verify entry points (plan-design + impl-*) must accept --result.
 
         _step_confirm emits the self-recording `--result` command for every
-        phase, so every verify __main__ must route through verify_main. Before
-        the completion fix the three plan-* scripts still used mode_main and
-        hard-failed with 'unrecognized arguments: --result' -- the very NEW-C
-        footgun, reintroduced for 3 of 5 phases.
+        phase, so every verify __main__ must route through verify_main (not
+        mode_main, which hard-fails with 'unrecognized arguments: --result' --
+        the NEW-C footgun).
         """
         _write_qr(
             tmp_path,
@@ -469,9 +447,17 @@ class TestVerifyResultRecording:
         )
         proc = subprocess.run(
             [
-                sys.executable, "-m", module,
-                "--step", "3", "--state-dir", str(tmp_path),
-                "--qr-item", "qa-001", "--result", "PASS",
+                sys.executable,
+                "-m",
+                module,
+                "--step",
+                "3",
+                "--state-dir",
+                str(tmp_path),
+                "--qr-item",
+                "qa-001",
+                "--result",
+                "PASS",
             ],
             capture_output=True,
             text=True,

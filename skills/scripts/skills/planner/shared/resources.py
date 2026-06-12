@@ -151,12 +151,12 @@ def get_mode_script_path(script_name: str) -> str:
     Scripts are organized by agent: qr/, dev/, tw/
 
     Args:
-        script_name: Script path relative to planner/ (e.g., "qr/plan-docs.py")
+        script_name: Script path relative to planner/ (e.g., "developer/exec_implement.py")
 
     Returns:
-        Module path for python3 -m (e.g., "skills.planner.qr.plan_docs")
+        Module path for python3 -m (e.g., "skills.planner.developer.exec_implement")
     """
-    # Convert path to module: "qr/plan-docs.py" -> "qr.plan_docs"
+    # Convert path to module: "quality_reviewer/impl_code_qr_decompose.py" -> "quality_reviewer.impl_code_qr_decompose"
     module = script_name.replace("/", ".").replace("-", "_").removesuffix(".py")
     return f"skills.planner.{module}"
 

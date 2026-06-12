@@ -153,66 +153,6 @@ if True:
         behavior: str
         decision_refs: list[str] = Field(default_factory=list)  # DL-XXX cross-references
 
-    class CodeChange(BaseModel):
-        """Concrete code change implementing an intent."""
-
-        id: str  # CC-M-001-001 format
-        version: int = 1  # CAS optimistic locking: increment on update
-        intent_ref: str | None = None  # CI-XXX or null for doc-only changes (READMEs)
-        file: str
-        diff: str = ""  # Code changes - Developer fills (empty for doc-only)
-        doc_diff: str = ""  # Documentation overlay - TW fills
-        comments: str = ""  # WHY comments explaining the change
-
-    class Docstring(BaseModel):
-        """Function docstring spec."""
-
-        function: str
-        docstring: str
-
-    class FunctionBlock(BaseModel):
-        """Function-level explanation block (Tier 2).
-
-        Covers design rationale, architecture context, system interaction
-        -- not just algorithms. Convention: documentation.md Tier 2.
-        """
-
-        function: str  # function name
-        comment: str
-        decision_ref: str | None = None
-        source: str | None = None  # invisible_knowledge provenance for QR completeness checks
-
-    class InlineComment(BaseModel):
-        """Inline WHY comment (Tier 1)."""
-
-        location: str  # function:line format
-        comment: str
-        decision_ref: str | None = None  # Optional DL-XXX cross-reference
-        source: str | None = None
-
-    class Documentation(BaseModel):
-        """Documentation enrichment for a milestone.
-
-        DEPRECATED: Use CodeChange.doc_diff instead. This metadata approach
-        disconnects documentation from code locations. Kept for backwards
-        compatibility with existing plans.
-        """
-
-        module_comment: str | None = None
-        docstrings: list[Docstring] = Field(default_factory=list)
-        function_blocks: list[FunctionBlock] = Field(default_factory=list)
-        inline_comments: list[InlineComment] = Field(default_factory=list)
-
-    class ReadmeEntry(BaseModel):
-        """Cross-cutting README content for a directory.
-
-        DEPRECATED: Use CodeChange with empty diff and doc_diff for README.
-        Kept for backwards compatibility with existing plans.
-        """
-
-        path: str  # directory path for README.md
-        content: str
-
     class Milestone(BaseModel):
         """Single implementation milestone."""
 
@@ -226,8 +166,6 @@ if True:
         acceptance_criteria: list[str] = Field(default_factory=list)
         tests: list[str] = Field(default_factory=list)  # Free-form test descriptions
         code_intents: list[CodeIntent] = Field(default_factory=list)
-        code_changes: list[CodeChange] = Field(default_factory=list)
-        documentation: Documentation = Field(default_factory=Documentation)
         is_documentation_only: bool = False
         delegated_to: str | None = None  # Agent name for delegation tracking
 
@@ -262,7 +200,6 @@ if True:
         milestones: list[Milestone] = Field(default_factory=list)
         waves: list[Wave] = Field(default_factory=list)
         diagram_graphs: list[DiagramGraph] = Field(default_factory=list)
-        readme_entries: list[ReadmeEntry] = Field(default_factory=list)
 
         def get_milestone(self, mid: str) -> Milestone | None:
             for ms in self.milestones:
@@ -282,13 +219,6 @@ if True:
                 if dl.id == decision_id:
                     return dl
             return None
-
-        def get_change(self, change_id: str):
-            for ms in self.milestones:
-                for cc in ms.code_changes:
-                    if cc.id == change_id:
-                        return ms, cc
-            return None, None
 
         def validate_diagram_edges(self, diagram_id: str) -> list[str]:
             """Validate edges for a specific diagram."""
@@ -314,29 +244,10 @@ if True:
             decision_ids = {dl.id for dl in self.planning_context.decisions}
 
             for ms in self.milestones:
-                intent_ids = {ci.id for ci in ms.code_intents}
-                for cc in ms.code_changes:
-                    if cc.intent_ref and cc.intent_ref not in intent_ids:
-                        errors.append(
-                            f"code_change.intent_ref '{cc.intent_ref}' not in "
-                            f"milestone {ms.id} code_intents"
-                        )
                 for ci in ms.code_intents:
                     for dref in ci.decision_refs:
                         if dref not in decision_ids:
                             errors.append(f"{ci.id}.decision_refs '{dref}' not in decisions")
-                for ic in ms.documentation.inline_comments:
-                    if ic.decision_ref and ic.decision_ref not in decision_ids:
-                        errors.append(
-                            f"milestone {ms.id} inline_comment decision_ref "
-                            f"'{ic.decision_ref}' not in decisions"
-                        )
-                for fb in ms.documentation.function_blocks:
-                    if fb.decision_ref and fb.decision_ref not in decision_ids:
-                        errors.append(
-                            f"milestone {ms.id} function_block decision_ref "
-                            f"'{fb.decision_ref}' not in decisions"
-                        )
 
             for ra in self.planning_context.rejected_alternatives:
                 if ra.decision_ref not in decision_ids:
@@ -370,32 +281,17 @@ if True:
                 if not self.milestones:
                     errors.append("at least one milestone required")
                 for ms in self.milestones:
-                    if not ms.code_intents:
+                    # Documentation-only milestones carry no code_intents; the
+                    # Technical Writer authors their docs at exec time (impl-docs).
+                    # The relationship is exclusive both ways so routing stays
+                    # unambiguous: doc-only => no code to implement; code => intent.
+                    if ms.is_documentation_only:
+                        if ms.code_intents:
+                            errors.append(
+                                f"milestone {ms.id} is documentation-only but has code_intents"
+                            )
+                    elif not ms.code_intents:
                         errors.append(f"milestone {ms.id} needs at least one code_intent")
-            elif phase == "plan-code":
-                for ms in self.milestones:
-                    intent_ids = {ci.id for ci in ms.code_intents}
-                    change_refs = {cc.intent_ref for cc in ms.code_changes}
-                    missing = intent_ids - change_refs
-                    if missing:
-                        errors.append(
-                            f"milestone {ms.id} missing code_changes for: "
-                            f"{', '.join(sorted(missing))}"
-                        )
-            elif phase == "plan-docs":
-                for ms in self.milestones:
-                    for cc in ms.code_changes:
-                        # Every code_change with diff should have doc_diff
-                        if cc.diff and not cc.doc_diff:
-                            errors.append(f"{cc.id}: has code diff but no doc_diff")
-                        # doc_diff must be valid unified diff format if present
-                        if cc.doc_diff and not cc.doc_diff.strip().startswith(
-                            ("---", "@@", "diff")
-                        ):
-                            errors.append(f"{cc.id}: doc_diff must be valid unified diff format")
-                        # At least one must be non-empty
-                        if not cc.diff and not cc.doc_diff:
-                            errors.append(f"{cc.id}: must have diff or doc_diff (both empty)")
             return errors
 
 
@@ -483,6 +379,7 @@ class SchemaValidationError(Exception):
 def _plan_post_validate(plan: Plan) -> list[str]:
     return plan.validate_refs()
 
+
 _schema_registry: dict = {
     "context.json": (Context, None),
     "plan.json": (Plan, _plan_post_validate),
@@ -542,7 +439,6 @@ __all__ = [
     "QA_ITEM_OPTIONAL_FIELDS",
     "QA_ITEM_REQUIRED_FIELDS",
     "QA_ITEM_SCHEMA_TEMPLATE",
-    "CodeChange",
     "CodeIntent",
     # Models
     "Context",
@@ -550,10 +446,6 @@ __all__ = [
     "DiagramEdge",
     "DiagramGraph",
     "DiagramNode",
-    "Docstring",
-    "Documentation",
-    "FunctionBlock",
-    "InlineComment",
     "InvisibleKnowledge",
     "Milestone",
     "Overview",
@@ -561,7 +453,6 @@ __all__ = [
     "PlanningContext",
     "QRFile",
     "QRItem",
-    "ReadmeEntry",
     "RejectedAlternative",
     "Risk",
     "SchemaValidationError",

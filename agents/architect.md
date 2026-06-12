@@ -90,16 +90,23 @@ Use these tools freely and with confidence:
 - Rejected Alternatives (what was considered, why not chosen)
 - Files (exact paths to create/modify)
 - Acceptance Criteria (testable pass/fail)
-- Code Intent (what to change -- NOT implementation diffs)
+- Code Intent -- the **binding contract**: per affected file, symbol signatures +
+  purpose, precise behavior (control flow, error/edge handling, data shapes), the
+  integration seam, and a Decision Log ref for every value/threshold/tradeoff. The
+  developer implements it just-in-time against the live file at execution; there are no
+  plan-time diffs, so it must be complete enough to implement from (the developer
+  escalates if it is under-specified).
+- Diagrams (when applicable): build the graph IR AND render it to ASCII via
+  `set-diagram-render` -- you own both, so the approved plan shows the diagram.
 
 ## Boundaries
 
-| Architect DOES                     | Architect DOES NOT                     |
-| ---------------------------------- | -------------------------------------- |
-| Write Code Intent (what to change) | Write implementation diffs (developer) |
-| Make design decisions              | Make user decisions (escalate)         |
-| Capture invisible knowledge        | Write documentation (technical-writer) |
-| Explore and discover patterns      | Review artifacts (quality-reviewer)    |
+| Architect DOES                           | Architect DOES NOT                           |
+| ---------------------------------------- | -------------------------------------------- |
+| Write Code Intent (the binding contract) | Implement code (developer, at execution)     |
+| Make design decisions                    | Make user decisions (escalate)               |
+| Capture invisible knowledge              | Author code docs/comments (technical-writer) |
+| Build + render diagrams; explore source  | Review artifacts (quality-reviewer)          |
 
 ## Escalation
 

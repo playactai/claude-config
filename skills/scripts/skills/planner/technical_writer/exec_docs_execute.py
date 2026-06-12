@@ -6,7 +6,7 @@
   2. Extract Plan Information (IK, modified files, milestones)
   3. CLAUDE.md Index Format (tabular format rules)
   4. README.md Creation (creation criteria, IK mapping)
-  5. Verify Transcribed Comments (spot-check comment transcription)
+  5. Author Code Comments (inline comments + docstrings authored in real source)
   6. Output Format (documentation report)
 
 This is the EXECUTE script for first-time post-impl documentation.
@@ -21,7 +21,7 @@ STEPS = {
     2: "Extract Plan Information",
     3: "CLAUDE.md Index Format",
     4: "README.md Creation Criteria",
-    5: "Verify Transcribed Comments",
+    5: "Author Code Comments",
     6: "Output Format",
 }
 
@@ -52,9 +52,11 @@ def get_step_guidance(step: int, module_path: str | None = None, **kwargs) -> di
                 "  - Quality review passed",
                 "",
                 "DELIVERABLES:",
-                "  1. CLAUDE.md index entries for modified directories",
-                "  2. README.md if Invisible Knowledge has content",
-                "  3. Verification that TW-prepared comments were transcribed",
+                "  1. Inline comments & docstrings authored directly in the modified source",
+                "     (sourced from the Decision Log + Invisible Knowledge -- the developer",
+                "     adds none; you are the sole author of code documentation)",
+                "  2. CLAUDE.md index entries for modified directories",
+                "  3. README.md if Invisible Knowledge has content",
                 "",
                 "Read the plan file now to understand what was implemented.",
             ],
@@ -81,11 +83,16 @@ def get_step_guidance(step: int, module_path: str | None = None, **kwargs) -> di
                 "   - What each milestone accomplished",
                 "   - Use for WHAT column in CLAUDE.md index",
                 "",
+                "4. DECISION LOG (planning_context.decisions):",
+                "   - DL-XXX entries: the WHY behind implementation choices",
+                "   - Source for the inline WHY comments + docstring rationale you author",
+                "",
                 "Write out your extraction before proceeding:",
                 "  EXTRACTION:",
                 "  - Invisible Knowledge: [summary or 'none']",
                 "  - Modified directories: [list]",
                 "  - Key changes: [per milestone]",
+                "  - Decisions: [DL-XXX -> rationale]",
             ],
             "next": f"uv run python -m {MODULE_PATH} --step 3{state_dir_arg}",
         }
@@ -168,25 +175,26 @@ def get_step_guidance(step: int, module_path: str | None = None, **kwargs) -> di
         return {
             "title": STEPS[5],
             "actions": [
-                "SPOT-CHECK that Developer transcribed TW-prepared comments.",
+                "AUTHOR code comments & docstrings directly in the implemented source.",
                 "",
-                "Pick 2-3 modified files and verify:",
-                "  1. Comments from plan's Code Changes appear in actual files",
-                "  2. Comments are verbatim (not paraphrased)",
-                "  3. Comments are in correct locations",
+                "You are the SOLE author of code documentation -- the developer added none.",
+                "For each modified file, use the Edit tool on the REAL source file to add:",
+                "  - Module comment: what the file contains (top of file)",
+                "  - Docstrings: per public function/class -- what it does, when to use",
+                "  - Inline WHY comments: reasoning behind non-obvious code",
                 "",
-                "COMMON TRANSCRIPTION ISSUES:",
-                "  - Comment missing entirely",
-                "  - Comment paraphrased (lost precision)",
-                "  - Comment in wrong location",
-                "  - Temporal contamination introduced (check 5 categories)",
+                "SOURCE every WHY from the plan -- never invent:",
+                "  - planning_context.decisions[] (DL-XXX): rationale for choices",
+                "  - invisible_knowledge: invariants, tradeoffs, constraints",
+                "  - intent-markers already in code (:PERF:, :UNSAFE:) per",
+                "    conventions/intent-markers.md",
                 "",
-                "If issues found:",
-                "  - Fix the comment in the actual source file",
-                "  - Use Edit tool on the source file (not plan file)",
+                "HYGIENE (conventions/temporal.md): timeless present tense. No change-",
+                "relative language (Added, Changed, Replaced, Now, Previously) -- a comment",
+                "must read correctly to someone seeing the code for the first time.",
                 "",
-                "This is verification, not comprehensive review.",
-                "QR already validated; spot-check for transcription accuracy.",
+                "WHY-not-WHAT: explain reasoning a reader cannot get from the code itself.",
+                "If a line only restates the code, delete it.",
             ],
             "next": f"uv run python -m {MODULE_PATH} --step 6{state_dir_arg}",
         }

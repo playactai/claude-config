@@ -4,8 +4,9 @@ Unsafe forms that break on apostrophes/backslashes in real code:
   --diff $'...'    (ANSI-C quoting of diff body)
   batch '['        (single-quoted JSON passed inline)
 
-All 6 plan-phase modules must be free of these patterns in every action
-line emitted by get_step_guidance().
+The plan-design scripts (the only plan-phase work/fix scripts after the
+rigid-diff redesign removed the plan-code and plan-docs phases) must be free
+of these patterns in every action line emitted by get_step_guidance().
 """
 
 from __future__ import annotations
@@ -30,30 +31,6 @@ from skills.planner.architect.plan_design_qr_fix import (
 )
 from skills.planner.architect.plan_design_qr_fix import (
     get_step_guidance as design_qr_fix_guidance,
-)
-from skills.planner.developer.plan_code_execute import (
-    STEPS as CODE_EXECUTE_STEPS,
-)
-from skills.planner.developer.plan_code_execute import (
-    get_step_guidance as code_execute_guidance,
-)
-from skills.planner.developer.plan_code_qr_fix import (
-    STEPS as CODE_QR_FIX_STEPS,
-)
-from skills.planner.developer.plan_code_qr_fix import (
-    get_step_guidance as code_qr_fix_guidance,
-)
-from skills.planner.technical_writer.plan_docs_execute import (
-    STEPS as DOCS_EXECUTE_STEPS,
-)
-from skills.planner.technical_writer.plan_docs_execute import (
-    get_step_guidance as docs_execute_guidance,
-)
-from skills.planner.technical_writer.plan_docs_qr_fix import (
-    STEPS as DOCS_QR_FIX_STEPS,
-)
-from skills.planner.technical_writer.plan_docs_qr_fix import (
-    get_step_guidance as docs_qr_fix_guidance,
 )
 
 # ── helpers ─────────────────────────────────────────────────────────────────
@@ -88,16 +65,14 @@ def _flatten_actions(result: dict) -> list[str]:
 
 # (label, guidance_fn, steps dict, qr_phase for state dir)
 _MODULE_SPECS: list[tuple[str, Callable[..., dict], dict, str | None]] = [
-    ("plan_code_execute", code_execute_guidance, CODE_EXECUTE_STEPS, None),
-    ("plan_code_qr_fix", code_qr_fix_guidance, CODE_QR_FIX_STEPS, "plan-code"),
     ("plan_design_execute", design_execute_guidance, DESIGN_EXECUTE_STEPS, None),
     ("plan_design_qr_fix", design_qr_fix_guidance, DESIGN_QR_FIX_STEPS, "plan-design"),
-    ("plan_docs_execute", docs_execute_guidance, DOCS_EXECUTE_STEPS, None),
-    ("plan_docs_qr_fix", docs_qr_fix_guidance, DOCS_QR_FIX_STEPS, "plan-docs"),
 ]
 
 
-def _collect_actions(guidance_fn: Callable[..., dict], steps: dict, qr_phase: str | None) -> list[str]:
+def _collect_actions(
+    guidance_fn: Callable[..., dict], steps: dict, qr_phase: str | None
+) -> list[str]:
     """Call guidance_fn for every step and flatten all action strings."""
     state_dir = _make_state_dir(qr_phase)
     try:
@@ -131,8 +106,8 @@ def test_no_inline_diff_or_batch(
         for pattern in _UNSAFE_PATTERNS:
             if pattern in line:
                 violations.append(f"  pattern={pattern!r}  line={line!r}")
-    assert not violations, (
-        f"{module_name}: found unsafe inline shell forms:\n" + "\n".join(violations)
+    assert not violations, f"{module_name}: found unsafe inline shell forms:\n" + "\n".join(
+        violations
     )
 
 
@@ -145,7 +120,7 @@ def test_sentinel_assertion_fires_on_synthetic_inline() -> None:
     This proves the guard is actually exercised, not silently vacuous.
     """
     synthetic_lines = [
-        "  uv run python -m skills.planner.cli.plan batch '[{\"method\": \"set-change\"}]'",
+        '  uv run python -m skills.planner.cli.plan batch \'[{"method": "set-change"}]\'',
         "  uv run python -m skills.planner.cli.plan set-change --diff $'--- a/x.py\\n...'",
     ]
     for line in synthetic_lines:

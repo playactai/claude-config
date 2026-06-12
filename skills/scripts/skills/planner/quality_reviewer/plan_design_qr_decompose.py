@@ -34,9 +34,9 @@ Focus on:
   - milestones[].code_intents (structure present?)
   - invisible_knowledge (captured?)
 
-OUT OF SCOPE (verified in later phases):
-  - Code correctness (plan-code phase)
-  - Documentation quality (plan-docs phase)"""
+OUT OF SCOPE (verified at execution):
+  - Code correctness (impl-code phase)
+  - Documentation quality (impl-docs phase)"""
 
 
 STEP_2_CONCERNS = """\

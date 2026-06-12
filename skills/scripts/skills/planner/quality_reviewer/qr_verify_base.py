@@ -264,10 +264,14 @@ class VerifyBase(ABC):
         next_step = current_step + 1
         if item_idx + 1 < len(item_ids):
             # More items to process
-            next_action = f"uv run python -m {module_path} --step {next_step}{state_dir_arg} {item_flags}"
+            next_action = (
+                f"uv run python -m {module_path} --step {next_step}{state_dir_arg} {item_flags}"
+            )
         else:
             # This was the last item, proceed to SUMMARY
-            next_action = f"uv run python -m {module_path} --step {next_step}{state_dir_arg} {item_flags}"
+            next_action = (
+                f"uv run python -m {module_path} --step {next_step}{state_dir_arg} {item_flags}"
+            )
 
         # Record the verdict via THIS script's --result flag (verify_main routes
         # it to cli.qr's locked update). One tool instead of two: the agent

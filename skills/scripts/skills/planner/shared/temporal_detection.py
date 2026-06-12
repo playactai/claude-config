@@ -1,8 +1,7 @@
 """Temporal contamination detection criteria.
 
-WHY: Detection questions were duplicated in two places:
-- plan_docs_qr.py:158-164 (XML format for QR agent)
-- plan_docs.py:203-209 (prose format for TW agent)
+WHY: Detection questions were duplicated across QR and TW agent scripts —
+once in XML format for QR agents, once in prose format for TW agents.
 
 Both need the same criteria but different formats. This module
 defines the criteria once and provides formatters for each use case.

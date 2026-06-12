@@ -33,8 +33,10 @@ class ImplCodeVerify(VerifyBase):
                 [
                     "MACRO CHECK - Verify across all implemented code:",
                     "",
-                    "  Read plan.json for acceptance criteria:",
-                    f"    cat {state_dir}/plan.json | jq '.milestones[].acceptance_criteria'",
+                    "  Read plan.json for acceptance criteria (code milestones only --",
+                    "  is_documentation_only milestones have no implemented code and are",
+                    "  verified in impl-docs):",
+                    f"    cat {state_dir}/plan.json | jq '.milestones[] | select(.is_documentation_only != true) | .acceptance_criteria'",
                     "",
                     "  Read modified files from codebase.",
                     "",

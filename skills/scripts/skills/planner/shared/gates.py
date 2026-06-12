@@ -90,20 +90,15 @@ def _build_iteration_limit_escalation(
     )
     parts.append("")
     if pass_step is not None:
-        accept_cmd = (
-            f"cd {shlex.quote(str(SKILLS_DIR))} && uv run python -m {module_path} --step {pass_step}"
-        )
+        accept_cmd = f"cd {shlex.quote(str(SKILLS_DIR))} && uv run python -m {module_path} --step {pass_step}"
         if state_dir:
             accept_cmd += f" --state-dir {shlex.quote(state_dir)}"
         parts.append(f"  Accept (proceed despite findings):\n    {accept_cmd}")
     else:
         parts.append(
-            "  Accept (proceed despite findings): the plan is APPROVED as-is; "
-            "proceed to execution."
+            "  Accept (proceed despite findings): the plan is APPROVED as-is; proceed to execution."
         )
-    parts.append(
-        "  Abort: stop here. Do NOT invoke a next step; report the findings to the user."
-    )
+    parts.append("  Abort: stop here. Do NOT invoke a next step; report the findings to the user.")
     parts.append("")
     parts.append(
         format_forbidden(
@@ -213,9 +208,7 @@ def build_gate_output(
         if state_dir:
             next_cmd += f" --state-dir {shlex.quote(state_dir)}"
     else:
-        next_cmd = (
-            f"uv run python -m {module_path} --step {work_step} --state-dir {shlex.quote(state_dir)}"
-        )
+        next_cmd = f"uv run python -m {module_path} --step {work_step} --state-dir {shlex.quote(state_dir)}"
 
     return GateResult(
         output=format_step(body, next_cmd, title=title),

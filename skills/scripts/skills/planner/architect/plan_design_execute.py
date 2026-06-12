@@ -109,7 +109,6 @@ def get_step_guidance(step: int, module_path: str | None = None, **kwargs) -> di
                 "Read conventions/ files as needed:",
                 "  - structural.md (architectural patterns)",
                 "  - temporal.md (comment hygiene)",
-                "  - diff-format.md (diff specification)",
                 "",
                 "NUDGE: If you need additional context to plan well, read more files.",
                 "Better to over-explore than under-explore.",
@@ -248,26 +247,46 @@ def get_step_guidance(step: int, module_path: str | None = None, **kwargs) -> di
                 "CLI WORKFLOW:",
                 "",
                 "1. Create diagram:",
-                "   " + pin_cwd("uv run python -m skills.planner.cli.plan --state-dir $STATE_DIR set-diagram \\"),
+                "   "
+                + pin_cwd(
+                    "uv run python -m skills.planner.cli.plan --state-dir $STATE_DIR set-diagram \\"
+                ),
                 "     --type architecture --scope overview --title 'System Overview'",
                 "",
                 "2. Add nodes (3-7 recommended, prevents visual overload):",
-                "   " + pin_cwd("uv run python -m skills.planner.cli.plan --state-dir $STATE_DIR add-diagram-node \\"),
+                "   "
+                + pin_cwd(
+                    "uv run python -m skills.planner.cli.plan --state-dir $STATE_DIR add-diagram-node \\"
+                ),
                 "     --diagram DIAG-001 --node-id client --label 'Client' --type service",
-                "   " + pin_cwd("uv run python -m skills.planner.cli.plan --state-dir $STATE_DIR add-diagram-node \\"),
+                "   "
+                + pin_cwd(
+                    "uv run python -m skills.planner.cli.plan --state-dir $STATE_DIR add-diagram-node \\"
+                ),
                 "     --diagram DIAG-001 --node-id server --label 'Server' --type service",
                 "",
                 "3. Add edges (label every edge):",
-                "   " + pin_cwd("uv run python -m skills.planner.cli.plan --state-dir $STATE_DIR add-diagram-edge \\"),
+                "   "
+                + pin_cwd(
+                    "uv run python -m skills.planner.cli.plan --state-dir $STATE_DIR add-diagram-edge \\"
+                ),
                 "     --diagram DIAG-001 --source client --target server --label 'sends request' --protocol gRPC",
+                "",
+                "4. Render each diagram to fixed-width ASCII (<=80 cols) and store it so the",
+                "   approved plan.md shows it. Write the ASCII to a file, then:",
+                "   "
+                + pin_cwd(
+                    "uv run python -m skills.planner.cli.plan --state-dir $STATE_DIR set-diagram-render \\"
+                ),
+                "     --diagram DIAG-001 --content-file /tmp/diag-001.txt",
                 "",
                 "SCOPE VALUES:",
                 "  - overview: Hero diagram, rendered after Overview section",
                 "  - invisible_knowledge: Context for future LLM sessions",
                 "  - milestone:M-XXX: Specific to what milestone implements",
                 "",
-                "NOTE: ascii_render is populated by Technical Writer, not Architect.",
-                "      Separation of concerns: Architect validates connectivity, TW optimizes layout.",
+                "NOTE: you build the graph IR (nodes/edges) AND render its ASCII. Validate",
+                "      connectivity first (edges must reference real nodes), then lay out the ASCII.",
                 "",
                 "NOTE: plan.json skeleton already exists (created by orchestrator).",
                 "      CLI commands ADD to it, do not need 'init'.",
@@ -276,8 +295,16 @@ def get_step_guidance(step: int, module_path: str | None = None, **kwargs) -> di
                 "  - Files: exact paths (each file in ONE milestone only)",
                 "  - Requirements: specific behaviors",
                 "  - Acceptance: testable pass/fail criteria",
-                "  - Code Intent: WHAT to change (Developer converts to code_changes later)",
+                "  - Code Intent: the DURABLE CONTRACT (you read the source; there are no",
+                "    diffs). Per file give symbol signatures + purpose, precise behavior",
+                "    (control flow, error/edge handling, data shapes), the integration seam",
+                "    by name, and a decision_ref for every value/threshold/tradeoff. The",
+                "    developer implements it JIT against the live file at execution and",
+                "    escalates if it is under-specified -- so make it complete.",
                 "  - Tests: type, backing, scenarios",
+                "  - Documentation-only milestone (pure docs, no code): create it with",
+                "    'set-milestone ... --documentation-only' and give it NO code_intents;",
+                "    exec-docs authors its docs at execution.",
                 "",
                 "PARALLELIZATION:",
                 "  Vertical slices (parallel) > Horizontal layers (sequential)",

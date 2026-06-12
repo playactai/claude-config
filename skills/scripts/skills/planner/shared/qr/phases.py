@@ -47,30 +47,6 @@ QR_PHASES: dict[str, dict] = {
         "decompose_steps": 13,
         "verify_steps": 3,
     },
-    "plan-code": {
-        "workflow": "planner",
-        "work_step": 7,
-        "decompose_step": 8,
-        "verify_step": 9,
-        "route_step": 10,
-        "artifact": "plan.json",
-        "decompose_script": "skills.planner.quality_reviewer.plan_code_qr_decompose",
-        "verify_script": "skills.planner.quality_reviewer.plan_code_qr_verify",
-        "decompose_steps": 13,
-        "verify_steps": 3,
-    },
-    "plan-docs": {
-        "workflow": "planner",
-        "work_step": 11,
-        "decompose_step": 12,
-        "verify_step": 13,
-        "route_step": 14,
-        "artifact": "plan.json",
-        "decompose_script": "skills.planner.quality_reviewer.plan_docs_qr_decompose",
-        "verify_script": "skills.planner.quality_reviewer.plan_docs_qr_verify",
-        "decompose_steps": 13,
-        "verify_steps": 3,
-    },
     "impl-code": {
         "workflow": "executor",
         "work_step": 2,
@@ -182,7 +158,7 @@ def get_route_step_info(phase: str) -> tuple[int, str, int]:
 
     # Total steps depends on workflow
     if workflow == "planner":
-        total_steps = 14
+        total_steps = 6
     else:  # executor
         total_steps = 10
 

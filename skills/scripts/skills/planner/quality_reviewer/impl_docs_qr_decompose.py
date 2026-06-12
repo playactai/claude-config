@@ -8,7 +8,7 @@ Scope: Post-implementation documentation.
   - README.md creation criteria
 NOT code quality (verified in impl-code phase).
 
-Severity categories: Same as plan-docs (TW can fix documentation issues).
+Severity categories: KNOWLEDGE-oriented (TW can fix documentation issues).
 """
 
 from skills.planner.quality_reviewer.prompts.decompose import dispatch_step

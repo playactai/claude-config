@@ -34,16 +34,6 @@ WORK_PHASES: dict[str, dict] = {
         "qr_fix": "skills.planner.architect.plan_design_qr_fix",
         "qr_phase": "plan-design",
     },
-    "plan-code": {
-        "execute": "skills.planner.developer.plan_code_execute",
-        "qr_fix": "skills.planner.developer.plan_code_qr_fix",
-        "qr_phase": "plan-code",
-    },
-    "plan-docs": {
-        "execute": "skills.planner.technical_writer.plan_docs_execute",
-        "qr_fix": "skills.planner.technical_writer.plan_docs_qr_fix",
-        "qr_phase": "plan-docs",
-    },
     "impl-code": {
         "execute": "skills.planner.developer.exec_implement_execute",
         "qr_fix": "skills.planner.developer.exec_implement_qr_fix",

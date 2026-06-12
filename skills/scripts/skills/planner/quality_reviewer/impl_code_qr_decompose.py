@@ -8,7 +8,7 @@ Scope: Implemented code quality.
   - Intent marker validation
 NOT plan structure or documentation (verified in earlier phases).
 
-Severity categories: Same as plan-code (Dev can fix code issues).
+Severity categories: STRUCTURE + COSMETIC (Dev can fix code issues).
 """
 
 from skills.planner.quality_reviewer.prompts.decompose import dispatch_step
@@ -32,7 +32,9 @@ Focus on:
 
 OUT OF SCOPE:
   - Plan structure (already verified in plan-design)
-  - Documentation files (impl-docs phase)"""
+  - Documentation files (impl-docs phase)
+  - is_documentation_only milestones (no code is implemented for them; their
+    acceptance criteria are documentation deliverables verified in impl-docs)"""
 
 
 STEP_2_CONCERNS = """\
@@ -47,9 +49,12 @@ DO NOT brainstorm plan structure or documentation concerns."""
 
 
 STEP_3_ENUMERATION = """\
-For impl-code, enumerate IMPLEMENTATION ARTIFACTS:
+For impl-code, enumerate IMPLEMENTATION ARTIFACTS.
+EXCLUDE is_documentation_only milestones -- no code is implemented for them; their
+deliverables are verified in impl-docs, not here. Enumerating them produces
+unsatisfiable acceptance-criteria items that never converge.
 
-ACCEPTANCE CRITERIA:
+ACCEPTANCE CRITERIA (code milestones only):
   - Each milestone with acceptance_criteria (ID, criteria count)
   - Each criterion (ID, expectation text)
 

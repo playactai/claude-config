@@ -174,15 +174,42 @@ def test_set_milestone_documentation_only_is_settable_and_valid(tmp_path):
     assert plan.validate_completeness("plan-design") == []
 
 
-def test_doc_only_milestone_with_code_intents_fails_validation(tmp_path):
+def test_set_intent_on_doc_only_milestone_is_rejected(tmp_path):
+    # Front-line guard: adding a code intent to a doc-only milestone is rejected at
+    # mutation time, so the plan can't be wedged permanently-invalid with no CLI escape.
     from skills.planner.cli import plan_commands as pc
 
     ctx = pc.PlanContext(state_dir=tmp_path)
     pc.init(ctx, task="t")
     pc.set_milestone(ctx, name="Docs", files="README.md", documentation_only=True)
-    pc.set_intent(ctx, milestone="M-001", file="README.md", behavior="x")
+    with pytest.raises(ValueError, match="documentation-only"):
+        pc.set_intent(ctx, milestone="M-001", file="README.md", behavior="x")
+
+
+def test_doc_only_flag_on_milestone_with_intents_fails_validation(tmp_path):
+    # Belt-and-suspenders: exclusivity is still caught at validate time when the flag
+    # is set on a milestone that already has intents (the path the guard can't cover).
+    from skills.planner.cli import plan_commands as pc
+
+    ctx = pc.PlanContext(state_dir=tmp_path)
+    pc.init(ctx, task="t")
+    pc.set_milestone(ctx, name="Code", files="a.py")
+    pc.set_intent(ctx, milestone="M-001", file="a.py", behavior="x")
+    pc.set_milestone(ctx, id="M-001", documentation_only=True)
     errors = ctx.load_plan().validate_completeness("plan-design")
     assert any("documentation-only but has code_intents" in e for e in errors)
+
+
+def test_documentation_only_is_reversible(tmp_path):
+    # Two-way switch (--no-documentation-only clears it): never permanently stuck.
+    from skills.planner.cli import plan_commands as pc
+
+    ctx = pc.PlanContext(state_dir=tmp_path)
+    pc.init(ctx, task="t")
+    pc.set_milestone(ctx, name="Docs", files="README.md", documentation_only=True)
+    assert ctx.load_plan().milestones[0].is_documentation_only is True
+    pc.set_milestone(ctx, id="M-001", documentation_only=False)
+    assert ctx.load_plan().milestones[0].is_documentation_only is False
 
 
 def test_impl_code_qr_excludes_doc_only_milestones():
@@ -195,6 +222,223 @@ def test_impl_code_qr_excludes_doc_only_milestones():
 
     combined = (STEP_1_ABSORB + STEP_3_ENUMERATION).lower()
     assert "is_documentation_only" in combined
+
+
+# --- Doc-only deliverables are authored (exec-docs) and verified (impl-docs QR) ---
+def test_doc_only_milestone_surfaces_in_plan_markdown():
+    # translate_to_markdown must render the flag, or the executor (which re-derives
+    # plan.json from plan.md) cannot tell a doc-only milestone from a code one.
+    from skills.planner.cli.plan import translate_to_markdown
+    from skills.planner.shared.schema import Milestone, Overview, Plan
+
+    plan = Plan(
+        overview=Overview(problem="p", approach="a"),
+        milestones=[
+            Milestone(
+                id="M-001",
+                number=1,
+                name="Migration guide",
+                files=["docs/MIGRATION.md"],
+                is_documentation_only=True,
+                acceptance_criteria=["documents the v1->v2 break"],
+            )
+        ],
+    )
+    md = translate_to_markdown(plan)
+    assert "Documentation-only milestone" in md
+
+
+def test_exec_docs_authors_doc_only_deliverables():
+    from skills.planner.technical_writer.exec_docs_execute import STEPS, get_step_guidance
+
+    body = "\n".join("\n".join(get_step_guidance(s)["actions"]) for s in STEPS)
+    assert "is_documentation_only" in body
+    assert "acceptance_criteria" in body  # the authoring targets
+
+
+def test_impl_docs_qr_verifies_doc_only_acceptance_criteria():
+    from skills.planner.quality_reviewer.impl_docs_qr_decompose import STEP_3_ENUMERATION
+    from skills.planner.quality_reviewer.impl_docs_qr_verify import ImplDocsVerify
+
+    assert "DOCUMENTATION-ONLY MILESTONES" in STEP_3_ENUMERATION
+    macro = "\n".join(
+        ImplDocsVerify().get_verification_guidance({"scope": "*", "check": "x"}, "/tmp/x")
+    )
+    assert "is_documentation_only == true" in macro
+    deliverable = "\n".join(
+        ImplDocsVerify().get_verification_guidance(
+            {"scope": "milestone:M-001", "check": "acceptance criteria satisfied"}, "/tmp/x"
+        )
+    )
+    assert "DOCUMENTATION-ONLY DELIVERABLE CHECK" in deliverable
+
+
+# --- Terminal gate: user-accept at the iteration ceiling finalizes the plan ---
+def _write_ceiling_qr(state_dir, phase="plan-design"):
+    """plan.json + qr-{phase}.json at the iteration ceiling with an unresolved MUST."""
+    import json
+
+    (state_dir / "plan.json").write_text(
+        json.dumps(
+            {
+                "overview": {"problem": "p", "approach": "a"},
+                "milestones": [
+                    {
+                        "id": "M-001",
+                        "number": 1,
+                        "name": "m",
+                        "files": ["a.py"],
+                        "code_intents": [{"id": "CI-1", "file": "a.py", "behavior": "do x"}],
+                    }
+                ],
+                "waves": [],
+            }
+        )
+    )
+    (state_dir / f"qr-{phase}.json").write_text(
+        json.dumps(
+            {
+                "phase": phase,
+                "iteration": 5,
+                "items": [
+                    {
+                        "id": "q1",
+                        "scope": "*",
+                        "check": "c",
+                        "status": "FAIL",
+                        "version": 1,
+                        "severity": "MUST",
+                        "finding": "unfixable",
+                    }
+                ],
+            }
+        )
+    )
+
+
+def test_iteration_limit_escalation_emits_runnable_accept_command(tmp_path):
+    from skills.planner.orchestrator.planner import format_output
+
+    _write_ceiling_qr(tmp_path)
+    result = format_output(6, "fail", str(tmp_path))
+    out = result.output if isinstance(result, GateResult) else result
+    # The bug was a prose-only Accept with no command (nothing saved). The escalation
+    # must now carry a runnable --accept-findings command, and not finalize on its own.
+    assert "--accept-findings" in out
+    assert "uv run python -m" in out
+    assert result.terminal_pass is False
+
+
+def test_accept_findings_yields_terminal_pass_at_ceiling(tmp_path):
+    from skills.planner.orchestrator.planner import format_output
+
+    _write_ceiling_qr(tmp_path)
+    result = format_output(6, "pass", str(tmp_path), accept_findings=True)
+    assert isinstance(result, GateResult)
+    assert result.terminal_pass is True  # main() now renders plan.md + saves to docs/plans/
+    assert "PLAN APPROVED" in result.output
+
+
+# --- Executor validates the (LLM-authored) plan.json at step 2 ---
+def test_executor_main_rejects_non_conforming_plan(tmp_path):
+    import json
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    scripts_dir = Path(__file__).parent.parent
+    # int-list waves diverge from the Wave model -> validate_state must abort step 2.
+    (tmp_path / "plan.json").write_text(
+        json.dumps(
+            {
+                "overview": {"problem": "p", "approach": "a"},
+                "milestones": [{"id": "M-001", "number": 1, "name": "m", "files": ["a.py"]}],
+                "waves": [[0], [1, 2]],
+            }
+        )
+    )
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "skills.planner.orchestrator.executor",
+            "--step",
+            "2",
+            "--state-dir",
+            str(tmp_path),
+        ],
+        capture_output=True,
+        text=True,
+        timeout=30,
+        cwd=scripts_dir,
+    )
+    assert result.returncode != 0
+    assert "validation" in (result.stdout + result.stderr).lower()
+
+
+def test_executor_main_rejects_plan_missing_code_intents(tmp_path):
+    # Structurally valid (Wave objects, refs resolve) but a code milestone with no
+    # code_intents: validate_state passes, validate_completeness must catch the
+    # dropped durable contract so the developer is never dispatched with empty intent.
+    import json
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    scripts_dir = Path(__file__).parent.parent
+    (tmp_path / "plan.json").write_text(
+        json.dumps(
+            {
+                "overview": {"problem": "p", "approach": "a"},
+                "milestones": [{"id": "M-001", "number": 1, "name": "m", "files": ["a.py"]}],
+                "waves": [{"id": "W-001", "milestones": ["M-001"]}],
+            }
+        )
+    )
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "skills.planner.orchestrator.executor",
+            "--step",
+            "2",
+            "--state-dir",
+            str(tmp_path),
+        ],
+        capture_output=True,
+        text=True,
+        timeout=30,
+        cwd=scripts_dir,
+    )
+    assert result.returncode != 0
+    assert "completeness" in (result.stdout + result.stderr).lower()
+
+
+def test_wave_referencing_unknown_milestone_fails_validation(tmp_path):
+    # Waves are first-class milestone cross-references; a dangling ref must abort.
+    import json
+
+    from skills.planner.shared.schema import SchemaValidationError, validate_state
+
+    (tmp_path / "plan.json").write_text(
+        json.dumps(
+            {
+                "overview": {"problem": "p", "approach": "a"},
+                "milestones": [
+                    {
+                        "id": "M-001",
+                        "number": 1,
+                        "name": "m",
+                        "files": ["a.py"],
+                        "code_intents": [{"id": "CI-1", "file": "a.py", "behavior": "x"}],
+                    }
+                ],
+                "waves": [{"id": "W-001", "milestones": ["M-999"]}],
+            }
+        )
+    )
+    with pytest.raises(SchemaValidationError, match="unknown milestone"):
+        validate_state(str(tmp_path))
 
 
 if __name__ == "__main__":

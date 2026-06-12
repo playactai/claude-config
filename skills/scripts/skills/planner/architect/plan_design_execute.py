@@ -313,7 +313,7 @@ def get_step_guidance(step: int, module_path: str | None = None, **kwargs) -> di
                 "  If file overlap: extract to M0 (foundation) or consolidate",
                 "",
                 "VALIDATION: After building plan.json, run:",
-                f"  {pin_cwd('uv run python -m skills.planner.cli.plan validate --phase plan-design')}",
+                f"  {pin_cwd('uv run python -m skills.planner.cli.plan --state-dir $STATE_DIR validate --phase plan-design')}",
                 "",
                 "REFERENCE SCHEMA:",
                 "",

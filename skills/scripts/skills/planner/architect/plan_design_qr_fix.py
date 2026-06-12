@@ -155,7 +155,7 @@ def get_step_guidance(step: int, module_path: str | None = None, **kwargs) -> di
                 "VALIDATE your fixes before returning to orchestrator.",
                 "",
                 "Run structural validation:",
-                f"  {pin_cwd(f'uv run python -m skills.planner.cli.plan validate --phase plan-design --state-dir {state_dir}')}",
+                f"  {pin_cwd(f'uv run python -m skills.planner.cli.plan --state-dir {state_dir} validate --phase plan-design')}",
                 "",
                 "SELF-CHECK each fixed item:",
                 "  For each FAIL item you addressed:",

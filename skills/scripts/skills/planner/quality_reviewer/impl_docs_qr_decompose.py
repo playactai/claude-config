@@ -32,6 +32,7 @@ Focus on:
   - Modified directory list (need docs?)
   - CLAUDE.md format compliance
   - README.md presence where required
+  - documentation-only milestones (files authored? acceptance_criteria satisfied?)
 
 OUT OF SCOPE:
   - Code quality (verified in impl-code)
@@ -45,6 +46,7 @@ Brainstorm concerns specific to POST-IMPL DOCUMENTATION:
   - Temporal contamination in comments
   - README.md missing where required
   - Comments don't explain WHY
+  - Documentation-only milestone deliverable missing or acceptance criteria unsatisfied
 
 DO NOT brainstorm code quality or plan structure concerns."""
 
@@ -63,7 +65,11 @@ INVISIBLE KNOWLEDGE:
 
 COMMENTS:
   - Source files with new comments
-  - Temporal contamination candidates"""
+  - Temporal contamination candidates
+
+DOCUMENTATION-ONLY MILESTONES:
+  - Each is_documentation_only milestone (files, acceptance_criteria count)
+  - Each acceptance criterion (expectation text) -- the deliverable it requires"""
 
 
 STEP_5_GENERATE = """\
@@ -78,6 +84,8 @@ SEVERITY ASSIGNMENT (per conventions/severity.md, impl-docs scope):
     - CLAUDE.md format violations
     - README.md missing where scope warrants
     - WHY-not-WHAT violations
+    - DOC_DELIVERABLE_UNSATISFIED: a documentation-only milestone's acceptance
+      criteria not met by its authored files
 
   COULD (iterations 1-2):
     - Minor formatting inconsistencies

@@ -104,25 +104,35 @@ def format_step_1(state_dir: str, reconciliation_check: bool) -> str:
         "     +---> M3 (posts) ----> M4 (feed)",
         "            Wave 3          Wave 4",
         "",
-        "  Output format:",
-        "    Wave 1: [0]       (foundation, sequential)",
-        "    Wave 2: [1, 2]    (parallel)",
-        "    Wave 3: [3]       (sequential)",
-        "    Wave 4: [4]       (sequential)",
+        "  Output format (waves are objects; reference milestones by ID):",
+        "    W-001: [M-001]            (foundation, sequential)",
+        "    W-002: [M-002, M-003]     (parallel)",
+        "    W-003: [M-004]            (sequential)",
+        "    W-004: [M-005]            (sequential)",
         "",
         "STATE SETUP:",
         f"  State directory created: {state_dir}",
         f"  Write plan context to: {state_dir}/plan.json",
         "",
-        "  After analyzing the plan, use the Write tool to create plan.json:",
+        "  After analyzing the plan, use the Write tool to create plan.json. It must",
+        "  conform to the plan schema -- each milestone carries its code_intents (the",
+        "  durable contract) and is_documentation_only flag; waves are objects:",
         "  {",
-        '    "schema_version": 2,',
-        '    "plan_file": "<path to plan file>",',
+        '    "overview": {"problem": "<from plan>", "approach": "<from plan>"},',
         '    "milestones": [',
-        '      {"id": "M-001", "name": "...", "acceptance_criteria": ["..."], "files": ["..."]}',
+        '      {"id": "M-001", "number": 1, "name": "...", "files": ["..."],',
+        '       "acceptance_criteria": ["..."],',
+        '       "code_intents": [',
+        '         {"id": "CI-M-001-001", "file": "...", "behavior": "...", "decision_refs": []}',
+        "       ],",
+        '       "is_documentation_only": false}',
         "    ],",
-        '    "waves": [[0], [1, 2], [3]]',
+        '    "waves": [{"id": "W-001", "milestones": ["M-001"]}]',
         "  }",
+        "",
+        "  Transcribe code_intents and is_documentation_only faithfully from the plan;",
+        "  a documentation-only milestone has is_documentation_only:true and NO",
+        "  code_intents (exec-docs authors its deliverables at step 6).",
         "",
         "WORKFLOW:",
         "  This step is ANALYSIS + STATE SETUP. Do NOT delegate yet.",
@@ -612,7 +622,6 @@ def main():
             plan_path.write_text(
                 json.dumps(
                     {
-                        "schema_version": 2,
                         "overview": {"problem": "", "approach": ""},
                         "planning_context": {
                             "decisions": [],
@@ -637,6 +646,31 @@ def main():
     # Validate state_dir for steps 2+
     if args.step > 1 and not state_dir:
         sys.exit(f"Error: --state-dir required for step {args.step}")
+
+    # Validate the (LLM-authored) plan.json before running step 2+ -- mirrors
+    # planner.py. The orchestrator hand-writes plan.json in step 1 from the plan;
+    # catch a malformed or non-conforming write here instead of letting downstream
+    # steps re-derive against a broken contract.
+    if args.step > 1 and state_dir:
+        from skills.planner.shared.schema import Plan, SchemaValidationError, validate_state
+
+        try:
+            validate_state(state_dir)
+        except SchemaValidationError as e:
+            sys.exit(f"Schema validation failed: {e}")
+
+        # validate_state checks structure + refs only. Also enforce the durable
+        # contract on the re-derived plan: every code milestone keeps its
+        # code_intents and doc-only <=> no intents (audit: code_intents are
+        # load-bearing). Kept out of validate_state because the planner saves
+        # partial plans mid-build, which would not yet satisfy completeness.
+        plan_path = Path(state_dir) / "plan.json"
+        if plan_path.exists():
+            errors = Plan.model_validate(
+                json.loads(plan_path.read_text())
+            ).validate_completeness("plan-design")
+            if errors:
+                sys.exit("Plan completeness failed: " + "; ".join(errors))
 
     print(format_output(args.step, state_dir, args.qr_status, args.reconciliation_check))
 

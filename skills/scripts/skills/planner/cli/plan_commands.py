@@ -130,7 +130,7 @@ def set_milestone(
     requirements: str | None = None,
     acceptance_criteria: str | None = None,
     tests: str | None = None,
-    documentation_only: bool = False,
+    documentation_only: bool | None = None,
 ) -> dict:
     """Create or update milestone."""
     schema = _get_schema()
@@ -163,8 +163,9 @@ def set_milestone(
             ms.acceptance_criteria = acceptance_list
         if tests_list:
             ms.tests = tests_list
-        if documentation_only:
-            ms.is_documentation_only = True
+        # Reversible: None = leave as-is; True/False set explicitly.
+        if documentation_only is not None:
+            ms.is_documentation_only = documentation_only
 
         _bump_version(ms)
         ctx.save_plan(plan)
@@ -189,7 +190,7 @@ def set_milestone(
             requirements=requirements_list,
             acceptance_criteria=acceptance_list,
             tests=tests_list,
-            is_documentation_only=documentation_only,
+            is_documentation_only=bool(documentation_only),
         )
         plan.milestones.append(ms)
         ctx.save_plan(plan)
@@ -214,6 +215,14 @@ def set_intent(
     if not ms:
         ids = [m.id for m in plan.milestones]
         raise ValueError(f"Milestone {milestone} not found. Valid: {ids}")
+
+    # Doc-only milestones carry no code_intents (exclusive relationship -- see
+    # Plan.validate_completeness). Reject so the plan can't be wedged invalid.
+    if ms.is_documentation_only:
+        raise ValueError(
+            f"milestone {milestone} is documentation-only; clear it with "
+            f"set-milestone --no-documentation-only before adding code intents"
+        )
 
     refs_list = _parse_csv(decision_refs)
     for ref in refs_list:

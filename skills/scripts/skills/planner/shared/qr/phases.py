@@ -139,27 +139,3 @@ def get_orchestrator_module(phase: str) -> str:
     config = get_phase_config(phase)
     workflow = config["workflow"]
     return f"skills.planner.orchestrator.{workflow}"
-
-
-def get_route_step_info(phase: str) -> tuple[int, str, int]:
-    """Get routing info for returning to orchestrator after QR.
-
-    Replaces QR_ROUTING constant lookup with phase-based derivation.
-
-    Args:
-        phase: Phase name
-
-    Returns:
-        (route_step, module_path, total_steps)
-    """
-    config = get_phase_config(phase)
-    workflow = config["workflow"]
-    module_path = f"skills.planner.orchestrator.{workflow}"
-
-    # Total steps depends on workflow
-    if workflow == "planner":
-        total_steps = 6
-    else:  # executor
-        total_steps = 10
-
-    return (config["route_step"], module_path, total_steps)

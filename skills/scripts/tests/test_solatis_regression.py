@@ -155,9 +155,17 @@ def test_issue_22_mode_main_unit():
 
 
 def _write_plan(state_dir: Path, milestones: list[dict]) -> None:
-    """Write a minimal plan.json skeleton with the given milestones."""
+    """Write a schema-valid plan.json with the given milestones.
+
+    Each milestone dict may omit number/name/files; sensible defaults fill them so
+    the result passes Plan validation. (The step-6 gate path under test reads qr
+    state, not plan.json -- a valid fixture keeps the test honest and future-proof.)
+    """
+    norm = [
+        {"number": i, "name": ms.get("name", f"M{i}"), "files": ms.get("files", ["a.py"]), **ms}
+        for i, ms in enumerate(milestones, 1)
+    ]
     plan = {
-        "schema_version": 2,
         "overview": {"problem": "x", "approach": "y"},
         "planning_context": {
             "decisions": [],
@@ -166,7 +174,7 @@ def _write_plan(state_dir: Path, milestones: list[dict]) -> None:
             "risks": [],
         },
         "invisible_knowledge": {"system": "", "invariants": [], "tradeoffs": []},
-        "milestones": milestones,
+        "milestones": norm,
         "waves": [],
     }
     (state_dir / "plan.json").write_text(json.dumps(plan))
@@ -183,18 +191,6 @@ def test_issue_23_step6_pass_is_terminal(tmp_path):
     assert "PLAN APPROVED" in output
     assert "--step 7" not in output
     assert "--step 11" not in output
-
-
-def test_issue_23_step6_terminal_for_doc_only_plan(tmp_path):
-    """A documentation-only plan also terminates at step 6 (no plan-code/plan-docs)."""
-    from skills.planner.orchestrator.planner import format_output
-
-    _write_plan(tmp_path, [{"id": "M-001", "is_documentation_only": True}])
-
-    result = format_output(step=6, qr_status="pass", state_dir=str(tmp_path))
-    output = result.output if isinstance(result, GateResult) else result
-    assert "PLAN APPROVED" in output
-    assert "--step 7" not in output
 
 
 def test_issue_23_executor_skips_doc_only_in_impl_code(tmp_path):

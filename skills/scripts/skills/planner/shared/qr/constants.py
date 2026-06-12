@@ -1,19 +1,10 @@
-"""QR workflow constants and routing configuration.
+"""QR workflow constants.
 
 Moved from lib/workflow/constants.py to planner/shared/qr/constants.py.
-Extended with routing configuration (moved from qr/utils.py).
 """
 
 QR_ITERATION_LIMIT = 5
 QR_ITERATION_DEFAULT = 1
-
-# Routing: (workflow, phase) -> (route_step, module_path, total_steps)
-# 6-step planner (plan-design only; plan approved at step 6) and 10-step executor
-QR_ROUTING = {
-    ("planner", "plan-design"): (6, "skills.planner.orchestrator.planner", 6),
-    ("executor", "impl-code"): (5, "skills.planner.orchestrator.executor", 10),
-    ("executor", "impl-docs"): (9, "skills.planner.orchestrator.executor", 10),
-}
 
 # CLI argument defaults - single source of truth
 CLI_DEFAULTS = {
@@ -22,18 +13,6 @@ CLI_DEFAULTS = {
     "mode": None,
     "state_dir": None,
 }
-
-
-def get_routing_info(workflow: str, phase: str) -> tuple[int, str, int]:
-    """Get routing info for a QR workflow/phase combination.
-
-    Returns: (gate_step, module_path, total_steps)
-    Raises: ValueError if unknown combination
-    """
-    key = (workflow, phase)
-    if key not in QR_ROUTING:
-        raise ValueError(f"Unknown QR routing: workflow={workflow}, phase={phase}")
-    return QR_ROUTING[key]
 
 
 def get_cli_default(arg_name: str):

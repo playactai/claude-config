@@ -268,8 +268,10 @@ class SetMilestoneCommand(Command):
         parser.add_argument("--tests", help="Comma-separated test specs")
         parser.add_argument(
             "--documentation-only",
-            action="store_true",
-            help="Mark milestone documentation-only (no code_intents; docs authored by exec-docs)",
+            action=argparse.BooleanOptionalAction,
+            default=None,
+            help="Mark milestone documentation-only (no code_intents; docs authored by "
+            "exec-docs). Reversible: pass --no-documentation-only to clear the flag.",
         )
 
     @classmethod
@@ -320,8 +322,9 @@ class SetMilestoneCommand(Command):
                 ms.acceptance_criteria = acceptance
             if tests:
                 ms.tests = tests
-            if args.documentation_only:
-                ms.is_documentation_only = True
+            # Reversible: None means "not specified" (leave as-is); True/False set explicitly.
+            if args.documentation_only is not None:
+                ms.is_documentation_only = args.documentation_only
 
             bump_version(ms)
             save_plan(state_dir, plan)
@@ -347,7 +350,7 @@ class SetMilestoneCommand(Command):
                 requirements=requirements,
                 acceptance_criteria=acceptance,
                 tests=tests,
-                is_documentation_only=args.documentation_only,
+                is_documentation_only=bool(args.documentation_only),
             )
             plan.milestones.append(ms)
 
@@ -383,6 +386,16 @@ class SetIntentCommand(Command):
                 "Valid milestone ID",
                 args.milestone,
                 f"Use existing: {', '.join(ids) or 'none'}",
+            )
+
+        # Doc-only milestones carry no code_intents (the relationship is exclusive --
+        # see Plan.validate_completeness). Reject here so the plan can't be wedged into
+        # a permanently-invalid state; clear the flag first if code is in fact needed.
+        if ms.is_documentation_only:
+            error_exit(
+                f"milestone {args.milestone} is documentation-only; clear it with "
+                f"'set-milestone --id {args.milestone} --no-documentation-only' "
+                f"before adding code intents"
             )
 
         decision_refs = (
@@ -777,6 +790,15 @@ def translate_to_markdown(plan: Plan) -> str:
     for ms in plan.milestones:
         lines.append(f"### Milestone {ms.number}: {ms.name}")
         lines.append("")
+
+        # Surface the doc-only flag so it survives the plan.json -> plan.md -> plan.json
+        # round trip (the executor re-derives plan.json from plan.md): without it a
+        # doc-only milestone is indistinguishable from a code milestone missing intents.
+        if ms.is_documentation_only:
+            lines.append(
+                "**Documentation-only milestone** (no code; deliverables authored at execution)."
+            )
+            lines.append("")
 
         ms_diagrams = [d for d in plan.diagram_graphs if d.scope == f"milestone:{ms.id}"]
         for dg in ms_diagrams:

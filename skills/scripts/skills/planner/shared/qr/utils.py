@@ -15,7 +15,6 @@ import json
 from collections.abc import Callable, Iterator
 from pathlib import Path
 
-from skills.planner.shared.qr.constants import QR_ROUTING
 from skills.planner.shared.schema import QA_ITEM_DEFAULTS
 
 
@@ -227,31 +226,6 @@ def format_todo_items_for_decomposition(qr_state: dict) -> str:
         lines.append(f"  {item.get('id', '?')}: {item.get('check', '')[:60]}...")
 
     return "\n".join(lines)
-
-
-def format_qr_result(workflow: str, phase: str, passed: bool, state_dir: str) -> str:
-    """Format minimal QR result with invoke_after.
-
-    Args:
-        workflow: "planner" or "executor"
-        phase: QR phase name (e.g., "plan-design", "impl-code")
-        passed: True if all checks passed
-        state_dir: Actual state directory path
-
-    Returns:
-        Formatted result string with RESULT line and invoke_after command
-    """
-    key = (workflow, phase)
-    if key not in QR_ROUTING:
-        raise ValueError(f"Unknown QR routing: workflow={workflow}, phase={phase}")
-    gate_step, module_path, _total_steps = QR_ROUTING[key]
-
-    if passed:
-        return f"""RESULT: PASS
-invoke_after: uv run python -m {module_path} --step {gate_step} --state-dir {state_dir} --qr-status pass"""
-    else:
-        return f"""RESULT: FAIL
-invoke_after: uv run python -m {module_path} --step {gate_step} --state-dir {state_dir} --qr-status fail"""
 
 
 def get_qr_iteration(state_dir: str, phase: str) -> int:

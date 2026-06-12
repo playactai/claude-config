@@ -58,6 +58,7 @@ def _unresolved_blocking_findings(state_dir: str, phase: str, iteration: int) ->
 def _build_iteration_limit_escalation(
     module_path: str,
     qr_name: str,
+    step: int,
     iteration: int,
     pass_step: int | None,
     state_dir: str,
@@ -95,9 +96,18 @@ def _build_iteration_limit_escalation(
             accept_cmd += f" --state-dir {shlex.quote(state_dir)}"
         parts.append(f"  Accept (proceed despite findings):\n    {accept_cmd}")
     else:
-        parts.append(
-            "  Accept (proceed despite findings): the plan is APPROVED as-is; proceed to execution."
+        # Terminal gate (planner, pass_step=None): "Accept" must FINALIZE the plan,
+        # not just print prose. Re-invoke THIS gate step with --accept-findings so
+        # build_gate_output forces a terminal pass and planner.main() renders plan.md
+        # + saves it to docs/plans/. --qr-status pass is REQUIRED -- the planner
+        # gate-step guard sys.exit(0)s before rendering when it is absent.
+        accept_cmd = (
+            f"cd {shlex.quote(str(SKILLS_DIR))} && uv run python -m {module_path} "
+            f"--step {step} --qr-status pass --accept-findings"
         )
+        if state_dir:
+            accept_cmd += f" --state-dir {shlex.quote(state_dir)}"
+        parts.append(f"  Accept (approve the plan as-is and finalize):\n    {accept_cmd}")
     parts.append("  Abort: stop here. Do NOT invoke a next step; report the findings to the user.")
     parts.append("")
     parts.append(
@@ -124,6 +134,7 @@ def build_gate_output(
     fix_target: AgentRole | None,
     state_dir: str,
     phase: str,
+    accept_findings: bool = False,
 ) -> GateResult:
     """Build complete gate step output for QR gates.
 
@@ -131,6 +142,10 @@ def build_gate_output(
     - pass_step: QR passed, proceed to next workflow phase
     - work_step: QR failed, loop back to fix issues
     - user escalation: QR still failing at the iteration ceiling
+
+    accept_findings is the user's explicit ceiling override (INTENT.md: user
+    authority is absolute): treat QR as passed despite unresolved findings, so a
+    terminal gate (pass_step=None) finalizes the plan instead of re-escalating.
     """
     # Severity-aware on-disk state is the single source of truth. The
     # agent-supplied qr.status (--qr-status) is a severity-blind PASS/FAIL
@@ -147,6 +162,14 @@ def build_gate_output(
         passed = qr.passed
         iteration = qr.iteration
 
+    # User accepted the findings AT THE CEILING: override to passed so the gate
+    # neither re-escalates nor loops, and a terminal gate finalizes the plan. Gated
+    # on the ceiling because the flag is only meaningful there (it is emitted solely
+    # by the iteration-limit escalation) -- so a stray or copied --accept-findings
+    # cannot silently pass a gate that has not yet exhausted its fix iterations.
+    if accept_findings and iteration >= QR_ITERATION_LIMIT:
+        passed = True
+
     # Iteration ceiling: de-escalation never drops MUST, so an unfixable MUST
     # blocks every iteration and the work -> verify -> route loop would run
     # forever. At the limit, hand control to the user instead of looping again.
@@ -154,6 +177,7 @@ def build_gate_output(
         return _build_iteration_limit_escalation(
             module_path=module_path,
             qr_name=qr_name,
+            step=step,
             iteration=iteration,
             pass_step=pass_step,
             state_dir=state_dir,

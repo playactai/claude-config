@@ -216,7 +216,6 @@ def init_step(title, actions):
         state_dir = tempfile.mkdtemp(prefix="planner-")
 
         plan_skeleton = {
-            "schema_version": 2,
             "overview": {"problem": "", "approach": ""},
             "planning_context": {
                 "decisions": [],
@@ -538,6 +537,7 @@ def qr_route_step(title, phase, work_step, pass_step, pass_message, fix_target=N
             fix_target=fix_target,
             state_dir=state_dir,
             phase=phase,
+            accept_findings=ctx.get("accept_findings", False),
         )
 
     handler.phase = phase
@@ -636,11 +636,12 @@ STEPS = {
 }
 
 
-def get_step_guidance(step: int, qr_status, state_dir) -> dict | str:
+def get_step_guidance(step: int, qr_status, state_dir, accept_findings=False) -> dict | str:
     """Returns guidance for a step.
 
     Iteration and fix mode derived from qr-{phase}.json file state.
     Phase derived from handler attribute set by step factory.
+    accept_findings is the user's ceiling override, consumed only by the route step.
     """
     from skills.planner.shared.qr.utils import get_qr_iteration, has_qr_failures
 
@@ -662,14 +663,17 @@ def get_step_guidance(step: int, qr_status, state_dir) -> dict | str:
         "step": step,
         "qr": qr,
         "state_dir": state_dir,
+        "accept_findings": accept_findings,
     }
 
     return handler(ctx)
 
 
-def format_output(step: int, qr_status, state_dir) -> str | GateResult:
+def format_output(step: int, qr_status, state_dir, accept_findings=False) -> str | GateResult:
     """Format output for display."""
-    guidance = get_step_guidance(step, qr_status, state_dir=state_dir)
+    guidance = get_step_guidance(
+        step, qr_status, state_dir=state_dir, accept_findings=accept_findings
+    )
 
     if isinstance(guidance, GateResult):
         return guidance
@@ -710,6 +714,12 @@ def main():
         "--state-dir", type=str, default=None, help="State directory path (for retry mode)"
     )
     add_qr_args(parser)
+    parser.add_argument(
+        "--accept-findings",
+        action="store_true",
+        help="User override at the QR iteration ceiling: approve the plan as-is and finalize "
+        "(render plan.md + save to docs/plans/) despite unresolved findings",
+    )
 
     args = parser.parse_args()
 
@@ -736,7 +746,9 @@ def main():
         print("based on the aggregated QR output from the previous step.")
         sys.exit(0)
 
-    result = format_output(args.step, args.qr_status, state_dir=args.state_dir)
+    result = format_output(
+        args.step, args.qr_status, state_dir=args.state_dir, accept_findings=args.accept_findings
+    )
 
     if isinstance(result, GateResult):
         # Why translate on terminal_pass: plan.json is the IR (modified by

@@ -242,6 +242,14 @@ if True:
             """
             errors = []
             decision_ids = {dl.id for dl in self.planning_context.decisions}
+            milestone_ids = {ms.id for ms in self.milestones}
+
+            # Waves are first-class milestone cross-references (executor IR): a wave
+            # listing a nonexistent milestone would silently drop it from execution.
+            for w in self.waves:
+                for mid in w.milestones:
+                    if mid not in milestone_ids:
+                        errors.append(f"wave {w.id} references unknown milestone '{mid}'")
 
             for ms in self.milestones:
                 for ci in ms.code_intents:

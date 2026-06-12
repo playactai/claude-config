@@ -36,7 +36,23 @@ class ImplDocsVerify(VerifyBase):
                     "  Read plan.json for IK and modified files:",
                     f"    cat {state_dir}/plan.json | jq '{{ik: .invisible_knowledge, milestones: .milestones[].files}}'",
                     "",
+                    "  Read documentation-only milestone deliverables (files + acceptance criteria):",
+                    f"    cat {state_dir}/plan.json | jq '.milestones[] | select(.is_documentation_only == true) | {{files, acceptance_criteria}}'",
+                    "",
                     "  Read CLAUDE.md and README.md files in modified directories.",
+                    "",
+                ]
+            )
+        elif scope.startswith("milestone:"):
+            ms_id = scope.split(":", 1)[1]
+            guidance.extend(
+                [
+                    f"MILESTONE CHECK - Focus on {ms_id}:",
+                    "",
+                    "  Extract the milestone (files + acceptance criteria):",
+                    f"    cat {state_dir}/plan.json | jq '.milestones[] | select(.id == \"{ms_id}\")'",
+                    "",
+                    "  Read the files this milestone authored and verify its acceptance criteria.",
                     "",
                 ]
             )
@@ -144,6 +160,17 @@ class ImplDocsVerify(VerifyBase):
                     "  Valid format: ':MARKER: [what]; [why]'",
                     "  - Must have semicolon",
                     "  - Must have non-empty why after semicolon",
+                    "",
+                ]
+            )
+        elif "deliverable" in check.lower() or "acceptance" in check.lower():
+            guidance.extend(
+                [
+                    "DOCUMENTATION-ONLY DELIVERABLE CHECK:",
+                    "  For the documentation-only milestone, read each file in its files[]",
+                    "  and confirm every acceptance criterion is satisfied by the authored docs.",
+                    "  - A milestone with NO acceptance_criteria is vacuously satisfied (PASS).",
+                    "  - FAIL a criterion only with concrete evidence it is unmet.",
                     "",
                 ]
             )

@@ -216,6 +216,64 @@ class TestGateSourceOfTruth:
         out = _gate(tmp_path, qr).output
         assert "GATE RESULT: PASS" in out
 
+    def test_explicit_fail_vetoes_pass_when_blocking_todo_remains(self, tmp_path: Path):
+        # Reviewer P1: a recorded but de-escalated SHOULD FAIL is NOT sufficient to
+        # upgrade --qr-status fail to a pass while a BLOCKING item is still unverified.
+        # iteration 4 blocks only MUST: the SHOULD FAIL de-escalated, yet the MUST item
+        # is TODO (its verifier returned FAIL before persisting). has_qr_failures reads
+        # False (no blocking FAIL) and a FAIL is on disk, so the severity-blind veto
+        # wrongly passed -- the blocking TODO must keep the gate failing.
+        _write_qr(
+            tmp_path,
+            "impl-code",
+            4,
+            [
+                {"id": "q1", "scope": "*", "check": "x", "status": "TODO", "severity": "MUST"},
+                {"id": "q2", "scope": "*", "check": "y", "status": "FAIL", "severity": "SHOULD"},
+            ],
+        )
+        qr = QRState(iteration=4, state=LoopState.RETRY, status=QRStatus.FAIL)
+        out = _gate(tmp_path, qr).output
+        assert "GATE RESULT: FAIL" in out
+        assert "--step 2" in out  # routes back to re-verify, does not finalize
+
+    def test_blocking_todo_vetoes_pass_despite_status_pass(self, tmp_path: Path):
+        # Same root cause via the other input: the aggregator is the LLM, which emits
+        # --qr-status pass when no agent returned FAIL. A verifier that crashed before
+        # persisting leaves its MUST at TODO with no FAIL recorded, so the LLM tallies
+        # pass. has_qr_failures reads False (no blocking FAIL) and the explicit-fail
+        # veto never runs (status is PASS) -- the unverified blocking MUST must still
+        # fail the gate.
+        _write_qr(
+            tmp_path,
+            "impl-code",
+            4,
+            [{"id": "q1", "scope": "*", "check": "x", "status": "TODO", "severity": "MUST"}],
+        )
+        qr = QRState(iteration=4, state=LoopState.INITIAL, status=QRStatus.PASS)
+        out = _gate(tmp_path, qr).output
+        assert "GATE RESULT: FAIL" in out
+        assert "--step 2" in out  # routes back to re-verify, does not finalize
+
+    def test_blocking_todo_veto_respects_deescalation_threshold(self, tmp_path: Path):
+        # The veto must use the SAME blocking-severity threshold as the verify dispatch:
+        # at iteration 4 only MUST blocks, so a SHOULD left at TODO (never dispatched for
+        # verification) is not unfinished blocking work and must NOT veto a genuine
+        # de-escalated pass. Guards _has_blocking_todo against regressing to a
+        # severity-blind TODO match.
+        _write_qr(
+            tmp_path,
+            "impl-code",
+            4,
+            [
+                {"id": "q1", "scope": "*", "check": "x", "status": "PASS", "severity": "MUST"},
+                {"id": "q2", "scope": "*", "check": "y", "status": "TODO", "severity": "SHOULD"},
+            ],
+        )
+        qr = QRState(iteration=4, state=LoopState.INITIAL, status=QRStatus.PASS)
+        out = _gate(tmp_path, qr).output
+        assert "GATE RESULT: PASS" in out
+
 
 # --- Bug #2: enforced iteration ceiling with user escalation -----------------
 class TestGateIterationCap:
@@ -254,6 +312,23 @@ class TestGateIterationCap:
         out = _gate(tmp_path, qr).output
         assert "ITERATION LIMIT" not in out
         assert "--step 2" in out  # still loops to the fixer
+
+    def test_blocking_todo_escalates_at_iteration_limit(self, tmp_path: Path):
+        # A blocking MUST stuck at TODO at the ceiling must escalate to the user, not
+        # auto-loop -- the blocking-TODO veto flips passed=False and the ceiling check
+        # takes over, same as an unfixable MUST FAIL. Reached via --qr-status pass (the
+        # LLM tally emits pass when no agent returned FAIL).
+        _write_qr(
+            tmp_path,
+            "impl-code",
+            QR_ITERATION_LIMIT,
+            [{"id": "q1", "scope": "*", "check": "x", "status": "TODO", "severity": "MUST"}],
+        )
+        qr = QRState(iteration=QR_ITERATION_LIMIT, state=LoopState.INITIAL, status=QRStatus.PASS)
+        res = _gate(tmp_path, qr)
+        assert "ITERATION LIMIT" in res.output
+        assert "--step 2" not in res.output  # escalates, does not auto-loop to the fixer
+        assert res.terminal_pass is False
 
 
 # --- Bug #10: batch is all-or-nothing and rejects duplicate ids -------------

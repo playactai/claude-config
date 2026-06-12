@@ -70,6 +70,24 @@ def _has_recorded_failure(state_dir: str, phase: str) -> bool:
     return bool(query_items(qr_state, by_status("FAIL")))
 
 
+def _has_blocking_todo(state_dir: str, phase: str) -> bool:
+    """True when qr-{phase}.json still has an unverified item that blocks now.
+
+    Mirrors has_qr_failures' shape (load state, read iteration from the file, filter
+    by status + the iteration's blocking-severity set) but matches TODO rather than
+    FAIL: a blocking item whose verdict was never recorded. has_qr_failures counts
+    only blocking FAIL, so a blocking MUST left at TODO (its verifier returned FAIL or
+    crashed before persisting the item) is unfinished blocking work the gate would
+    otherwise pass -- via the de-escalation veto (--qr-status fail) or the LLM tally
+    (--qr-status pass). An unverified blocking item is never a pass.
+    """
+    qr_state = load_qr_state(state_dir, phase)
+    if not qr_state:
+        return False
+    iteration = qr_state.get("iteration", 1)
+    return bool(query_items(qr_state, by_status("TODO"), by_blocking_severity(iteration)))
+
+
 def _build_iteration_limit_escalation(
     module_path: str,
     qr_name: str,
@@ -231,6 +249,15 @@ def build_gate_output(
             and qr.status == QRStatus.FAIL
             and not _has_recorded_failure(state_dir, phase)
         ):
+            passed = False
+        # A blocking item still at TODO is unverified blocking work, not a pass --
+        # has_qr_failures counts only blocking FAIL, so it misses a blocking MUST whose
+        # verifier returned FAIL/crashed before persisting. status-blind so it closes
+        # both the --qr-status fail de-escalation veto above and the --qr-status pass
+        # LLM tally. The fail routes to the work step, where re-verify re-dispatches the
+        # still-TODO item, so a transient verifier crash self-heals next pass; the loop is
+        # intentionally un-ceilinged (iteration advances only on a recorded blocking FAIL).
+        if passed and _has_blocking_todo(state_dir, phase):
             passed = False
     else:
         passed = qr.passed

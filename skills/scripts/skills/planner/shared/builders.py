@@ -32,11 +32,45 @@ SCRIPT_MODE_RULES = (
     "The script tells the sub-agent what to do. You just invoke it."
 )
 
+# The QR-verify AGGREGATE-step forbidden items, shared by both orchestrators.
+# Single source of truth: the planner and executor inline copies had drifted (the
+# executor copy dropped the two plan-state lines), the exact silent divergence one
+# SSOT removes. Both plan-state lines only restate the orchestrator's standing
+# Read/Edit/Write prohibition, so this superset is behavior-safe in every phase.
+QR_VERIFY_FORBIDDEN = (
+    "Interpreting results beyond PASS/FAIL tallying",
+    "Claiming 'diminishing returns' or 'comprehensive enough'",
+    "Reading plan.json or any state files",
+    "Writing, rendering, or summarizing the plan",
+    "Skipping the next step command",
+    "Proceeding to a later step without QR PASS",
+)
+
+
+def shell_quote(path: str | None) -> str:
+    """Shell-quote a path for safe interpolation into an emitted command string.
+
+    Prevents breakage on paths with spaces and blocks copy/paste shell injection
+    via a metacharacter-bearing state_dir; an absent path renders as an explicit
+    '' rather than a bare gap. Single owner for planner.py, executor.py, and
+    gates.py, which had drifted -- executor/gates quoted, planner did not (audit
+    §4: "planner interpolates state_dir ... without shlex.quote").
+    """
+    return shlex.quote(path) if path else "''"
+
 
 def format_forbidden(*items: str) -> str:
     """Forbidden block. Dynamic args because each gate has different items."""
     lines = "\n".join(f"  - {item}" for item in items)
     return f"FORBIDDEN:\n{lines}"
+
+
+def format_qr_verify_forbidden() -> str:
+    """QR-verify AGGREGATE-step forbidden block (QR_VERIFY_FORBIDDEN superset).
+
+    Both orchestrators call this so the list cannot drift again.
+    """
+    return format_forbidden(*QR_VERIFY_FORBIDDEN)
 
 
 def format_gate_result(passed: bool) -> str:
@@ -48,14 +82,17 @@ def format_gate_result(passed: bool) -> str:
     return "GATE RESULT: PASS" if passed else "GATE RESULT: FAIL"
 
 
-def build_qr_verify_dispatch(verify_script: str, state_dir: str, items: list[dict]) -> tuple[str, int]:
+def build_qr_verify_dispatch(
+    verify_script: str, phase: str, state_dir: str, items: list[dict]
+) -> tuple[str, int]:
     """Build the parallel QR-verify template_dispatch shared by planner + executor.
 
     Single owner of the verify fan-out shape: the balanced-group cap scheme, the
-    display-only vg-NNN labels, shell-quoting of the --qr-item flags and the
-    --state-dir, the checks_summary truncation, and the pinned "Start:" command.
-    Returns (dispatch_text, group_count); each orchestrator appends its own
-    PHASE 1/PHASE 2 aggregation prose (which legitimately differ).
+    display-only vg-NNN labels, the injected --phase, shell-quoting of the
+    --qr-item flags and the --state-dir, the checks_summary truncation, and the
+    pinned "Start:" command. Returns (dispatch_text, group_count); each
+    orchestrator appends its own PHASE 1/PHASE 2 aggregation prose (which
+    legitimately differ).
 
     Extracted because the two inlined copies had already drifted -- the planner
     copy interpolated item ids and state_dir unquoted while the executor copy
@@ -79,8 +116,8 @@ def build_qr_verify_dispatch(verify_script: str, state_dir: str, items: list[dic
         for idx, group_items in enumerate(balanced, 1)
     ]
 
-    sd = shlex.quote(state_dir) if state_dir else "''"
-    base_cmd = f"uv run python -m {verify_script} --step 1 --state-dir {sd} $qr_item_flags"
+    sd = shell_quote(state_dir)
+    base_cmd = f"uv run python -m {verify_script} --step 1 --phase {phase} --state-dir {sd} $qr_item_flags"
     # pin_cwd: the prose "Start:" line is a command the agent may copy and run
     # directly, so it carries the absolute cd the invoke block already has --
     # otherwise a drifted cwd yields "No module named 'skills'".

@@ -44,7 +44,7 @@ from skills.planner.cli import qr as qr_cli
 from skills.planner.cli.dispatch import batch, discover_methods
 from skills.planner.orchestrator import executor as executor_orch
 from skills.planner.orchestrator import planner as planner_orch
-from skills.planner.quality_reviewer.impl_code_qr_verify import ImplCodeVerify
+from skills.planner.quality_reviewer.prompts.content import ImplCodeVerify
 from skills.planner.quality_reviewer.prompts.decompose import dispatch_step, format_assign_cmd
 from skills.planner.quality_reviewer.qr_verify_base import (
     _record_verify_result,
@@ -423,30 +423,29 @@ class TestExecContextOptional:
         )
         guidance = ImplCodeVerify().get_step_guidance(
             1,
-            "skills.planner.quality_reviewer.impl_code_qr_verify",
+            "skills.planner.quality_reviewer.qr_verify",
             state_dir=str(tmp_path),
             qr_item=["qa-001"],
         )
         assert "No planning context.json" in "\n".join(guidance["actions"])
 
 
-# Every verify entry point shares VerifyBase._step_confirm, which now emits the
-# self-recording `--result` command -- so all three must route through verify_main.
-_VERIFY_MODULES = [
-    ("skills.planner.quality_reviewer.plan_design_qr_verify", "plan-design"),
-    ("skills.planner.quality_reviewer.impl_code_qr_verify", "impl-code"),
-    ("skills.planner.quality_reviewer.impl_docs_qr_verify", "impl-docs"),
-]
+# The single verify runner serves every phase via --phase; its _step_confirm
+# emits the self-recording `--result` command, so it must route through
+# verify_main (not mode_main). Parametrized over phases to keep the per-phase
+# coverage the three old modules had.
+_VERIFY_MODULE = "skills.planner.quality_reviewer.qr_verify"
+_VERIFY_PHASES = ["plan-design", "impl-code", "impl-docs"]
 
 
 # --- NEW-C: verify scripts record verdicts via their own --result flag --------
 class TestVerifyResultRecording:
-    @pytest.mark.parametrize("module,phase", _VERIFY_MODULES)
-    def test_every_verify_script_accepts_result_flag(self, tmp_path: Path, module, phase):
-        """All verify entry points (plan-design + impl-*) must accept --result.
+    @pytest.mark.parametrize("phase", _VERIFY_PHASES)
+    def test_every_verify_script_accepts_result_flag(self, tmp_path: Path, phase):
+        """The verify runner must accept --result for every phase.
 
         _step_confirm emits the self-recording `--result` command for every
-        phase, so every verify __main__ must route through verify_main (not
+        phase, so the verify __main__ must route through verify_main (not
         mode_main, which hard-fails with 'unrecognized arguments: --result' --
         the NEW-C footgun).
         """
@@ -460,7 +459,9 @@ class TestVerifyResultRecording:
             [
                 sys.executable,
                 "-m",
-                module,
+                _VERIFY_MODULE,
+                "--phase",
+                phase,
                 "--step",
                 "3",
                 "--state-dir",
@@ -528,7 +529,7 @@ class TestVerifyResultRecording:
         )
         guidance = ImplCodeVerify().get_step_guidance(
             3,
-            "skills.planner.quality_reviewer.impl_code_qr_verify",
+            "skills.planner.quality_reviewer.qr_verify",
             state_dir=str(tmp_path),
             qr_item=["qa-001"],
         )

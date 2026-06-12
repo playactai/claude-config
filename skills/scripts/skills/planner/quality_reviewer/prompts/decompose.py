@@ -27,6 +27,7 @@ import json
 from pathlib import Path
 
 from skills.lib.workflow.prompts import pin_cwd
+from skills.planner.shared.builders import shell_quote
 from skills.planner.shared.qr.phases import is_execution_phase
 from skills.planner.shared.qr.utils import load_qr_state
 from skills.planner.shared.resources import get_context_path, render_context_file
@@ -77,7 +78,7 @@ def format_assign_cmd(state_dir: str, phase: str, prefix: str) -> str:
     absolute cd -- a bare `uv run python -m skills...` fails from a drifted cwd.
     """
     cmd = pin_cwd(
-        f"uv run python -m skills.planner.cli.qr --state-dir {state_dir} --qr-phase {phase} "
+        f"uv run python -m skills.planner.cli.qr --state-dir {shell_quote(state_dir)} --qr-phase {phase} "
         f"assign-group <item_id> --group-id {prefix}<name>"
     )
     return f"OUTPUT:\n  {cmd}"
@@ -208,10 +209,11 @@ def dispatch_step(
     Returns:
         Dict with title, actions, next keys
     """
-    state_dir_arg = f" --state-dir {state_dir}" if state_dir else ""
+    state_dir_arg = f" --state-dir {shell_quote(state_dir)}" if state_dir else ""
+    phase_arg = f" --phase {phase}"
 
     def next_cmd(s):
-        return f"uv run python -m {module_path} --step {s}{state_dir_arg}"
+        return f"uv run python -m {module_path} --step {s}{phase_arg}{state_dir_arg}"
 
     # Step 1: Absorb context (phase-specific)
     if step == 1:
@@ -413,7 +415,7 @@ def step_9_structural_grouping(state_dir: str, phase: str, module_path: str) -> 
 
     # pin_cwd: copy-run command needs the absolute cd (drifted-cwd safety).
     assign_cmd = pin_cwd(
-        f"uv run python -m skills.planner.cli.qr --state-dir {state_dir} --qr-phase {phase} "
+        f"uv run python -m skills.planner.cli.qr --state-dir {shell_quote(state_dir)} --qr-phase {phase} "
         "assign-group <item_id> --group-id <group_id>"
     )
     return {
@@ -437,7 +439,7 @@ def step_9_structural_grouping(state_dir: str, phase: str, module_path: str) -> 
             "Execute via CLI:",
             f"  {assign_cmd}",
         ],
-        "next": f"uv run python -m {module_path} --step 10 --state-dir {state_dir}",
+        "next": f"uv run python -m {module_path} --step 10 --phase {phase} --state-dir {shell_quote(state_dir)}",
     }
 
 
@@ -482,7 +484,7 @@ def step_10_component_grouping(
             "",
             f"If no component groups: # No component groups. {len(ungrouped)} items to Phase 2.",
         ],
-        "next": f"uv run python -m {module_path} --step 11 --state-dir {state_dir}",
+        "next": f"uv run python -m {module_path} --step 11 --phase {phase} --state-dir {shell_quote(state_dir)}",
     }
 
 
@@ -522,7 +524,7 @@ def step_11_concern_grouping(
             "",
             format_assign_cmd(state_dir, phase, "concern-"),
         ],
-        "next": f"uv run python -m {module_path} --step 12 --state-dir {state_dir}",
+        "next": f"uv run python -m {module_path} --step 12 --phase {phase} --state-dir {shell_quote(state_dir)}",
     }
 
 
@@ -556,7 +558,7 @@ def step_12_affinity_grouping(state_dir: str, phase: str, module_path: str) -> d
             "",
             "Remaining ungrouped items become singletons.",
         ],
-        "next": f"uv run python -m {module_path} --step 13 --state-dir {state_dir}",
+        "next": f"uv run python -m {module_path} --step 13 --phase {phase} --state-dir {shell_quote(state_dir)}",
     }
 
 

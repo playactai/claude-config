@@ -35,7 +35,12 @@ from abc import ABC, abstractmethod
 from typing import ClassVar
 
 from skills.lib.workflow.prompts import pin_cwd
-from skills.planner.shared.qr.phases import get_phase_config, is_execution_phase
+from skills.planner.shared.builders import shell_quote
+from skills.planner.shared.qr.phases import (
+    get_all_phases,
+    get_phase_config,
+    is_execution_phase,
+)
 from skills.planner.shared.qr.utils import (
     format_qr_item_for_verification,
     get_qr_item,
@@ -139,7 +144,8 @@ class VerifyBase(ABC):
     ) -> dict:
         """Step 1: Load conventions, phase rules, context.json, plan.json. List all items."""
         assert self.PHASE is not None
-        state_dir_arg = f" --state-dir {state_dir}"
+        state_dir_arg = f" --state-dir {shell_quote(state_dir)}"
+        phase_arg = f" --phase {self.PHASE}"
         item_flags = " ".join(f"--qr-item {id}" for id in item_ids)
 
         # Execution-phase (impl-*) state dirs have no context.json (the executor
@@ -191,7 +197,7 @@ class VerifyBase(ABC):
                 "Note the scope: '*' means macro check, 'file:path:lines' means specific location.",
                 "Severity indicates blocking behavior: MUST blocks all iterations, SHOULD blocks 1-3, COULD blocks 1-2.",
             ],
-            "next": f"uv run python -m {module_path} --step 2{state_dir_arg} {item_flags}",
+            "next": f"uv run python -m {module_path} --step 2{phase_arg}{state_dir_arg} {item_flags}",
         }
 
     def _step_analyze(
@@ -199,7 +205,8 @@ class VerifyBase(ABC):
     ) -> dict:
         """ANALYZE step: Explore codebase if needed, analyze item, form preliminary conclusion."""
         assert self.PHASE is not None
-        state_dir_arg = f" --state-dir {state_dir}"
+        state_dir_arg = f" --state-dir {shell_quote(state_dir)}"
+        phase_arg = f" --phase {self.PHASE}"
         item_flags = " ".join(f"--qr-item {id}" for id in item_ids)
         current_step = 2 + (item_idx * 2)  # ANALYZE is first of the pair
 
@@ -243,7 +250,7 @@ class VerifyBase(ABC):
                 "",
                 "DO NOT update qr state yet. Proceed to CONFIRM step.",
             ],
-            "next": f"uv run python -m {module_path} --step {current_step + 1}{state_dir_arg} {item_flags}",
+            "next": f"uv run python -m {module_path} --step {current_step + 1}{phase_arg}{state_dir_arg} {item_flags}",
         }
 
     def _step_confirm(
@@ -251,7 +258,8 @@ class VerifyBase(ABC):
     ) -> dict:
         """CONFIRM step: Verify confidence, record result via cli/qr.py."""
         assert self.PHASE is not None
-        state_dir_arg = f" --state-dir {state_dir}"
+        state_dir_arg = f" --state-dir {shell_quote(state_dir)}"
+        phase_arg = f" --phase {self.PHASE}"
         item_flags = " ".join(f"--qr-item {id}" for id in item_ids)
         current_step = 2 + (item_idx * 2) + 1  # CONFIRM is second of the pair
 
@@ -260,18 +268,13 @@ class VerifyBase(ABC):
         item = get_qr_item(qr_state, item_id) if qr_state else None
         severity = item.get("severity", "SHOULD") if item else "SHOULD"
 
-        # Determine next step
+        # Next step is the next item's ANALYZE, or SUMMARY if this was the last
+        # item -- both are current_step + 1 in the linear step sequence, so the
+        # command is identical either way (one assignment, no dead branch).
         next_step = current_step + 1
-        if item_idx + 1 < len(item_ids):
-            # More items to process
-            next_action = (
-                f"uv run python -m {module_path} --step {next_step}{state_dir_arg} {item_flags}"
-            )
-        else:
-            # This was the last item, proceed to SUMMARY
-            next_action = (
-                f"uv run python -m {module_path} --step {next_step}{state_dir_arg} {item_flags}"
-            )
+        next_action = (
+            f"uv run python -m {module_path} --step {next_step}{phase_arg}{state_dir_arg} {item_flags}"
+        )
 
         # Record the verdict via THIS script's --result flag (verify_main routes
         # it to cli.qr's locked update). One tool instead of two: the agent
@@ -279,7 +282,7 @@ class VerifyBase(ABC):
         # natural guess succeeds (audit §3b NEW-C). --step pins which grouped
         # item the verdict applies to; pin_cwd keeps it cwd-independent.
         record_base = (
-            f"uv run python -m {module_path} --step {current_step}{state_dir_arg} {item_flags}"
+            f"uv run python -m {module_path} --step {current_step}{phase_arg}{state_dir_arg} {item_flags}"
         )
         record_pass = pin_cwd(f"{record_base} --result PASS")
         record_fail = pin_cwd(f"{record_base} --result FAIL --finding '<one-line explanation>'")
@@ -421,16 +424,18 @@ def _record_verify_result(
     cmd_update_item(state_dir, phase, update_args)
 
 
-def verify_main(script_file: str, get_step_guidance, description: str, phase: str) -> None:
-    """Entry point for QR verify scripts: mode_main plus a result-recording path.
+def verify_main(script_file: str, get_step_guidance, description: str) -> None:
+    """Entry point for the QR verify runner: mode_main plus a result-recording path.
 
-    Without a result flag this behaves like lib.workflow.cli.mode_main: parse
-    --step/--state-dir/--qr-item, route to the step handler, render via the
-    shared render_step. With --result/--status PASS|FAIL (optionally --finding),
-    it records the verdict directly and exits, so an agent appending the verdict
-    to the verify command succeeds instead of erroring with 'unrecognized
-    arguments' (audit §3b NEW-C). The CONFIRM step's own NEXT STEP pointer (read
-    before recording) carries the agent onward.
+    --phase selects the phase (the verifier and the qr-{phase}.json file) and is
+    threaded through the emitted next/record commands, so a single runner serves
+    all phases. Without a result flag this behaves like lib.workflow.cli.mode_main:
+    parse --step/--phase/--state-dir/--qr-item, route to the step handler, render
+    via render_step. With --result/--status PASS|FAIL (optionally --finding), it
+    records the verdict directly and exits, so an agent appending the verdict to
+    the verify command succeeds instead of erroring with 'unrecognized arguments'
+    (audit §3b NEW-C). The CONFIRM step's own NEXT STEP pointer (read before
+    recording) carries the agent onward.
     """
     import argparse
 
@@ -438,6 +443,13 @@ def verify_main(script_file: str, get_step_guidance, description: str, phase: st
 
     parser = argparse.ArgumentParser(description=description)
     parser.add_argument("--step", type=int, default=None)
+    parser.add_argument(
+        "--phase",
+        type=str,
+        required=True,
+        choices=get_all_phases(),
+        help="QR phase (selects the verifier and the qr-{phase}.json file)",
+    )
     parser.add_argument("--state-dir", type=str, default=None)
     parser.add_argument("--qr-item", action="append")
     parser.add_argument(
@@ -453,7 +465,12 @@ def verify_main(script_file: str, get_step_guidance, description: str, phase: st
 
     if parsed.result is not None:
         _record_verify_result(
-            phase, parsed.step, parsed.state_dir, parsed.qr_item, parsed.result, parsed.finding
+            parsed.phase,
+            parsed.step,
+            parsed.state_dir,
+            parsed.qr_item,
+            parsed.result,
+            parsed.finding,
         )
         return
 
@@ -464,6 +481,7 @@ def verify_main(script_file: str, get_step_guidance, description: str, phase: st
     guidance = get_step_guidance(
         parsed.step,
         module_path,
+        phase=parsed.phase,
         state_dir=parsed.state_dir or "",
         qr_item=parsed.qr_item,
     )

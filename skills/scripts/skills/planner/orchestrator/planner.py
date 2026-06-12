@@ -37,7 +37,8 @@ from skills.lib.workflow.types import AgentRole
 from skills.planner.shared.builders import (
     THINKING_EFFICIENCY,
     build_qr_verify_dispatch,
-    format_forbidden,
+    format_qr_verify_forbidden,
+    shell_quote,
 )
 from skills.planner.shared.constraints import (
     ORCHESTRATOR_CONSTRAINT_EXTENDED,
@@ -185,7 +186,7 @@ def _build_fix_mode_output(title, agent, agent_role, script, mode_total_steps, q
     action_children.append("")
 
     mode_script = get_mode_script_path(script)
-    invoke_cmd = f"uv run python -m {mode_script} --step 1 --state-dir {state_dir}"
+    invoke_cmd = f"uv run python -m {mode_script} --step 1 --state-dir {shell_quote(state_dir)}"
 
     dispatch_prompt = subagent_dispatch(
         agent_type=agent,
@@ -197,7 +198,7 @@ def _build_fix_mode_output(title, agent, agent_role, script, mode_total_steps, q
     action_children.append("After fixes complete, re-run QR for fresh verification.")
 
     next_step = ctx["step"] + 1
-    next_cmd = f"uv run python -m {MODULE_PATH} --step {next_step} --state-dir {state_dir}"
+    next_cmd = f"uv run python -m {MODULE_PATH} --step {next_step} --state-dir {shell_quote(state_dir)}"
 
     return {
         "title": f"{title} - Fix Mode",
@@ -243,7 +244,7 @@ def init_step(title, actions):
         return {
             "title": title,
             "actions": actions,
-            "next": f"uv run python -m {MODULE_PATH} --step 2 --state-dir {state_dir}",
+            "next": f"uv run python -m {MODULE_PATH} --step 2 --state-dir {shell_quote(state_dir)}",
         }
 
     return handler
@@ -262,7 +263,7 @@ def verify_step(title, actions):
         return {
             "title": title,
             "actions": actions,
-            "next": f"uv run python -m {MODULE_PATH} --step 3 --state-dir {state_dir}",
+            "next": f"uv run python -m {MODULE_PATH} --step 3 --state-dir {shell_quote(state_dir)}",
         }
 
     return handler
@@ -293,7 +294,7 @@ def execute_dispatch_step(
         action_children.append("")
 
         mode_script = get_mode_script_path(script)
-        invoke_cmd = f"uv run python -m {mode_script} --step 1 --state-dir {state_dir}"
+        invoke_cmd = f"uv run python -m {mode_script} --step 1 --state-dir {shell_quote(state_dir)}"
 
         dispatch_prompt = subagent_dispatch(
             agent_type=agent,
@@ -306,7 +307,7 @@ def execute_dispatch_step(
             action_children.extend(post_dispatch)
 
         next_step = step + 1
-        next_cmd = f"uv run python -m {MODULE_PATH} --step {next_step} --state-dir {state_dir}"
+        next_cmd = f"uv run python -m {MODULE_PATH} --step {next_step} --state-dir {shell_quote(state_dir)}"
 
         return {
             "title": title,
@@ -341,7 +342,7 @@ def qr_decompose_step(title, phase, script, model=None):
                     f"QR items for {phase} already defined.",
                     "Proceeding to verification of existing items.",
                 ],
-                "next": f"uv run python -m {MODULE_PATH} --step {verify_step} --state-dir {state_dir}",
+                "next": f"uv run python -m {MODULE_PATH} --step {verify_step} --state-dir {shell_quote(state_dir)}",
             }
 
         action_children = []
@@ -354,7 +355,10 @@ def qr_decompose_step(title, phase, script, model=None):
         action_children.append("")
 
         mode_script = get_mode_script_path(script)
-        invoke_cmd = f"uv run python -m {mode_script} --step 1 --state-dir {state_dir}"
+        invoke_cmd = (
+            f"uv run python -m {mode_script} --step 1 --phase {phase} "
+            f"--state-dir {shell_quote(state_dir)}"
+        )
 
         dispatch_prompt = subagent_dispatch(
             agent_type="quality-reviewer",
@@ -368,7 +372,7 @@ def qr_decompose_step(title, phase, script, model=None):
         action_children.append("Orchestrator generates verification dispatch from this file.")
 
         next_step = step + 1
-        next_cmd = f"uv run python -m {MODULE_PATH} --step {next_step} --state-dir {state_dir}"
+        next_cmd = f"uv run python -m {MODULE_PATH} --step {next_step} --state-dir {shell_quote(state_dir)}"
 
         return {
             "title": title,
@@ -426,8 +430,8 @@ def qr_verify_step(title, phase):
             return {
                 "title": title,
                 "actions": ["All items already verified. Proceeding with pass."],
-                "if_pass": f"uv run python -m {MODULE_PATH} --step {next_step} --state-dir {state_dir} --qr-status pass",
-                "if_fail": f"uv run python -m {MODULE_PATH} --step {next_step} --state-dir {state_dir} --qr-status pass",
+                "if_pass": f"uv run python -m {MODULE_PATH} --step {next_step} --state-dir {shell_quote(state_dir)} --qr-status pass",
+                "if_fail": f"uv run python -m {MODULE_PATH} --step {next_step} --state-dir {shell_quote(state_dir)} --qr-status pass",
             }
 
         config = get_phase_config(phase)
@@ -436,7 +440,7 @@ def qr_verify_step(title, phase):
         # Re-bin items into balanced, capped parallel groups and build the dispatch
         # (shared with executor.py via build_qr_verify_dispatch -- one owner for the
         # cap scheme, vg-NNN labels, shell-quoting, and the pinned Start: command).
-        dispatch_text, group_count = build_qr_verify_dispatch(verify_script, state_dir, items)
+        dispatch_text, group_count = build_qr_verify_dispatch(verify_script, phase, state_dir, items)
 
         action_children = [
             ORCHESTRATOR_CONSTRAINT_EXTENDED,
@@ -453,18 +457,11 @@ def qr_verify_step(title, phase):
             "  ALL agents returned PASS  ->  invoke next step with --qr-status pass",
             "  ANY agent returned FAIL   ->  invoke next step with --qr-status fail",
             "",
-            format_forbidden(
-                "Interpreting results beyond PASS/FAIL tallying",
-                "Claiming 'diminishing returns' or 'comprehensive enough'",
-                "Reading plan.json or any state files",
-                "Writing, rendering, or summarizing the plan",
-                "Skipping the next step command",
-                "Proceeding to a later step without QR PASS",
-            ),
+            format_qr_verify_forbidden(),
         ]
 
         next_step = step + 1
-        base_cmd = f"uv run python -m {MODULE_PATH} --step {next_step} --state-dir {state_dir}"
+        base_cmd = f"uv run python -m {MODULE_PATH} --step {next_step} --state-dir {shell_quote(state_dir)}"
 
         return {
             "title": title,
@@ -581,7 +578,7 @@ STEPS = {
     4: qr_decompose_step(
         title="plan-design-qr-decompose",
         phase="plan-design",
-        script="quality_reviewer/plan_design_qr_decompose.py",
+        script="quality_reviewer/qr_decompose.py",
         model="opus",
     ),
     5: qr_verify_step(

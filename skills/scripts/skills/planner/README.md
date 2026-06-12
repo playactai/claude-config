@@ -29,37 +29,35 @@ All state mutations (except initial context.json) happen via Python CLI commands
 
 ```
 Plan
-  schema_version: 2
-  plan_id: UUID
-  created_at: timestamp
+  plan_id: UUID                      (auto)
+  created_at: ISO-8601 timestamp     (auto)
   frozen_at: Optional[timestamp]
 
   overview:
-    title, problem, approach
+    problem, approach
 
   planning_context:
-    decision_log[]: id (DL-XXX), decision, reasoning_chain, timestamp
+    decisions[]: id (DL-XXX), version, decision, reasoning   (input alias: decision_log; reasoning <- reasoning_chain)
     rejected_alternatives[]: id (RA-XXX), alternative, rejection_reason, decision_ref
-    constraints[]: id (C-XXX), type, description, source
-    known_risks[]: id (R-XXX), risk, mitigation, anchor?, decision_ref?
+    constraints[]: plain strings (no IDs/types)
+    risks[]: id (R-XXX), risk, mitigation, anchor?, decision_ref?   (input alias: known_risks)
 
   invisible_knowledge:
-    architecture: {diagram_ascii, description}
-    data_flow: {diagram_ascii, description}
-    structure_rationale, invariants[], tradeoffs[]
+    system, invariants[], tradeoffs[]   (diagrams live in diagram_graphs, not here)
 
   milestones[]:
-    id (M-XXX), number, name, files[], flags[], requirements[], acceptance_criteria[]
-    tests: files[], type?, backing?, scenarios{normal[], edge[], error[]}, skip_reason?
-    code_intents[]: id (CI-XXX), file, function?, behavior, decision_refs[]
+    id (M-XXX), version, number, name, files[], flags[], requirements[], acceptance_criteria[]
+    tests[]: flat list of free-form descriptions
+    code_intents[]: id (CI-XXX), version, file, function?, behavior, decision_refs[]
     is_documentation_only, delegated_to?
 
-  milestone_dependencies:
-    diagram_ascii
-    waves[]: wave number, milestones[]
+  waves[]: id (W-XXX), milestones[]   (top-level; no separate milestone_dependencies block)
+  diagram_graphs[]: id (DIAG-XXX), type, scope, title, nodes[], edges[], ascii_render?
 ```
 
-Reference integrity: code_intent.decision_refs -> decision_log.id
+Reference integrity: code_intent.decision_refs -> decisions[].id.
+Authoritative schema: `resources/plan-json-schema.md` (mirrors `shared/schema.py`).
+No `schema_version` field -- state files are ephemeral (one planning session).
 
 ### context.json Schema
 
@@ -84,8 +82,8 @@ Phases: `qr-plan-design`, `qr-impl-code`, `qr-impl-docs`
 
 ```json
 {
-  "schema_version": "1.0",
   "phase": "plan-design",
+  "iteration": 1,
   "items": [
     {
       "id": "qa-001",
@@ -153,13 +151,11 @@ technical_writer/
   exec_docs.py    Post-implementation docs (inline comments, docstrings, CLAUDE.md, README)
 
 quality_reviewer/
-  plan_design_qr_decompose.py  Plan completeness decompose
-  plan_design_qr_verify.py     Plan completeness verify
-  impl_code_qr_decompose.py    Post-impl code review decompose
-  impl_code_qr_verify.py       Post-impl code review verify
-  impl_docs_qr_decompose.py    Post-impl docs review decompose
-  impl_docs_qr_verify.py       Post-impl docs review verify
-  qr_verify_base.py            VerifyBase ABC
+  qr_decompose.py              QR decompose runner (--phase plan-design|impl-code|impl-docs)
+  qr_verify.py                 QR verify runner (--phase ...)
+  qr_verify_base.py            VerifyBase ABC + verify_main
+  prompts/content.py           Per-phase decompose prompts + verifier classes
+  prompts/decompose.py         Shared 13-step decompose flow (dispatch_step)
 
 shared/
   resources.py    Path derivation, context loading

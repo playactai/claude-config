@@ -23,7 +23,6 @@ QR Block Pattern (matching planner's 4-step pattern per phase):
 
 import argparse
 import json
-import shlex
 import sys
 import tempfile
 from pathlib import Path
@@ -34,7 +33,8 @@ from skills.lib.workflow.types import AgentRole
 from skills.planner.shared.builders import (
     THINKING_EFFICIENCY,
     build_qr_verify_dispatch,
-    format_forbidden,
+    format_qr_verify_forbidden,
+    shell_quote,
 )
 from skills.planner.shared.constraints import (
     ORCHESTRATOR_CONSTRAINT,
@@ -58,15 +58,6 @@ from skills.planner.shared.resources import get_mode_script_path
 
 # Module path for -m invocation
 MODULE_PATH = "skills.planner.orchestrator.executor"
-
-
-def _q(path: str | None) -> str:
-    """Shell-quote a path for safe interpolation into command strings.
-
-    Prevents breakage on paths with spaces and mitigates copy/paste injection
-    via user-controlled state_dir values (Qodo review #2).
-    """
-    return shlex.quote(path) if path else "''"
 
 
 # =============================================================================
@@ -135,7 +126,7 @@ def format_step_1(state_dir: str, reconciliation_check: bool) -> str:
         )
 
     body = "\n".join(actions)
-    next_cmd = f"uv run python -m {MODULE_PATH} --step 2 --state-dir {_q(state_dir)}"
+    next_cmd = f"uv run python -m {MODULE_PATH} --step 2 --state-dir {shell_quote(state_dir)}"
 
     return format_step(body, next_cmd, title="Execution Planning")
 
@@ -159,7 +150,7 @@ def format_step_2(qr: QRState, state_dir: str) -> str:
         ]
 
         mode_script = get_mode_script_path("developer/exec_implement.py")
-        invoke_cmd = f"uv run python -m {mode_script} --step 1 --state-dir {_q(state_dir)}"
+        invoke_cmd = f"uv run python -m {mode_script} --step 1 --state-dir {shell_quote(state_dir)}"
 
         actions.append(
             subagent_dispatch(
@@ -225,7 +216,7 @@ def format_step_2(qr: QRState, state_dir: str) -> str:
         ]
 
     body = "\n".join(actions)
-    next_cmd = f"uv run python -m {MODULE_PATH} --step 3 --state-dir {_q(state_dir)}"
+    next_cmd = f"uv run python -m {MODULE_PATH} --step 3 --state-dir {shell_quote(state_dir)}"
 
     return format_step(body, next_cmd, title=title)
 
@@ -252,7 +243,7 @@ def format_qr_decompose(step: int, phase: str, state_dir: str, qr: QRState) -> s
                 "Proceeding to verification of existing items.",
             ]
         )
-        next_cmd = f"uv run python -m {MODULE_PATH} --step {next_step} --state-dir {_q(state_dir)}"
+        next_cmd = f"uv run python -m {MODULE_PATH} --step {next_step} --state-dir {shell_quote(state_dir)}"
         return format_step(body, next_cmd, title=f"{title} - Skipped")
 
     actions = [
@@ -262,7 +253,10 @@ def format_qr_decompose(step: int, phase: str, state_dir: str, qr: QRState) -> s
         "",
     ]
 
-    invoke_cmd = f"uv run python -m {decompose_script} --step 1 --state-dir {_q(state_dir)}"
+    invoke_cmd = (
+        f"uv run python -m {decompose_script} --step 1 --phase {phase} "
+        f"--state-dir {shell_quote(state_dir)}"
+    )
     actions.append(
         subagent_dispatch(
             agent_type="quality-reviewer",
@@ -275,7 +269,7 @@ def format_qr_decompose(step: int, phase: str, state_dir: str, qr: QRState) -> s
 
     body = "\n".join(actions)
     next_step = step + 1
-    next_cmd = f"uv run python -m {MODULE_PATH} --step {next_step} --state-dir {_q(state_dir)}"
+    next_cmd = f"uv run python -m {MODULE_PATH} --step {next_step} --state-dir {shell_quote(state_dir)}"
 
     return format_step(body, next_cmd, title=title)
 
@@ -298,7 +292,7 @@ def format_qr_verify(step: int, phase: str, state_dir: str, qr: QRState) -> str:
         decompose_step = step - 1
         body = f"Error: qr-{phase}.json not found or malformed. Routing back to decompose step."
         retry_cmd = (
-            f"uv run python -m {MODULE_PATH} --step {decompose_step} --state-dir {_q(state_dir)}"
+            f"uv run python -m {MODULE_PATH} --step {decompose_step} --state-dir {shell_quote(state_dir)}"
         )
         return format_step(body, retry_cmd, title=title)
 
@@ -315,13 +309,13 @@ def format_qr_verify(step: int, phase: str, state_dir: str, qr: QRState) -> str:
         body = "All items already verified. Proceeding with pass."
         # No agents dispatched → collapse to single NEXT STEP (pass) so the
         # prompt doesn't render "Count PASS vs FAIL" for zero agents.
-        next_cmd = f"uv run python -m {MODULE_PATH} --step {next_step} --state-dir {_q(state_dir)} --qr-status pass"
+        next_cmd = f"uv run python -m {MODULE_PATH} --step {next_step} --state-dir {shell_quote(state_dir)} --qr-status pass"
         return format_step(body, next_cmd=next_cmd, title=title)
 
     # Re-bin items into balanced, capped parallel groups and build the dispatch
     # (shared with planner.py via build_qr_verify_dispatch -- one owner for the cap
     # scheme, vg-NNN labels, shell-quoting, and the pinned Start: command).
-    dispatch_text, group_count = build_qr_verify_dispatch(verify_script, state_dir, items)
+    dispatch_text, group_count = build_qr_verify_dispatch(verify_script, phase, state_dir, items)
 
     actions = [
         ORCHESTRATOR_CONSTRAINT,
@@ -338,17 +332,12 @@ def format_qr_verify(step: int, phase: str, state_dir: str, qr: QRState) -> str:
         "  ALL agents returned PASS  ->  invoke next step with --qr-status pass",
         "  ANY agent returned FAIL   ->  invoke next step with --qr-status fail",
         "",
-        format_forbidden(
-            "Interpreting results beyond PASS/FAIL tallying",
-            "Claiming 'diminishing returns' or 'comprehensive enough'",
-            "Skipping the next step command",
-            "Proceeding to a later step without QR PASS",
-        ),
+        format_qr_verify_forbidden(),
     ]
 
     body = "\n".join(actions)
     next_step = step + 1
-    base_cmd = f"uv run python -m {MODULE_PATH} --step {next_step} --state-dir {_q(state_dir)}"
+    base_cmd = f"uv run python -m {MODULE_PATH} --step {next_step} --state-dir {shell_quote(state_dir)}"
 
     return format_step(
         body,
@@ -420,7 +409,7 @@ def format_step_6(qr: QRState, state_dir: str) -> str:
             "",
         ]
 
-        invoke_cmd = f"uv run python -m {mode_script} --step 1 --state-dir {_q(state_dir)}"
+        invoke_cmd = f"uv run python -m {mode_script} --step 1 --state-dir {shell_quote(state_dir)}"
         actions.append(
             subagent_dispatch(
                 agent_type="technical-writer",
@@ -434,7 +423,7 @@ def format_step_6(qr: QRState, state_dir: str) -> str:
             "",
         ]
 
-        invoke_cmd = f"uv run python -m {mode_script} --step 1 --state-dir {_q(state_dir)}"
+        invoke_cmd = f"uv run python -m {mode_script} --step 1 --state-dir {shell_quote(state_dir)}"
         actions.append(
             subagent_dispatch(
                 agent_type="technical-writer",
@@ -443,7 +432,7 @@ def format_step_6(qr: QRState, state_dir: str) -> str:
         )
 
     body = "\n".join(actions)
-    next_cmd = f"uv run python -m {MODULE_PATH} --step 7 --state-dir {_q(state_dir)}"
+    next_cmd = f"uv run python -m {MODULE_PATH} --step 7 --state-dir {shell_quote(state_dir)}"
 
     return format_step(body, next_cmd, title=title)
 

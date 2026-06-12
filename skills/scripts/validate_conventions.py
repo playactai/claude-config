@@ -7,20 +7,33 @@ from pathlib import Path
 from skills.lib.conventions import get_registry, validate_convention_access
 
 
-def extract_convention_calls(script_path: Path) -> list[tuple[str, int]]:
-    """Extract (convention_name, line_number) from get_convention() calls."""
+def extract_convention_calls(script_path: Path) -> tuple[list[tuple[str, int]], list[int]]:
+    """Split get_convention() calls into statically-checkable vs. opaque.
+
+    Returns (literal_calls, opaque_linenos):
+      - literal_calls: (convention_name, line_number) for get_convention("literal"),
+        which main() validates against the registry.
+      - opaque_linenos: lines of get_convention(<non-string-literal>) calls. A
+        variable/f-string argument cannot be resolved statically, so it would
+        silently bypass the registry guard. We surface these as errors (fail loud)
+        rather than skip them -- a real access could hide behind a variable.
+    """
     tree = ast.parse(script_path.read_text())
-    calls = []
+    literal_calls = []
+    opaque_linenos = []
     for node in ast.walk(tree):
-        if (
+        if not (
             isinstance(node, ast.Call)
             and isinstance(node.func, ast.Name)
             and node.func.id == "get_convention"
-            and node.args
-            and isinstance(node.args[0], ast.Constant)
         ):
-            calls.append((node.args[0].value, node.lineno))
-    return calls
+            continue
+        first = node.args[0] if node.args else None
+        if isinstance(first, ast.Constant) and isinstance(first.value, str):
+            literal_calls.append((first.value, node.lineno))
+        else:
+            opaque_linenos.append(node.lineno)
+    return literal_calls, opaque_linenos
 
 
 # Role directory name -> registry role. Full directory names plus the `qr` alias
@@ -65,7 +78,7 @@ def main():
     errors = []
 
     for script in skills_dir.rglob("*.py"):
-        calls = extract_convention_calls(script)
+        calls, opaque_linenos = extract_convention_calls(script)
         role = infer_role_from_path(script, skills_dir)
 
         for convention, lineno in calls:
@@ -73,6 +86,11 @@ def main():
                 errors.append(
                     f"{script}:{lineno} - {role} accessing {convention} (not in registry)"
                 )
+        for lineno in opaque_linenos:
+            errors.append(
+                f"{script}:{lineno} - get_convention() with a non-literal argument cannot be "
+                "statically validated; pass a string literal so the registry guard can check it"
+            )
 
     if errors:
         print("Convention registry violations:")

@@ -156,7 +156,7 @@ def get_mode_script_path(script_name: str) -> str:
     Returns:
         Module path for python3 -m (e.g., "skills.planner.developer.exec_implement")
     """
-    # Convert path to module: "quality_reviewer/impl_code_qr_decompose.py" -> "quality_reviewer.impl_code_qr_decompose"
+    # Convert path to module: "quality_reviewer/qr_decompose.py" -> "quality_reviewer.qr_decompose"
     module = script_name.replace("/", ".").replace("-", "_").removesuffix(".py")
     return f"skills.planner.{module}"
 

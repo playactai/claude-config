@@ -21,7 +21,7 @@ ROOT = Path("/repo/skills/scripts/skills")
     [
         ("planner/developer/exec_implement_execute.py", "developer"),
         ("planner/technical_writer/exec_docs_qr_fix.py", "technical_writer"),
-        ("planner/quality_reviewer/impl_code_qr_decompose.py", "quality_reviewer"),
+        ("planner/quality_reviewer/qr_decompose.py", "quality_reviewer"),
         ("planner/shared/qr/utils.py", "quality_reviewer"),
         ("refactor/refactor.py", "refactor"),
         ("planner/orchestrator/planner.py", "unknown"),

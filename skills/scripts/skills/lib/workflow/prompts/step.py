@@ -41,7 +41,23 @@ def format_step(
 
     Returns:
         Complete step output as plain text
+
+    Raises:
+        ValueError: if exactly one of if_pass/if_fail is set, or if branching
+            (if_pass/if_fail) is mixed with next_cmd. Both combinations would
+            silently mis-render -- a lone if_pass falls through to "WORKFLOW
+            COMPLETE", and branch+next_cmd silently drops next_cmd. Fail loud
+            instead (mirrors InvokeAfterNode.__post_init__ validation).
     """
+    if bool(if_pass) != bool(if_fail):
+        raise ValueError(
+            "format_step: if_pass and if_fail must be provided together (branching requires both)"
+        )
+    if (if_pass or if_fail) and next_cmd:
+        raise ValueError(
+            "format_step: branching (if_pass/if_fail) and next_cmd are mutually exclusive"
+        )
+
     if title:
         header = f"{title}\n{'=' * len(title)}\n\n"
         body = header + body

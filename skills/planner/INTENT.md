@@ -548,14 +548,14 @@ Step 3: plan-design-work
 
 Step 4: plan-design-qr-decompose
   Agent: quality-reviewer
-  Script: quality_reviewer/plan_design_qr_decompose.py
+  Script: quality_reviewer/qr_decompose.py --phase plan-design
   Output: qr-plan-design.json with items (status: TODO)
   Output: parallel_dispatch block listing all --qr-item IDs
   Next: Step 5
 
 Step 5: plan-design-qr-verify
   Agent: quality-reviewer (N parallel instances)
-  Script: quality_reviewer/plan_design_qr_verify.py --qr-items {ids}
+  Script: quality_reviewer/qr_verify.py --phase plan-design --qr-item {id}
   Input: Orchestrator script parses parallel_dispatch from step 4, batches items by group
   Output: Each agent verifies its batch, updates items in qr-plan-design.json to PASS/FAIL
   Next: Step 6
@@ -586,14 +586,14 @@ Step 2: impl-code-work
 
 Step 3: impl-code-qr-decompose
   Agent: quality-reviewer
-  Script: quality_reviewer/impl_code_qr_decompose.py
+  Script: quality_reviewer/qr_decompose.py --phase impl-code
   Output: qr-impl-code.json with items (status: TODO)
   Output: parallel_dispatch block listing all --qr-item IDs
   Next: Step 4
 
 Step 4: impl-code-qr-verify
   Agent: quality-reviewer (N parallel instances)
-  Script: quality_reviewer/impl_code_qr_verify.py --qr-item {id}
+  Script: quality_reviewer/qr_verify.py --phase impl-code --qr-item {id}
   Output: Each agent updates one item in qr-impl-code.json to PASS/FAIL
   Next: Step 5
 
@@ -612,14 +612,14 @@ Step 6: impl-docs-work
 
 Step 7: impl-docs-qr-decompose
   Agent: quality-reviewer
-  Script: quality_reviewer/impl_docs_qr_decompose.py
+  Script: quality_reviewer/qr_decompose.py --phase impl-docs
   Output: qr-impl-docs.json with items (status: TODO)
   Output: parallel_dispatch block listing all --qr-item IDs
   Next: Step 8
 
 Step 8: impl-docs-qr-verify
   Agent: quality-reviewer (N parallel instances)
-  Script: quality_reviewer/impl_docs_qr_verify.py --qr-item {id}
+  Script: quality_reviewer/qr_verify.py --phase impl-docs --qr-item {id}
   Output: Each agent updates one item in qr-impl-docs.json to PASS/FAIL
   Next: Step 9
 
@@ -661,13 +661,11 @@ skills/planner/
     exec_docs_execute.py      -- impl-docs (6 steps)
     exec_docs_qr_fix.py       -- post-QR fix workflow
   quality_reviewer/
-    plan_design_qr_decompose.py -- decomposition workflow
-    plan_design_qr_verify.py    -- single-item verification
-    impl_code_qr_decompose.py   -- decomposition workflow
-    impl_code_qr_verify.py      -- single-item verification
-    impl_docs_qr_decompose.py   -- decomposition workflow
-    impl_docs_qr_verify.py      -- single-item verification
-    qr_verify_base.py           -- shared verification base
+    qr_decompose.py             -- decompose runner (--phase {plan-design|impl-code|impl-docs})
+    qr_verify.py                -- single-item verify runner (--phase ...)
+    qr_verify_base.py           -- shared verification base + verify_main
+    prompts/content.py          -- per-phase decompose prompts + verifier classes
+    prompts/decompose.py        -- shared 13-step decompose flow
   shared/
     schema.py         -- Pydantic v2 schemas (context, plan, qr), validation
     resources.py      -- Path helpers, resource provider
@@ -692,12 +690,12 @@ All scripts accept a common set of arguments. QR-related state is file-based, no
 
 **QR verify arguments:**
 
-| Argument     | Required | Description                                     |
-| ------------ | -------- | ----------------------------------------------- |
-| `--qr-item`  | Yes\*    | Single item ID to verify (e.g., qa-001)         |
-| `--qr-items` | Yes\*    | Comma-separated item IDs for batch verification |
+| Argument    | Required | Description                                                                       |
+| ----------- | -------- | -------------------------------------------------------------------------------- |
+| `--phase`   | Yes      | QR phase: `plan-design` \| `impl-code` \| `impl-docs` (selects verifier + qr file) |
+| `--qr-item` | Yes      | Item ID to verify; repeatable for a batched agent (`--qr-item qa-001 --qr-item qa-002`) |
 
-\*One of --qr-item or --qr-items required. Batch verification (--qr-items) groups semantically related items for a single agent, enabling parallel dispatch where each agent handles one batch.
+`--phase` makes the verify runner phase-parameterized. Repeated `--qr-item` flags assign a batch of related items to one agent (parallel dispatch = one batch per agent); there is no comma-joined `--qr-items` flag.
 
 **Gate step arguments:**
 
@@ -764,7 +762,7 @@ Rendered format:
     <group id="umbrella" items="qa-010,qa-011">Cross-cutting checks</group>
   </groups>
   <template>
-    <invoke working-dir=".claude/skills/scripts" cmd="uv run python -m skills.planner.quality_reviewer.{phase}_qr_verify --step 1 --state-dir {state_dir} --qr-items $GROUP_ITEMS" />
+    <invoke working-dir=".claude/skills/scripts" cmd="uv run python -m skills.planner.quality_reviewer.qr_verify --step 1 --phase {phase} --state-dir {state_dir} $qr_item_flags" />
   </template>
 </parallel_dispatch>
 ```
@@ -780,7 +778,7 @@ Each QR block consists of 4 orchestrator steps:
 **Decompose step (1 sub-agent):**
 
 ```
-uv run --project "${CLAUDE_PROJECT_DIR:-$HOME}/.claude/skills/scripts" python -m skills.planner.quality_reviewer.<phase>_qr_decompose --step 1 --state-dir {state_dir}
+uv run --project "${CLAUDE_PROJECT_DIR:-$HOME}/.claude/skills/scripts" python -m skills.planner.quality_reviewer.qr_decompose --step 1 --phase <phase> --state-dir {state_dir}
 ```
 
 Sub-agent explores the artifact being reviewed using an 8-step cognitive workflow, generates verification items adaptively (quantity determined by content, not preset bounds), writes qr-{phase}.json with all items status: TODO. Outputs parallel_dispatch block for orchestrator to parse.
@@ -839,7 +837,7 @@ More items with overlap is preferred over fewer items with gaps.
 **Verify step (N sub-agents, parallel):**
 
 ```
-uv run --project "${CLAUDE_PROJECT_DIR:-$HOME}/.claude/skills/scripts" python -m skills.planner.quality_reviewer.<phase>_qr_verify --step 1 --state-dir {state_dir} --qr-items qa-001,qa-002
+uv run --project "${CLAUDE_PROJECT_DIR:-$HOME}/.claude/skills/scripts" python -m skills.planner.quality_reviewer.qr_verify --step 1 --phase <phase> --state-dir {state_dir} --qr-item qa-001 --qr-item qa-002
 ```
 
 Each sub-agent receives a batch of semantically related items to verify. Items are grouped by the decompose step (e.g., by component, by concern, or parent-child relationships). The agent reads the qr file, verifies each assigned item, and updates status to PASS or FAIL with finding.

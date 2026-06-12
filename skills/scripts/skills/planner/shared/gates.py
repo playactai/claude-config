@@ -4,7 +4,6 @@ Single implementation eliminates ~150 lines of duplicated gate logic.
 Both planner.py and executor.py call this with their MODULE_PATH.
 """
 
-import shlex
 from dataclasses import dataclass
 
 from skills.lib.workflow.prompts.step import SKILLS_DIR, format_step
@@ -12,6 +11,7 @@ from skills.planner.shared.builders import (
     PEDANTIC_ENFORCEMENT,
     format_forbidden,
     format_gate_result,
+    shell_quote,
 )
 from skills.planner.shared.qr.constants import QR_ITERATION_LIMIT
 from skills.planner.shared.qr.types import AgentRole, QRState
@@ -91,9 +91,9 @@ def _build_iteration_limit_escalation(
     )
     parts.append("")
     if pass_step is not None:
-        accept_cmd = f"cd {shlex.quote(str(SKILLS_DIR))} && uv run python -m {module_path} --step {pass_step}"
+        accept_cmd = f"cd {shell_quote(str(SKILLS_DIR))} && uv run python -m {module_path} --step {pass_step}"
         if state_dir:
-            accept_cmd += f" --state-dir {shlex.quote(state_dir)}"
+            accept_cmd += f" --state-dir {shell_quote(state_dir)}"
         parts.append(f"  Accept (proceed despite findings):\n    {accept_cmd}")
     else:
         # Terminal gate (planner, pass_step=None): "Accept" must FINALIZE the plan,
@@ -102,11 +102,11 @@ def _build_iteration_limit_escalation(
         # + saves it to docs/plans/. --qr-status pass is REQUIRED -- the planner
         # gate-step guard sys.exit(0)s before rendering when it is absent.
         accept_cmd = (
-            f"cd {shlex.quote(str(SKILLS_DIR))} && uv run python -m {module_path} "
+            f"cd {shell_quote(str(SKILLS_DIR))} && uv run python -m {module_path} "
             f"--step {step} --qr-status pass --accept-findings"
         )
         if state_dir:
-            accept_cmd += f" --state-dir {shlex.quote(state_dir)}"
+            accept_cmd += f" --state-dir {shell_quote(state_dir)}"
         parts.append(f"  Accept (approve the plan as-is and finalize):\n    {accept_cmd}")
     parts.append("  Abort: stop here. Do NOT invoke a next step; report the findings to the user.")
     parts.append("")
@@ -163,7 +163,7 @@ def _build_completeness_block(
         )
     )
     body = "\n".join(parts)
-    next_cmd = f"uv run python -m {module_path} --step {work_step} --state-dir {shlex.quote(state_dir)}"
+    next_cmd = f"uv run python -m {module_path} --step {work_step} --state-dir {shell_quote(state_dir)}"
     return GateResult(
         output=format_step(body, next_cmd, title=f"{qr_name} Gate"),
         terminal_pass=False,
@@ -298,9 +298,9 @@ def build_gate_output(
     if passed:
         next_cmd = f"uv run python -m {module_path} --step {pass_step}"
         if state_dir:
-            next_cmd += f" --state-dir {shlex.quote(state_dir)}"
+            next_cmd += f" --state-dir {shell_quote(state_dir)}"
     else:
-        next_cmd = f"uv run python -m {module_path} --step {work_step} --state-dir {shlex.quote(state_dir)}"
+        next_cmd = f"uv run python -m {module_path} --step {work_step} --state-dir {shell_quote(state_dir)}"
 
     return GateResult(
         output=format_step(body, next_cmd, title=title),

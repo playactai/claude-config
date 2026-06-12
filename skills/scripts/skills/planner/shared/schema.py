@@ -6,6 +6,7 @@ Pydantic is a required dependency (pydantic>=2.0 in pyproject.toml).
 
 import json
 import os
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal
 
@@ -191,7 +192,7 @@ if True:
 
         plan_id: str = Field(default_factory=lambda: str(__import__("uuid").uuid4()))
         created_at: str = Field(
-            default_factory=lambda: __import__("datetime").datetime.utcnow().isoformat()
+            default_factory=lambda: datetime.now(UTC).isoformat()
         )
         frozen_at: str | None = None  # Timestamp when plan execution began
 

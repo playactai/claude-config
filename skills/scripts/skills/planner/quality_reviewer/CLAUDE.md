@@ -1,23 +1,19 @@
 # quality_reviewer/
 
-Quality Review modules with QA state tracking integration; split into decompose/verify pairs per phase.
+Quality Review modules with QA state tracking integration. One phase-parameterized decompose runner and one verify runner serve all three QR phases (`--phase {plan-design|impl-code|impl-docs}`); phase-specific content lives in `prompts/content.py`.
 
 ## Files
 
-| File                         | What                                           | When to read                                           |
-| ---------------------------- | ---------------------------------------------- | ------------------------------------------------------ |
-| `README.md`                  | QR architecture, QA state tracking, LoopState  | Understanding QR workflow and response formats         |
-| `qr_verify_base.py`          | VerifyBase ABC, dynamic step count, CLI wiring | Extending QR verify scripts, debugging dispatch        |
-| `plan_design_qr_decompose.py`| Generate QR items for plan-design phase        | Modifying design-phase quality checks                  |
-| `plan_design_qr_verify.py`   | Verify QR items for plan-design phase          | Changing design-phase verification logic               |
-| `impl_code_qr_decompose.py`  | Generate QR items for impl-code phase          | Modifying post-implementation code checks              |
-| `impl_code_qr_verify.py`     | Verify QR items for impl-code phase            | Changing post-impl-code verification logic             |
-| `impl_docs_qr_decompose.py`  | Generate QR items for impl-docs phase          | Modifying post-implementation docs checks              |
-| `impl_docs_qr_verify.py`     | Verify QR items for impl-docs phase            | Changing post-impl-docs verification logic             |
-| `__init__.py`                | Package marker                                 | Never (empty module)                                   |
+| File                | What                                                                 | When to read                                           |
+| ------------------- | ------------------------------------------------------------------- | ------------------------------------------------------ |
+| `README.md`         | QR architecture, QA state tracking, LoopState                       | Understanding QR workflow and response formats         |
+| `qr_verify_base.py` | VerifyBase ABC, dynamic step count, CLI wiring (`verify_main`)       | Extending QR verify, debugging dispatch                |
+| `qr_decompose.py`   | `--phase` decompose runner (wires content to `prompts.dispatch_step`) | Changing decompose CLI/wiring                          |
+| `qr_verify.py`      | `--phase` verify runner (selects a `VERIFIERS` subclass)             | Changing verify CLI/wiring                             |
+| `__init__.py`       | Package marker                                                       | Never (empty module)                                   |
 
 ## Subdirectories
 
-| Directory  | What                                           | When to read                                           |
-| ---------- | ---------------------------------------------- | ------------------------------------------------------ |
-| `prompts/` | Shared prompt builders for decompose and verify | Modifying QR prompt wording, item formatting           |
+| Directory  | What                                                                            | When to read                                  |
+| ---------- | ------------------------------------------------------------------------------- | --------------------------------------------- |
+| `prompts/` | `decompose.py` (shared 13-step flow), `content.py` (per-phase prompts + verifier classes) | Modifying QR prompt wording, item formatting  |

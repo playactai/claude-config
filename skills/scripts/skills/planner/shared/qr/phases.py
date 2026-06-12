@@ -29,8 +29,9 @@ from __future__ import annotations
 #   verify_step: orchestrator step that dispatches parallel verify agents
 #   route_step: orchestrator step that routes based on QR result
 #   artifact: primary artifact being reviewed (relative to state_dir)
-#   decompose_script: Python module for decomposition
-#   verify_script: Python module for single-item verification
+#   decompose_script: Python module for decomposition (phase-parameterized runner,
+#                     dispatched with --phase {name}; same module for every phase)
+#   verify_script: Python module for single-item verification (same --phase runner)
 #   decompose_steps: number of steps in decompose script
 #   verify_steps: number of steps in verify script
 
@@ -42,8 +43,8 @@ QR_PHASES: dict[str, dict] = {
         "verify_step": 5,
         "route_step": 6,
         "artifact": "plan.json",
-        "decompose_script": "skills.planner.quality_reviewer.plan_design_qr_decompose",
-        "verify_script": "skills.planner.quality_reviewer.plan_design_qr_verify",
+        "decompose_script": "skills.planner.quality_reviewer.qr_decompose",
+        "verify_script": "skills.planner.quality_reviewer.qr_verify",
         "decompose_steps": 13,
         "verify_steps": 3,
     },
@@ -54,8 +55,8 @@ QR_PHASES: dict[str, dict] = {
         "verify_step": 4,
         "route_step": 5,
         "artifact": "plan.json",
-        "decompose_script": "skills.planner.quality_reviewer.impl_code_qr_decompose",
-        "verify_script": "skills.planner.quality_reviewer.impl_code_qr_verify",
+        "decompose_script": "skills.planner.quality_reviewer.qr_decompose",
+        "verify_script": "skills.planner.quality_reviewer.qr_verify",
         "decompose_steps": 13,
         "verify_steps": 3,
     },
@@ -66,8 +67,8 @@ QR_PHASES: dict[str, dict] = {
         "verify_step": 8,
         "route_step": 9,
         "artifact": "plan.json",
-        "decompose_script": "skills.planner.quality_reviewer.impl_docs_qr_decompose",
-        "verify_script": "skills.planner.quality_reviewer.impl_docs_qr_verify",
+        "decompose_script": "skills.planner.quality_reviewer.qr_decompose",
+        "verify_script": "skills.planner.quality_reviewer.qr_verify",
         "decompose_steps": 13,
         "verify_steps": 3,
     },

@@ -25,7 +25,6 @@ def _write_qr_state(state_dir: Path, phase: str, *, iteration: int, items: list[
     (state_dir / f"qr-{phase}.json").write_text(
         json.dumps(
             {
-                "schema_version": "1.0",
                 "phase": phase,
                 "iteration": iteration,
                 "items": items,

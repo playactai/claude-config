@@ -215,9 +215,11 @@ def test_documentation_only_is_reversible(tmp_path):
 def test_impl_code_qr_excludes_doc_only_milestones():
     # impl-code QR must not enumerate is_documentation_only milestones, or their
     # acceptance criteria become unsatisfiable MUST items that loop to the ceiling.
-    from skills.planner.quality_reviewer.impl_code_qr_decompose import (
-        STEP_1_ABSORB,
-        STEP_3_ENUMERATION,
+    from skills.planner.quality_reviewer.prompts.content import (
+        IMPL_CODE_STEP_1_ABSORB as STEP_1_ABSORB,
+    )
+    from skills.planner.quality_reviewer.prompts.content import (
+        IMPL_CODE_STEP_3_ENUMERATION as STEP_3_ENUMERATION,
     )
 
     combined = (STEP_1_ABSORB + STEP_3_ENUMERATION).lower()
@@ -257,8 +259,10 @@ def test_exec_docs_authors_doc_only_deliverables():
 
 
 def test_impl_docs_qr_verifies_doc_only_acceptance_criteria():
-    from skills.planner.quality_reviewer.impl_docs_qr_decompose import STEP_3_ENUMERATION
-    from skills.planner.quality_reviewer.impl_docs_qr_verify import ImplDocsVerify
+    from skills.planner.quality_reviewer.prompts.content import (
+        IMPL_DOCS_STEP_3_ENUMERATION as STEP_3_ENUMERATION,
+    )
+    from skills.planner.quality_reviewer.prompts.content import ImplDocsVerify
 
     assert "DOCUMENTATION-ONLY MILESTONES" in STEP_3_ENUMERATION
     macro = "\n".join(
@@ -277,7 +281,9 @@ def test_doc_deliverable_unsatisfied_is_must_not_should():
     # A doc-only milestone's whole purpose is its deliverable; an unproduced one is
     # knowledge loss. It must block all iterations (escalating to the user at the
     # ceiling per gates.py) rather than de-escalating to a silent pass at iteration 4+.
-    from skills.planner.quality_reviewer.impl_docs_qr_decompose import STEP_5_GENERATE
+    from skills.planner.quality_reviewer.prompts.content import (
+        IMPL_DOCS_STEP_5_GENERATE as STEP_5_GENERATE,
+    )
 
     boundary = STEP_5_GENERATE.index("SHOULD (iterations")
     must_block = STEP_5_GENERATE[:boundary]

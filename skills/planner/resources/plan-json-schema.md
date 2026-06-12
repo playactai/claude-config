@@ -181,7 +181,9 @@ cite the deciding `decision_ref` — there is no separate params structure.
 
 Top-level `waves`: each wave groups milestone IDs that execute in parallel; waves run in
 order. Mirrors the `Wave` model (`id`, `milestones`) — there is no separate
-`milestone_dependencies` block.
+`milestone_dependencies` block. CLI: `set-wave --milestones M-001,M-002` (architect).
+Do not co-schedule two milestones that touch the same file in one wave — they run as
+concurrent developer agents and would corrupt it mid-write.
 
 ```json
 [
@@ -227,6 +229,8 @@ render. CLI: `set-diagram`, `add-diagram-node`, `add-diagram-edge`, `set-diagram
 3. `risk.decision_ref` (when present) must point to an existing `decisions[].id`
 4. Every diagram `edge.source` / `edge.target` must reference a node in that diagram
 5. A diagram `scope` of `milestone:M-XXX` must reference an existing milestone
+6. Every `waves[].milestones[]` ID must reference an existing milestone, and no two
+   milestones in the same wave may share a `files[]` entry (concurrent-write guard)
 
 ### Phase Completeness
 
@@ -236,6 +240,8 @@ render. CLI: `set-diagram`, `add-diagram-node`, `add-diagram-edge`, `set-diagram
 - At least one milestone
 - Each non-documentation-only milestone has at least one `code_intent` (the contract)
 - A documentation-only milestone has NO `code_intents` (mutually exclusive)
+- Every non-documentation-only milestone appears in exactly one wave
+- Documentation-only milestones appear in NO wave (they route to exec-docs)
 
 Execution runs from this plan (developer implements Code Intent JIT, then code/docs QR);
 there is no plan-code or plan-docs phase.

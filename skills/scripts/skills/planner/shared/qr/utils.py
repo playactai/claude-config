@@ -12,6 +12,7 @@ Provides centralized access to qr-<phase>.json state files:
 import contextlib
 import fcntl
 import json
+import math
 from collections.abc import Callable, Iterator
 from pathlib import Path
 
@@ -157,6 +158,46 @@ def query_items(qr_state: dict, *predicates: ItemPredicate) -> list[dict]:
     if not predicates:
         return list(items)
     return [i for i in items if all(p(i) for p in predicates)]
+
+
+def balance_verify_groups(
+    items: list[dict],
+    *,
+    max_parallel: int,
+    target_per_group: int,
+) -> list[list[dict]]:
+    """Re-bin verify items into balanced, capped parallel groups (audit §2 leak 2).
+
+    The decompose agent's group_id is an affinity hint, not a correctness
+    boundary -- every item carries its own independent check and PASS/FAIL, so
+    which agent verifies an item is free to change. Dispatching one agent per raw
+    group_id leaves two failure modes: a fat group serializes many items while
+    siblings idle, or every item becomes its own agent (N x the fixed per-agent
+    context-load cost).
+
+    Items are sorted by (group_id or id) -- keeping affinity-clustered items
+    adjacent -- then split into k = min(max_parallel, ceil(n / target_per_group))
+    contiguous near-equal chunks (sizes differ by at most 1). This guarantees both
+    bounds at once: at most max_parallel groups, and a max group size of
+    ceil(n / k); affinity adjacency survives except at chunk seams.
+
+    Returns a list of non-empty item groups ([] when there are no items).
+    """
+    if not items:
+        return []
+    per = max(1, target_per_group)
+    cap = max(1, max_parallel)
+    ordered = sorted(items, key=lambda it: str(it.get("group_id") or it.get("id") or ""))
+    n = len(ordered)
+    k = min(cap, max(1, math.ceil(n / per)))  # 1 <= k <= n, so no chunk is empty
+    base, extra = divmod(n, k)  # the first `extra` chunks take one more item
+    groups: list[list[dict]] = []
+    start = 0
+    for i in range(k):
+        size = base + (1 if i < extra else 0)
+        groups.append(ordered[start : start + size])
+        start += size
+    return groups
 
 
 def format_qr_item_for_verification(item: dict) -> str:

@@ -3,7 +3,7 @@
 Plan Executor - Execute approved plans through delegation.
 
 Ten-step workflow with parallel QR verification:
-  1. Execution Planning - analyze plan, build wave list, create state_dir
+  1. Execution Planning - analyze plan, transcribe wave list, create state_dir
   2. Implementation - dispatch developers (wave-aware parallel)
   3. Code QR Decompose - generate verification items
   4. Code QR Verify - parallel verification of items
@@ -41,9 +41,11 @@ from skills.planner.shared.constraints import (
 )
 from skills.planner.shared.gates import build_gate_output
 from skills.planner.shared.qr.cli import add_qr_args
+from skills.planner.shared.qr.constants import VERIFY_MAX_PARALLEL, VERIFY_TARGET_PER_GROUP
 from skills.planner.shared.qr.phases import get_phase_config
 from skills.planner.shared.qr.types import LoopState, QRState, QRStatus
 from skills.planner.shared.qr.utils import (
+    balance_verify_groups,
     by_blocking_severity,
     by_status,
     get_qr_iteration,
@@ -79,36 +81,24 @@ def _q(path: str | None) -> str:
 
 
 def format_step_1(state_dir: str, reconciliation_check: bool) -> str:
-    """Create state_dir, analyze plan, build wave list."""
+    """Create state_dir, analyze plan, transcribe wave list."""
     actions = [
         THINKING_EFFICIENCY,
         "",
         "Plan file: $PLAN_FILE (substitute from context)",
         "",
         "ANALYZE plan:",
-        "  - Count milestones and parse dependency diagram",
-        "  - Group milestones into WAVES for execution",
+        "  - Read the milestones and the plan's '## Execution Waves' list",
         "  - Set up TodoWrite tracking",
         "",
-        "WAVE ANALYSIS:",
-        "  Parse the plan's 'Milestone Dependencies' diagram.",
-        "  Group into waves: milestones at same depth = one wave.",
-        "",
-        "  Example diagram:",
-        "    M0 (foundation)",
-        "     |",
-        "     +---> M1 (auth)     \\",
-        "     |                    } Wave 2 (parallel)",
-        "     +---> M2 (users)    /",
-        "     |",
-        "     +---> M3 (posts) ----> M4 (feed)",
-        "            Wave 3          Wave 4",
-        "",
-        "  Output format (waves are objects; reference milestones by ID):",
-        "    W-001: [M-001]            (foundation, sequential)",
-        "    W-002: [M-002, M-003]     (parallel)",
-        "    W-003: [M-004]            (sequential)",
-        "    W-004: [M-005]            (sequential)",
+        "EXECUTION WAVES (transcribe, do NOT derive):",
+        "  The approved plan declares execution waves under its '## Execution Waves'",
+        "  heading, e.g.:",
+        "    - W-001: M-001",
+        "    - W-002: M-002, M-003",
+        "  Copy that list VERBATIM into plan.json.waves (objects, below). Do NOT infer",
+        "  waves from any diagram or re-group milestones -- the waves are the approved",
+        "  contract (file-disjoint within a wave, validated at plan time).",
         "",
         "STATE SETUP:",
         f"  State directory created: {state_dir}",
@@ -334,21 +324,26 @@ def format_qr_verify(step: int, phase: str, state_dir: str, qr: QRState) -> str:
         next_cmd = f"uv run python -m {MODULE_PATH} --step {next_step} --state-dir {_q(state_dir)} --qr-status pass"
         return format_step(body, next_cmd=next_cmd, title=title)
 
-    # Group items by group_id for batch verification
-    groups = {}
-    for item in items:
-        gid = item.get("group_id") or item["id"]
-        groups.setdefault(gid, []).append(item)
+    # Re-bin items into balanced, capped parallel groups (audit §2 leak 2): the
+    # decompose group_id is an affinity hint, not a 1:1 dispatch key, so one fat
+    # group can't serialize the phase nor N singletons each pay the per-agent
+    # context-load cost. The synthetic vg-NNN label is display-only (item identity
+    # flows via item_ids/qr_item_flags) and is never persisted.
+    balanced = balance_verify_groups(
+        items,
+        max_parallel=VERIFY_MAX_PARALLEL,
+        target_per_group=VERIFY_TARGET_PER_GROUP,
+    )
 
     targets = [
         {
-            "group_id": gid,
+            "group_id": f"vg-{idx:03d}",
             "item_ids": ",".join(i["id"] for i in group_items),
             "qr_item_flags": _format_qr_item_flags([i["id"] for i in group_items]),
             "item_count": str(len(group_items)),
             "checks_summary": "; ".join(i.get("check", "")[:40] for i in group_items[:3]),
         }
-        for gid, group_items in groups.items()
+        for idx, group_items in enumerate(balanced, 1)
     ]
 
     # pin_cwd: the prose "Start:" line is a command the agent may copy and run
@@ -372,7 +367,7 @@ Start: {start_cmd}"""
         template=tmpl,
         targets=targets,
         command=command,
-        instruction=f"Verify {len(groups)} groups ({len(items)} items) in parallel.",
+        instruction=f"Verify {len(balanced)} groups ({len(items)} items) in parallel.",
     )
 
     actions = [
@@ -386,7 +381,7 @@ Start: {start_cmd}"""
         "",
         "=== PHASE 2: AGGREGATE (your action after all agents return) ===",
         "",
-        f"After ALL {len(groups)} agents return, tally results mechanically:",
+        f"After ALL {len(balanced)} agents return, tally results mechanically:",
         "  ALL agents returned PASS  ->  invoke next step with --qr-status pass",
         "  ANY agent returned FAIL   ->  invoke next step with --qr-status fail",
         "",

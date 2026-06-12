@@ -26,6 +26,7 @@ def _get_schema():
         Milestone,
         Overview,
         Plan,
+        Wave,
         validate_state,
     )
 
@@ -38,6 +39,7 @@ def _get_schema():
         "DiagramGraph": DiagramGraph,
         "DiagramNode": DiagramNode,
         "DiagramEdge": DiagramEdge,
+        "Wave": Wave,
         "validate_state": validate_state,
     }
 
@@ -415,6 +417,37 @@ def set_diagram_render(ctx: PlanContext, diagram: str, content_file: str) -> dic
     ctx.save_plan(plan)
 
     return {"diagram": diagram, "operation": "updated"}
+
+
+def set_wave(
+    ctx: PlanContext,
+    milestones: str | None = None,
+    id: str | None = None,
+) -> dict:
+    """Create or update an execution wave (milestones that run in parallel).
+
+    No CAS (Wave has no version field). save_plan re-runs validate_state, so a
+    wave co-scheduling two milestones that share a file is rejected on write.
+    """
+    schema = _get_schema()
+    plan = ctx.load_plan()
+
+    milestones_list = _parse_csv(milestones)
+
+    if id:
+        # UPDATE: replace the wave's milestone list (upsert).
+        wave = next((w for w in plan.waves if w.id == id), None)
+        if not wave:
+            ids = [w.id for w in plan.waves]
+            raise ValueError(f"Wave {id} not found. Valid: {ids}")
+        wave.milestones = milestones_list
+        ctx.save_plan(plan)
+        return {"id": wave.id, "version": 1, "operation": "updated"}
+
+    wid = f"W-{len(plan.waves) + 1:03d}"
+    plan.waves.append(schema["Wave"](id=wid, milestones=milestones_list))
+    ctx.save_plan(plan)
+    return {"id": wid, "version": 1, "operation": "created"}
 
 
 def _translate(ctx: PlanContext, output: str) -> dict:

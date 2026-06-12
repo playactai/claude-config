@@ -251,6 +251,25 @@ if True:
                     if mid not in milestone_ids:
                         errors.append(f"wave {w.id} references unknown milestone '{mid}'")
 
+            # Two milestones in one wave run as concurrent developer agents; if they
+            # touch the same file they corrupt it mid-write (audit §2 leak 1). Reject
+            # file overlap within a wave -- deterministic from Milestone.files. Dangling
+            # refs are reported above, so only compare milestones that resolve.
+            milestone_files = {ms.id: set(ms.files) for ms in self.milestones}
+            for w in self.waves:
+                resolved = [mid for mid in w.milestones if mid in milestone_files]
+                for i in range(len(resolved)):
+                    for j in range(i + 1, len(resolved)):
+                        a, b = resolved[i], resolved[j]
+                        if a == b:
+                            continue  # listed twice -> a coverage issue, not self-overlap
+                        shared = milestone_files[a] & milestone_files[b]
+                        if shared:
+                            errors.append(
+                                f"wave {w.id} co-schedules {a} and {b} which share "
+                                f"file(s): {', '.join(sorted(shared))}"
+                            )
+
             for ms in self.milestones:
                 for ci in ms.code_intents:
                     for dref in ci.decision_refs:
@@ -300,6 +319,31 @@ if True:
                             )
                     elif not ms.code_intents:
                         errors.append(f"milestone {ms.id} needs at least one code_intent")
+
+                # Waves drive the executor's parallel developer dispatch, which covers
+                # code milestones only; doc-only milestones route to exec-docs instead.
+                # Require every code milestone in exactly one wave and no doc-only
+                # milestone in any wave, so execution neither drops nor mis-routes one.
+                # Completeness-only (not validate_refs): the planner saves partial plans
+                # mid-build, where waves are authored after milestones.
+                code_ids = {ms.id for ms in self.milestones if not ms.is_documentation_only}
+                doc_only_ids = {ms.id for ms in self.milestones if ms.is_documentation_only}
+                wave_counts: dict[str, int] = {}
+                for w in self.waves:
+                    for mid in w.milestones:
+                        wave_counts[mid] = wave_counts.get(mid, 0) + 1
+                for mid in sorted(code_ids):
+                    count = wave_counts.get(mid, 0)
+                    if count == 0:
+                        errors.append(f"milestone {mid} is not assigned to any wave")
+                    elif count > 1:
+                        errors.append(f"milestone {mid} appears in multiple waves")
+                for mid in sorted(doc_only_ids):
+                    if wave_counts.get(mid, 0) > 0:
+                        errors.append(
+                            f"documentation-only milestone {mid} must not appear in a "
+                            f"wave (routes to exec-docs)"
+                        )
             return errors
 
 

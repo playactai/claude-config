@@ -6,6 +6,13 @@ Moved from lib/workflow/constants.py to planner/shared/qr/constants.py.
 QR_ITERATION_LIMIT = 5
 QR_ITERATION_DEFAULT = 1
 
+# Verify-dispatch parallelism tuning (audit §2 leak 2). The orchestrator re-bins
+# the decompose agent's affinity groups into at most VERIFY_MAX_PARALLEL balanced
+# agents of ~VERIFY_TARGET_PER_GROUP items each, so one fat group can't serialize
+# the phase and N singletons can't each pay the fixed per-agent context-load cost.
+VERIFY_MAX_PARALLEL = 8
+VERIFY_TARGET_PER_GROUP = 3
+
 # CLI argument defaults - single source of truth
 CLI_DEFAULTS = {
     "qr_iteration": 1,

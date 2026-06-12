@@ -455,5 +455,184 @@ def test_wave_referencing_unknown_milestone_fails_validation(tmp_path):
         validate_state(str(tmp_path))
 
 
+# --- Execution waves: structured, validated plan-time contract (audit §2 leak 1) ---
+def test_set_wave_cli_happy_path(tmp_path):
+    from skills.planner.cli import plan_commands as pc
+
+    ctx = pc.PlanContext(state_dir=tmp_path)
+    pc.init(ctx, task="t")
+    pc.set_milestone(ctx, name="auth", files="a.py")
+    pc.set_milestone(ctx, name="users", files="b.py")
+    pc.set_wave(ctx, milestones="M-001")
+    pc.set_wave(ctx, milestones="M-002")
+    waves = ctx.load_plan().waves
+    assert [(w.id, w.milestones) for w in waves] == [("W-001", ["M-001"]), ("W-002", ["M-002"])]
+    # Upsert: --id replaces the wave's milestone list (architect iterates).
+    pc.set_wave(ctx, id="W-001", milestones="M-001,M-002")
+    assert ctx.load_plan().waves[0].milestones == ["M-001", "M-002"]
+
+
+def test_set_wave_batch_mode(tmp_path):
+    # set-wave is auto-discovered as a batch RPC method (no registry edit needed).
+    from skills.planner.cli import plan_commands as pc
+    from skills.planner.cli.dispatch import batch, discover_methods
+
+    ctx = pc.PlanContext(state_dir=tmp_path)
+    pc.init(ctx, task="t")
+    pc.set_milestone(ctx, name="auth", files="a.py")
+    methods = discover_methods(pc)
+    results = batch(methods, [{"method": "set-wave", "params": {"milestones": "M-001"}, "id": 1}], ctx)
+    assert results[0]["result"]["operation"] == "created"
+    assert [w.milestones for w in ctx.load_plan().waves] == [["M-001"]]
+
+
+def _plan_with_waves(milestones, waves):
+    from skills.planner.shared.schema import CodeIntent, Milestone, Overview, Plan, Wave
+
+    ms = [
+        Milestone(
+            id=mid,
+            number=i + 1,
+            name=mid,
+            files=files,
+            is_documentation_only=doc_only,
+            code_intents=(
+                [] if doc_only else [CodeIntent(id=f"CI-{mid}", file=files[0], behavior="x")]
+            ),
+        )
+        for i, (mid, files, doc_only) in enumerate(milestones)
+    ]
+    return Plan(
+        overview=Overview(problem="p", approach="a"),
+        milestones=ms,
+        waves=[Wave(id=wid, milestones=mids) for wid, mids in waves],
+    )
+
+
+def test_wave_with_overlapping_files_rejected(tmp_path):
+    # Two milestones sharing a file in one wave run as concurrent developer agents
+    # and would corrupt it mid-write; validate_state must reject the overlap.
+    from skills.planner.shared.schema import SchemaValidationError, validate_state
+
+    plan = _plan_with_waves(
+        [("M-001", ["a.py", "shared.py"], False), ("M-002", ["b.py", "shared.py"], False)],
+        [("W-001", ["M-001", "M-002"])],
+    )
+    (tmp_path / "plan.json").write_text(plan.model_dump_json())
+    with pytest.raises(SchemaValidationError, match="share file"):
+        validate_state(str(tmp_path))
+
+
+def test_wave_coverage_required_for_code_milestones():
+    # Completeness gate: every code milestone in exactly one wave.
+    missing = _plan_with_waves(
+        [("M-001", ["a.py"], False), ("M-002", ["b.py"], False)],
+        [("W-001", ["M-001"])],
+    )
+    assert any(
+        "M-002 is not assigned to any wave" in e
+        for e in missing.validate_completeness("plan-design")
+    )
+    duplicate = _plan_with_waves(
+        [("M-001", ["a.py"], False), ("M-002", ["b.py"], False)],
+        [("W-001", ["M-001", "M-002"]), ("W-002", ["M-001"])],
+    )
+    assert any(
+        "M-001 appears in multiple waves" in e
+        for e in duplicate.validate_completeness("plan-design")
+    )
+
+
+def test_doc_only_milestone_must_not_be_in_a_wave():
+    plan = _plan_with_waves(
+        [("M-001", ["a.py"], False), ("M-002", ["README.md"], True)],
+        [("W-001", ["M-001", "M-002"])],
+    )
+    assert any(
+        "documentation-only milestone M-002 must not appear in a wave" in e
+        for e in plan.validate_completeness("plan-design")
+    )
+
+
+def test_wave_coverage_happy_path_with_doc_only():
+    # Code milestone covered by exactly one wave; doc-only milestone in NO wave -> valid.
+    plan = _plan_with_waves(
+        [("M-001", ["a.py"], False), ("M-002", ["README.md"], True)],
+        [("W-001", ["M-001"])],
+    )
+    assert plan.validate_completeness("plan-design") == []
+
+
+def test_execution_waves_render_in_markdown():
+    from skills.planner.cli.plan import translate_to_markdown
+
+    plan = _plan_with_waves(
+        [("M-001", ["a.py"], False), ("M-002", ["b.py"], False)],
+        [("W-001", ["M-001", "M-002"])],
+    )
+    md = translate_to_markdown(plan)
+    assert "## Execution Waves" in md
+    assert "- W-001: M-001, M-002" in md
+
+
+def test_executor_step1_transcribes_waves_no_diagram_parse(tmp_path):
+    # The executor must COPY the plan's explicit wave list, not re-derive waves by
+    # hand-parsing an ASCII dependency diagram (audit §2 leak 1).
+    from skills.planner.orchestrator import executor
+
+    out = executor.format_output(1, str(tmp_path), None, False)
+    assert "Milestone Dependencies" not in out
+    assert "same depth" not in out
+    assert "## Execution Waves" in out
+    assert "transcribe" in out.lower() or "verbatim" in out.lower()
+
+
+def test_save_plan_rolls_back_rejected_mutation(tmp_path):
+    # The single-CLI save_plan validates THEN persists; a rejected mutation (here a
+    # file-overlapping wave) must roll back, not leave bad state on disk + traceback.
+    from skills.planner.cli.plan import save_plan
+    from skills.planner.shared.schema import SchemaValidationError
+
+    good = _plan_with_waves(
+        [("M-001", ["a.py"], False), ("M-002", ["b.py"], False)],
+        [("W-001", ["M-001"]), ("W-002", ["M-002"])],
+    )
+    save_plan(tmp_path, good)
+    before = (tmp_path / "plan.json").read_bytes()
+
+    bad = _plan_with_waves(
+        [("M-001", ["a.py", "shared.py"], False), ("M-002", ["b.py", "shared.py"], False)],
+        [("W-001", ["M-001", "M-002"])],
+    )
+    with pytest.raises(SchemaValidationError, match="share file"):
+        save_plan(tmp_path, bad)
+    assert (tmp_path / "plan.json").read_bytes() == before  # rolled back byte-identically
+
+
+def test_save_plan_unlinks_on_rejected_first_write(tmp_path):
+    # prev-is-None path: a rejected FIRST write must not orphan a bad plan.json.
+    from skills.planner.cli.plan import save_plan
+    from skills.planner.shared.schema import SchemaValidationError
+
+    bad = _plan_with_waves(
+        [("M-001", ["a.py", "shared.py"], False), ("M-002", ["b.py", "shared.py"], False)],
+        [("W-001", ["M-001", "M-002"])],
+    )
+    with pytest.raises(SchemaValidationError, match="share file"):
+        save_plan(tmp_path, bad)
+    assert not (tmp_path / "plan.json").exists()  # unlinked, no orphan left behind
+
+
+def test_milestone_listed_twice_in_wave_is_coverage_not_self_overlap():
+    # A milestone listed twice in one wave must not report the confusing
+    # "co-schedules M-001 and M-001" self-overlap; it surfaces as a coverage error.
+    plan = _plan_with_waves([("M-001", ["a.py"], False)], [("W-001", ["M-001", "M-001"])])
+    assert not any("co-schedules M-001 and M-001" in e for e in plan.validate_refs())
+    assert any(
+        "M-001 appears in multiple waves" in e
+        for e in plan.validate_completeness("plan-design")
+    )
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

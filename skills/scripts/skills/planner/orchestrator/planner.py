@@ -394,8 +394,13 @@ def qr_verify_step(title, phase):
     """
 
     def handler(ctx):
+        from skills.planner.shared.qr.constants import (
+            VERIFY_MAX_PARALLEL,
+            VERIFY_TARGET_PER_GROUP,
+        )
         from skills.planner.shared.qr.phases import get_phase_config
         from skills.planner.shared.qr.utils import (
+            balance_verify_groups,
             by_blocking_severity,
             by_status,
             load_qr_state,
@@ -434,21 +439,26 @@ def qr_verify_step(title, phase):
         config = get_phase_config(phase)
         verify_script = config["verify_script"]
 
-        # Group items by group_id for batch verification.
-        groups = {}
-        for item in items:
-            gid = item.get("group_id") or item["id"]
-            groups.setdefault(gid, []).append(item)
+        # Re-bin items into balanced, capped parallel groups (audit §2 leak 2):
+        # the decompose group_id is an affinity hint, not a 1:1 dispatch key, so
+        # one fat group can't serialize the phase nor N singletons each pay the
+        # per-agent context-load cost. The synthetic vg-NNN label is display-only
+        # (item identity flows via item_ids/qr_item_flags) and is never persisted.
+        balanced = balance_verify_groups(
+            items,
+            max_parallel=VERIFY_MAX_PARALLEL,
+            target_per_group=VERIFY_TARGET_PER_GROUP,
+        )
 
         targets = [
             {
-                "group_id": gid,
+                "group_id": f"vg-{idx:03d}",
                 "item_ids": ",".join(i["id"] for i in group_items),
                 "qr_item_flags": _format_qr_item_flags([i["id"] for i in group_items]),
                 "item_count": str(len(group_items)),
                 "checks_summary": "; ".join(i.get("check", "")[:40] for i in group_items[:3]),
             }
-            for gid, group_items in groups.items()
+            for idx, group_items in enumerate(balanced, 1)
         ]
 
         # pin_cwd: the prose "Start:" line is a command the agent may copy and
@@ -472,7 +482,7 @@ Start: {start_cmd}"""
             template=tmpl,
             targets=targets,
             command=command,
-            instruction=f"Verify {len(groups)} groups ({len(items)} items) in parallel.",
+            instruction=f"Verify {len(balanced)} groups ({len(items)} items) in parallel.",
         )
 
         action_children = [
@@ -486,7 +496,7 @@ Start: {start_cmd}"""
             "",
             "=== PHASE 2: AGGREGATE (your action after all agents return) ===",
             "",
-            f"After ALL {len(groups)} agents return, tally results mechanically:",
+            f"After ALL {len(balanced)} agents return, tally results mechanically:",
             "  ALL agents returned PASS  ->  invoke next step with --qr-status pass",
             "  ANY agent returned FAIL   ->  invoke next step with --qr-status fail",
             "",

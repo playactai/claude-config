@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import fcntl
 import json
+import math
 import subprocess
 import sys
 import threading
@@ -28,6 +29,8 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 
 import pytest
+from hypothesis import given, settings
+from hypothesis import strategies as st
 
 from skills.lib.workflow.ast.dispatch import SubagentDispatchNode
 from skills.lib.workflow.ast.dispatch_renderer import (
@@ -48,10 +51,18 @@ from skills.planner.quality_reviewer.qr_verify_base import (
     _resolve_target_item,
 )
 from skills.planner.shared.gates import build_gate_output
-from skills.planner.shared.qr.constants import QR_ITERATION_LIMIT
+from skills.planner.shared.qr.constants import (
+    QR_ITERATION_LIMIT,
+    VERIFY_MAX_PARALLEL,
+    VERIFY_TARGET_PER_GROUP,
+)
 from skills.planner.shared.qr.phases import is_execution_phase
 from skills.planner.shared.qr.types import LoopState, QRState, QRStatus
-from skills.planner.shared.qr.utils import by_blocking_severity, qr_write_lock
+from skills.planner.shared.qr.utils import (
+    balance_verify_groups,
+    by_blocking_severity,
+    qr_write_lock,
+)
 from skills.planner.shared.resources import render_context_file
 from skills.planner.shared.schema import QRItem, SchemaValidationError, validate_state
 
@@ -526,6 +537,130 @@ class TestVerifyResultRecording:
         assert "--result PASS" in body
         assert "--result FAIL --finding" in body
         assert "update-item" not in body  # the two-tool cli.qr split is gone here
+
+
+@st.composite
+def _verify_item_lists(draw):
+    """Item lists with unique ids and varied (incl. None / shared) group_ids."""
+    n = draw(st.integers(min_value=0, max_value=120))
+    gids = draw(
+        st.lists(
+            st.one_of(
+                st.none(),
+                st.sampled_from(["umbrella", "component-a", "component-b", "concern-x", "parent-1"]),
+            ),
+            min_size=n,
+            max_size=n,
+        )
+    )
+    return [{"id": f"q{i}", "group_id": gids[i]} for i in range(n)]
+
+
+# --- audit §2 leak 2: verify items re-binned into balanced, capped groups -----
+class TestVerifyGroupBalancing:
+    @settings(max_examples=200)
+    @given(_verify_item_lists())
+    def test_balance_conserves_caps_and_balances(self, items):
+        groups = balance_verify_groups(
+            items, max_parallel=VERIFY_MAX_PARALLEL, target_per_group=VERIFY_TARGET_PER_GROUP
+        )
+        flat = [it for g in groups for it in g]
+        # Conservation: every input item appears exactly once.
+        assert sorted(it["id"] for it in flat) == sorted(it["id"] for it in items)
+        assert len(groups) <= VERIFY_MAX_PARALLEL  # count cap kills singleton explosion
+        assert all(g for g in groups)  # no empty group
+        if items:
+            sizes = [len(g) for g in groups]
+            assert max(sizes) - min(sizes) <= 1  # balanced
+            assert max(sizes) == math.ceil(len(items) / len(groups))  # size cap
+        else:
+            assert groups == []
+
+    def test_balance_edge_cases(self):
+        assert balance_verify_groups([], max_parallel=8, target_per_group=3) == []
+        assert balance_verify_groups([{"id": "a"}], max_parallel=8, target_per_group=3) == [
+            [{"id": "a"}]
+        ]
+        # Missing/None group_id and a missing id key must not raise.
+        mixed = balance_verify_groups(
+            [{"id": "a", "group_id": None}, {"group_id": "x"}], max_parallel=8, target_per_group=3
+        )
+        assert sum(len(g) for g in mixed) == 2
+        # all-same group_id, n=10 -> min(8, ceil(10/3)=4)=4 groups, sizes [3,3,2,2].
+        items = [{"id": f"q{i}", "group_id": "umbrella"} for i in range(10)]
+        groups = balance_verify_groups(items, max_parallel=8, target_per_group=3)
+        assert len(groups) == 4
+        assert sorted((len(g) for g in groups), reverse=True) == [3, 3, 2, 2]
+
+    def test_balance_preserves_affinity_adjacency(self):
+        # Members of a multi-item group_id stay contiguous after the group_id sort.
+        items = [
+            {"id": "a", "group_id": "affinity-x"},
+            {"id": "b", "group_id": "zzz"},
+            {"id": "c", "group_id": "affinity-x"},
+            {"id": "d", "group_id": "yyy"},
+            {"id": "e", "group_id": "affinity-x"},
+        ]
+        groups = balance_verify_groups(items, max_parallel=8, target_per_group=10)
+        assert len(groups) == 1
+        ids = [it["id"] for it in groups[0]]
+        pos = sorted(ids.index(x) for x in ("a", "c", "e"))
+        assert pos[-1] - pos[0] == 2  # contiguous: no foreign item between them
+
+    @staticmethod
+    def _fat_umbrella(n=30):
+        # One umbrella of n MUST items: without rebalancing it serializes to 1 agent.
+        return [
+            {
+                "id": f"qa-{i:03d}",
+                "scope": "*",
+                "check": f"c{i}",
+                "status": "TODO",
+                "severity": "MUST",
+                "group_id": "umbrella",
+            }
+            for i in range(n)
+        ]
+
+    def test_planner_verify_caps_groups_and_conserves_items(self, tmp_path: Path):
+        _write_qr(tmp_path, "plan-design", 1, self._fat_umbrella(30))
+        out = planner_orch.format_output(5, None, str(tmp_path))
+        assert isinstance(out, str)
+        assert out.count("Verify QR group:") == VERIFY_MAX_PARALLEL  # 30 -> 8 capped agents
+        assert "Verify 8 groups (30 items)" in out
+        assert "(8 items)" not in out  # the fat umbrella was split, not serialized
+        for i in range(30):
+            assert f"--qr-item qa-{i:03d}" in out  # conservation through dispatch
+
+    def test_executor_verify_caps_groups_and_conserves_items(self, tmp_path: Path):
+        _write_qr(tmp_path, "impl-code", 1, self._fat_umbrella(30))
+        out = executor_orch.format_output(4, str(tmp_path), None, False)
+        assert out.count("Verify QR group:") == VERIFY_MAX_PARALLEL
+        assert "Verify 8 groups (30 items)" in out
+        assert "(8 items)" not in out
+        for i in range(30):
+            assert f"--qr-item qa-{i:03d}" in out
+
+    def test_verify_caps_singleton_explosion(self, tmp_path: Path):
+        # The OTHER failure mode: 30 DISTINCT group_ids must not fan out to 30 agents
+        # (each paying the per-agent context-load cost). The cap merges them to 8.
+        items = [
+            {
+                "id": f"qa-{i:03d}",
+                "scope": "*",
+                "check": f"c{i}",
+                "status": "TODO",
+                "severity": "MUST",
+                "group_id": f"component-{i}",
+            }
+            for i in range(30)
+        ]
+        _write_qr(tmp_path, "plan-design", 1, items)
+        out = planner_orch.format_output(5, None, str(tmp_path))
+        assert isinstance(out, str)  # verify step returns str, not a GateResult
+        assert out.count("Verify QR group:") == VERIFY_MAX_PARALLEL  # 30 distinct -> 8, not 30
+        for i in range(30):
+            assert f"--qr-item qa-{i:03d}" in out  # all conserved
 
 
 if __name__ == "__main__":

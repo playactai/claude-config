@@ -28,6 +28,8 @@ from ..shared.schema import (
     Milestone,
     Overview,
     Plan,
+    SchemaValidationError,
+    Wave,
 )
 from . import plan_commands
 from .dispatch import batch as batch_dispatch
@@ -52,6 +54,7 @@ ROLE_PERMISSIONS = {
         "add-diagram-node",
         "add-diagram-edge",
         "set-diagram-render",
+        "set-wave",
     },
     "qr": {"validate"},
 }
@@ -180,14 +183,27 @@ def save_plan(state_dir: Path, plan: Plan):
 
     Uses a unique mkstemp temp (not a shared fixed plan.tmp that a concurrent
     writer would clobber) -- see skills.lib.io.atomic_write_text.
+
+    Validates after writing and rolls the prior content back if the mutation is
+    rejected, so a schema-invalid plan (e.g. a wave co-scheduling two milestones
+    that share a file) never persists -- matching the batch path's rollback.
     """
     from skills.lib.io import atomic_write_text
 
-    atomic_write_text(get_plan_path(state_dir), plan.model_dump_json(indent=2))
-    # Catch schema violations immediately after mutation
     from ..shared.schema import validate_state
 
-    validate_state(str(state_dir))
+    path = get_plan_path(state_dir)
+    prev = path.read_text() if path.exists() else None
+    atomic_write_text(path, plan.model_dump_json(indent=2))
+    try:
+        validate_state(str(state_dir))
+    except SchemaValidationError:
+        # Roll back the rejected mutation so the on-disk plan stays valid.
+        if prev is None:
+            path.unlink(missing_ok=True)
+        else:
+            atomic_write_text(path, prev)
+        raise
 
 
 # =============================================================================
@@ -679,6 +695,58 @@ class SetDiagramRenderCommand(Command):
 
 
 # =============================================================================
+# Commands: Execution Waves
+# =============================================================================
+
+
+class SetWaveCommand(Command):
+    name = "set-wave"
+    help = "Create or update an execution wave (milestones that run in parallel)"
+    role = "architect"
+
+    @classmethod
+    def add_arguments(cls, parser: argparse.ArgumentParser) -> None:
+        parser.add_argument("--id", help="Wave ID (omit for create)")
+        parser.add_argument(
+            "--milestones",
+            required=True,
+            help="Comma-separated milestone IDs that run in parallel "
+            "(may be empty to blank a wave)",
+        )
+
+    @classmethod
+    def run(cls, args: argparse.Namespace) -> None:
+        state_dir = get_state_dir()
+        plan = load_plan(state_dir)
+
+        # No CAS: Wave has no version field; waves are coarse, architect-only, and
+        # low-churn. save_plan re-runs validate_state, so an overlapping wave (two
+        # milestones sharing a file) is rejected the moment it is written.
+        milestones = [m.strip() for m in args.milestones.split(",") if m.strip()]
+
+        if args.id:
+            # UPDATE path: replace the wave's milestone list (upsert).
+            wave = next((w for w in plan.waves if w.id == args.id), None)
+            if not wave:
+                ids = [w.id for w in plan.waves]
+                validation_error(
+                    "wave.id",
+                    "Valid wave ID",
+                    args.id,
+                    f"Use existing: {', '.join(ids) or 'none'}",
+                )
+            wave.milestones = milestones
+            save_plan(state_dir, plan)
+            print_entity_result(EntityResult(id=wave.id, version=1, operation="updated"))
+        else:
+            # CREATE path
+            wid = f"W-{len(plan.waves) + 1:03d}"
+            plan.waves.append(Wave(id=wid, milestones=milestones))
+            save_plan(state_dir, plan)
+            print_entity_result(EntityResult(id=wid, version=1, operation="created"))
+
+
+# =============================================================================
 # Commands: Translate
 # =============================================================================
 
@@ -981,6 +1049,7 @@ COMMANDS: list[type[Command]] = [
     AddDiagramNodeCommand,
     AddDiagramEdgeCommand,
     SetDiagramRenderCommand,
+    SetWaveCommand,
     ValidateCommand,
     ListMilestonesCommand,
     ListIntentsCommand,
@@ -1053,7 +1122,12 @@ def cli(args: list[str] | None = None):
         if role_err:
             error_exit(role_err)
 
-    cmd_class.run(parsed)
+    # A mutation rejected by validate_state (e.g. a file-overlapping wave) rolls
+    # back in save_plan; surface it as a clean error, not a traceback.
+    try:
+        cmd_class.run(parsed)
+    except SchemaValidationError as e:
+        error_exit(str(e))
 
 
 def main():

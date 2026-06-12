@@ -17,6 +17,7 @@ import sys
 from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import ClassVar, Literal, NoReturn, cast
+from xml.sax.saxutils import escape
 
 from ..shared.schema import (
     CodeChange,
@@ -111,7 +112,7 @@ def get_plan_path(state_dir: Path) -> Path:
 def error_exit(msg: str, code: int = 1) -> NoReturn:
     """Print error in XML format and exit."""
     print(f"""<validation_error>
-  <message>{msg}</message>
+  <message>{escape(msg)}</message>
 </validation_error>""")
     sys.exit(code)
 
@@ -119,10 +120,10 @@ def error_exit(msg: str, code: int = 1) -> NoReturn:
 def validation_error(location: str, expected: str, actual: str, action: str) -> NoReturn:
     """Print detailed validation error."""
     print(f"""<validation_error>
-  <location>{location}</location>
-  <expected>{expected}</expected>
-  <actual>{actual}</actual>
-  <action>{action}</action>
+  <location>{escape(location)}</location>
+  <expected>{escape(expected)}</expected>
+  <actual>{escape(actual)}</actual>
+  <action>{escape(action)}</action>
 </validation_error>""")
     sys.exit(1)
 
@@ -1288,7 +1289,7 @@ class ValidateCommand(Command):
         if errors:
             print("<validation_errors>")
             for err in errors:
-                print(f"  <error>{err}</error>")
+                print(f"  <error>{escape(err)}</error>")
             print("</validation_errors>")
             sys.exit(1)
         else:

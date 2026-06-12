@@ -13,6 +13,7 @@ Router (plan_code.py) dispatches to appropriate script.
 """
 
 from skills.lib.conventions import get_convention
+from skills.lib.workflow.prompts.step import pin_cwd
 from skills.planner.shared.constraints import format_state_banner
 from skills.planner.shared.resources import (
     STATE_DIR_ARG_REQUIRED,
@@ -78,16 +79,16 @@ def get_step_guidance(step: int, module_path: str | None = None, **kwargs) -> di
                 "FORBIDDEN: Edit tool. You are planning, not implementing.",
                 "",
                 "CLI COMMANDS (single invocation):",
-                "  uv run python -m skills.planner.cli.plan --state-dir $STATE_DIR list-milestones",
-                "  uv run python -m skills.planner.cli.plan --state-dir $STATE_DIR list-intents M-001",
+                f"  {pin_cwd('uv run python -m skills.planner.cli.plan --state-dir $STATE_DIR list-milestones')}",
+                f"  {pin_cwd('uv run python -m skills.planner.cli.plan --state-dir $STATE_DIR list-intents M-001')}",
                 "  # Write the diff to a temp file first (Write tool), then reference it:",
-                "  uv run python -m skills.planner.cli.plan --state-dir $STATE_DIR set-change \\",
+                "  " + pin_cwd("uv run python -m skills.planner.cli.plan --state-dir $STATE_DIR set-change \\"),
                 "    --milestone M-001 --intent-ref CI-M-001-001 --file path.py --diff-file /tmp/cc.diff",
                 "",
                 "BATCH MODE (preferred for multiple changes) -- pass JSON via stdin, never inline:",
                 "",
                 "  # Write the batch JSON to a file (Write tool), then pipe it in:",
-                "  uv run python -m skills.planner.cli.plan --state-dir $STATE_DIR batch < /tmp/changes.json",
+                f"  {pin_cwd('uv run python -m skills.planner.cli.plan --state-dir $STATE_DIR batch < /tmp/changes.json')}",
                 "",
                 "  # /tmp/changes.json (JSON escapes apostrophes/backslashes/newlines for you):",
                 "  [",
@@ -149,7 +150,7 @@ def get_step_guidance(step: int, module_path: str | None = None, **kwargs) -> di
                 "WORKFLOW:",
                 "  1. Compose diff text following the format above",
                 "  2. Write tool: save the diff to a temp file (e.g. /tmp/CI-M-001-001.diff)",
-                "  3. Bash tool: uv run python -m skills.planner.cli.plan set-change ... --diff-file <path>",
+                f"  3. Bash tool: {pin_cwd('uv run python -m skills.planner.cli.plan set-change ... --diff-file <path>')}",
                 "",
                 "STOP CHECK: If you are about to use Edit on a source file, STOP.",
                 "That means you are implementing, not planning. Return to step 1.",
@@ -163,7 +164,7 @@ def get_step_guidance(step: int, module_path: str | None = None, **kwargs) -> di
                 "     +    new_code()",
                 "          context_line_after()",
                 "  # 2. Register it (no shell quoting of the diff body needed):",
-                "     uv run python -m skills.planner.cli.plan --state-dir $STATE_DIR set-change \\",
+                "     " + pin_cwd("uv run python -m skills.planner.cli.plan --state-dir $STATE_DIR set-change \\"),
                 "       --milestone M-001 --intent-ref CI-M-001-001 \\",
                 "       --file path/to/file.py \\",
                 "       --diff-file /tmp/CI-M-001-001.diff",
@@ -197,7 +198,7 @@ def get_step_guidance(step: int, module_path: str | None = None, **kwargs) -> di
             "actions": [
                 "VALIDATE plan.json using CLI:",
                 "",
-                "  uv run python -m skills.planner.cli.plan validate --phase plan-code",
+                f"  {pin_cwd('uv run python -m skills.planner.cli.plan validate --phase plan-code')}",
                 "",
                 "This validates (plan.json cross-references only):",
                 "  - Every code_intent has a matching code_change with valid intent_ref",

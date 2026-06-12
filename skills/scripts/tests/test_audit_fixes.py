@@ -25,6 +25,7 @@ import json
 import subprocess
 import sys
 import threading
+import xml.etree.ElementTree as ET
 from pathlib import Path
 
 import pytest
@@ -53,7 +54,7 @@ from skills.planner.shared.qr.phases import is_execution_phase
 from skills.planner.shared.qr.types import LoopState, QRState, QRStatus
 from skills.planner.shared.qr.utils import by_blocking_severity, qr_write_lock
 from skills.planner.shared.resources import render_context_file
-from skills.planner.shared.schema import QRItem, validate_state
+from skills.planner.shared.schema import QRItem, SchemaValidationError, validate_state
 
 
 def _sentinel_is_free(lock_path: Path) -> bool:
@@ -110,6 +111,23 @@ class TestSeverityCoercion:
         assert pred({"severity": "must"}) is True
         assert pred({"severity": "MUST"}) is True
         assert pred({"severity": "should"}) is False
+
+    def test_validate_state_ignores_noncanonical_scratch_files(self, tmp_path: Path):
+        # A decompose agent can leave bare-list scratch files in the state dir.
+        # Globbing qr-*.json and validating each as a QRFile dict aborted the whole
+        # run (audit #3 field evidence ab1dc60a: "input_type=list"). The canonical
+        # file must still validate while non-canonical scratch files are ignored.
+        _write_qr(tmp_path, "plan-code", 1, [])
+        (tmp_path / "qr-items.json").write_text(json.dumps([1, 2, 3]))
+        (tmp_path / "qr-items-draft.json").write_text(json.dumps([{"id": "z"}]))
+        validate_state(str(tmp_path))  # must not raise
+
+    def test_validate_state_still_aborts_on_corrupt_canonical_file(self, tmp_path: Path):
+        # Restricting the glob to canonical names must NOT weaken validation of a
+        # real qr-{phase}.json: a list-shaped canonical file is still a hard error.
+        (tmp_path / "qr-plan-code.json").write_text(json.dumps([{"id": "bad"}]))
+        with pytest.raises(SchemaValidationError):
+            validate_state(str(tmp_path))
 
 
 # --- Bug #6: literal "$" in template crashed dispatch ------------------------
@@ -342,7 +360,12 @@ class TestCwdPinnedCommands:
             command="uv run python -m skills.x --step 1",
         )
         out = render_subagent_dispatch(node)
-        assert f"cd {SKILLS_DIR} && uv run python -m skills.x" in out
+        # The invoke cmd is quoteattr-escaped (&& -> &amp;&amp;); parse the XML and
+        # assert the *decoded* command carries the absolute cd pin -- which also
+        # proves the dispatch fragment is well-formed (audit #9 sibling).
+        invoke = ET.fromstring(out).find(".//invoke")
+        assert invoke is not None
+        assert invoke.get("cmd") == f"cd {SKILLS_DIR} && uv run python -m skills.x --step 1"
         assert "cd .claude/skills/scripts" not in out  # the relative form is gone
 
     def test_executor_verify_start_line_is_pinned(self, tmp_path: Path):

@@ -18,6 +18,7 @@ Fix scripts separate from execute scripts:
 """
 
 from skills.lib.conventions import get_convention
+from skills.lib.workflow.prompts.step import pin_cwd
 from skills.planner.shared.constraints import format_state_banner
 from skills.planner.shared.qr.utils import (
     format_failed_items_for_fix,
@@ -116,17 +117,21 @@ def get_step_guidance(step: int, module_path: str | None = None, **kwargs) -> di
                 "  Context line mismatch:",
                 "    - Read actual file content",
                 "    - Update diff with correct context lines",
-                "    - Update via CLI with --version (get version from list-changes):",
-                "      uv run python -m skills.planner.cli.plan --state-dir $STATE_DIR set-change \\",
+                "    - Write corrected diff to a temp file (Write tool), then reference it:",
+                "      " + pin_cwd("uv run python -m skills.planner.cli.plan --state-dir $STATE_DIR set-change \\"),
                 "        --id CC-M-001-001 --version 1 --milestone M-001 \\",
-                "        --diff $'--- a/path/to/file.py\\n+++ b/path/to/file.py\\n...'",
+                "        --diff-file /tmp/CC-M-001-001.diff",
                 "",
-                "BATCH MODE (preferred - reduces process invocations):",
+                "BATCH MODE (preferred - reduces process invocations) -- pass JSON via stdin, never inline:",
                 "",
-                "  uv run python -m skills.planner.cli.plan --state-dir $STATE_DIR batch '[",
+                "  # Write the batch JSON to a file (Write tool), then pipe it in:",
+                f"  {pin_cwd('uv run python -m skills.planner.cli.plan --state-dir $STATE_DIR batch < /tmp/changes.json')}",
+                "",
+                "  # /tmp/changes.json (JSON escapes apostrophes/backslashes/newlines for you):",
+                "  [",
                 '    {"method": "set-change", "params": {"id": "CC-M-001-001", "version": 1, "milestone": "M-001", "diff": "--- a/src/a.py\\n+++ b/src/a.py\\n..."}, "id": 1},',
                 '    {"method": "set-change", "params": {"id": "CC-M-001-002", "version": 1, "milestone": "M-001", "diff": "--- a/src/b.py\\n+++ b/src/b.py\\n..."}, "id": 2}',
-                "  ]'",
+                "  ]",
                 "",
                 "COMMON FIX PATTERNS:",
                 "",
@@ -160,7 +165,7 @@ def get_step_guidance(step: int, module_path: str | None = None, **kwargs) -> di
                 "VALIDATE your fixes before returning to orchestrator.",
                 "",
                 "Run structural validation:",
-                f"  uv run python -m skills.planner.cli.plan validate --phase plan-code --state-dir {state_dir}",
+                f"  {pin_cwd(f'uv run python -m skills.planner.cli.plan validate --phase plan-code --state-dir {state_dir}')}",
                 "",
                 "SELF-CHECK each fixed item:",
                 "  For each FAIL item you addressed:",

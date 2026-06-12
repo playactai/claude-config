@@ -10,6 +10,8 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator
 
+from skills.planner.shared.qr.phases import get_all_phases
+
 # QR item defaults for defensive access when reading malformed data
 QA_ITEM_DEFAULTS = {
     "id": "unknown",
@@ -511,7 +513,16 @@ def validate_state(state_dir: str) -> None:
         except Exception as e:
             raise SchemaValidationError(f"{filename}: {e}") from e
 
-    for path in state_path.glob("qr-*.json"):
+    # Validate only the canonical qr-{phase}.json files. A decompose agent can
+    # leave non-canonical scratch files (e.g. qr-items.json, qr-items-draft.json)
+    # in the state dir; a bare `qr-*.json` glob validated those as QRFile dicts
+    # and aborted the whole run on a list-shaped scratch file (audit §3 #3, field
+    # evidence ab1dc60a: "Input should be a valid dictionary ... input_type=list").
+    # Restricting to the known phases ignores any non-canonical file by construction.
+    for phase in get_all_phases():
+        path = state_path / f"qr-{phase}.json"
+        if not path.exists():
+            continue
         try:
             data = json.loads(path.read_text())
             QRFile.model_validate(data)

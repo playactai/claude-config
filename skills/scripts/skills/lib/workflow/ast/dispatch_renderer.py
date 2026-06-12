@@ -10,6 +10,7 @@ Separate from ast/renderer.py because:
 """
 
 from string import Template
+from xml.sax.saxutils import escape, quoteattr
 
 from skills.lib.workflow.ast.dispatch import (
     RosterDispatchNode,
@@ -122,12 +123,12 @@ def render_subagent_dispatch(node: SubagentDispatchNode) -> str:
             "All agents must start with a prompt injection command (invoke)."
         )
 
-    lines = [f'<subagent_dispatch agent="{agent_type}" mode="script">']
+    lines = [f'<subagent_dispatch agent={quoteattr(agent_type)} mode="script">']
 
     # Always emit explicit model guidance to prevent LLM pattern-matching
     # from prior steps. See _build_model_selection() docstring.
     if node.model:
-        lines.append(f"  <model>{node.model}</model>")
+        lines.append(f"  <model>{escape(node.model)}</model>")
     else:
         lines.append("  <model>DEFAULT (omit model parameter from Task tool)</model>")
 
@@ -141,7 +142,7 @@ def render_subagent_dispatch(node: SubagentDispatchNode) -> str:
     # pin_cwd: absolute cd so the invocation survives a drifted agent cwd
     # (relative ".claude/skills/scripts" breaks from /tmp or a user-global install).
     lines.append('  <directive action="IMMEDIATELY invoke">')
-    lines.append(f'    <invoke cmd="{pin_cwd(node.command)}" />')
+    lines.append(f'    <invoke cmd={quoteattr(pin_cwd(node.command))} />')
     lines.append("  </directive>")
 
     lines.append("</subagent_dispatch>")
@@ -172,7 +173,7 @@ def render_template_dispatch(node: TemplateDispatchNode) -> str:
     expanded = _expand_template_targets(node.template, node.command, node.targets)
     count = len(expanded)
 
-    lines = [f'<parallel_dispatch agent="{node.agent_type}" count="{count}">']
+    lines = [f'<parallel_dispatch agent={quoteattr(node.agent_type)} count="{count}">']
 
     if node.instruction:
         lines.append("  <instruction>")
@@ -195,7 +196,7 @@ def render_template_dispatch(node: TemplateDispatchNode) -> str:
                 lines.append(f"        {prompt_line}" if prompt_line else "")
             lines.append("      </prompt>")
 
-        lines.append(f'      <invoke cmd="{pin_cwd(e["command"])}" />')
+        lines.append(f'      <invoke cmd={quoteattr(pin_cwd(e["command"]))} />')
         lines.append("    </agent>")
     lines.append("  </agents>")
 
@@ -226,7 +227,7 @@ def render_roster_dispatch(node: RosterDispatchNode) -> str:
 
     count = len(node.agents)
 
-    lines = [f'<parallel_dispatch agent="{node.agent_type}" count="{count}">']
+    lines = [f'<parallel_dispatch agent={quoteattr(node.agent_type)} count="{count}">']
 
     if node.instruction:
         lines.append("  <instruction>")
@@ -253,7 +254,7 @@ def render_roster_dispatch(node: RosterDispatchNode) -> str:
         for task_line in agent_prompt.split("\n"):
             lines.append(f"        {task_line}" if task_line else "")
         lines.append("      </task>")
-        lines.append(f'      <invoke cmd="{pin_cwd(node.command)}" />')
+        lines.append(f'      <invoke cmd={quoteattr(pin_cwd(node.command))} />')
         lines.append("    </agent>")
     lines.append("  </agents>")
 

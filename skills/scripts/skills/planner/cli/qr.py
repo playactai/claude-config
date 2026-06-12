@@ -40,6 +40,7 @@ import json
 import sys
 from pathlib import Path
 from typing import NoReturn
+from xml.sax.saxutils import escape
 
 from skills.lib.io import atomic_write_text
 from skills.planner.shared.qr.utils import qr_write_lock
@@ -68,7 +69,7 @@ FORBIDS_FINDING = frozenset({"PASS"})
 def error_exit(msg: str, code: int = 1) -> NoReturn:
     """Print error in XML format and exit."""
     print(f"""<qr_cli_error>
-  <message>{msg}</message>
+  <message>{escape(msg)}</message>
 </qr_cli_error>""")
     sys.exit(code)
 

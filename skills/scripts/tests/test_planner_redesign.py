@@ -273,6 +273,19 @@ def test_impl_docs_qr_verifies_doc_only_acceptance_criteria():
     assert "DOCUMENTATION-ONLY DELIVERABLE CHECK" in deliverable
 
 
+def test_doc_deliverable_unsatisfied_is_must_not_should():
+    # A doc-only milestone's whole purpose is its deliverable; an unproduced one is
+    # knowledge loss. It must block all iterations (escalating to the user at the
+    # ceiling per gates.py) rather than de-escalating to a silent pass at iteration 4+.
+    from skills.planner.quality_reviewer.impl_docs_qr_decompose import STEP_5_GENERATE
+
+    boundary = STEP_5_GENERATE.index("SHOULD (iterations")
+    must_block = STEP_5_GENERATE[:boundary]
+    should_and_below = STEP_5_GENERATE[boundary:]
+    assert "DOC_DELIVERABLE_UNSATISFIED" in must_block
+    assert "DOC_DELIVERABLE_UNSATISFIED" not in should_and_below
+
+
 # --- Terminal gate: user-accept at the iteration ceiling finalizes the plan ---
 def _write_ceiling_qr(state_dir, phase="plan-design"):
     """plan.json + qr-{phase}.json at the iteration ceiling with an unresolved MUST."""
@@ -321,7 +334,8 @@ def test_iteration_limit_escalation_emits_runnable_accept_command(tmp_path):
 
     _write_ceiling_qr(tmp_path)
     result = format_output(6, "fail", str(tmp_path))
-    out = result.output if isinstance(result, GateResult) else result
+    assert isinstance(result, GateResult)
+    out = result.output
     # The bug was a prose-only Accept with no command (nothing saved). The escalation
     # must now carry a runnable --accept-findings command, and not finalize on its own.
     assert "--accept-findings" in out

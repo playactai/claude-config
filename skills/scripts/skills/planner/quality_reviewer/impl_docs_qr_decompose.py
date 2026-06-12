@@ -75,17 +75,19 @@ DOCUMENTATION-ONLY MILESTONES:
 STEP_5_GENERATE = """\
 SEVERITY ASSIGNMENT (per conventions/severity.md, impl-docs scope):
 
-  MUST (blocks all iterations) - KNOWLEDGE categories:
+  MUST (blocks all iterations) - knowledge loss & planned-deliverable completeness:
     - IK_TRANSFER_FAILURE: invisible knowledge not at best location
     - TEMPORAL_CONTAMINATION: change-relative language in comments
     - BASELINE_REFERENCE: comment references removed code
+    - DOC_DELIVERABLE_UNSATISFIED: a documentation-only milestone's acceptance
+      criteria not met by its authored files. The planned doc that does not
+      exist IS the knowledge loss; at the iteration ceiling this escalates to
+      the user rather than finalizing the plan with the deliverable missing.
 
   SHOULD (iterations 1-3):
     - CLAUDE.md format violations
     - README.md missing where scope warrants
     - WHY-not-WHAT violations
-    - DOC_DELIVERABLE_UNSATISFIED: a documentation-only milestone's acceptance
-      criteria not met by its authored files
 
   COULD (iterations 1-2):
     - Minor formatting inconsistencies

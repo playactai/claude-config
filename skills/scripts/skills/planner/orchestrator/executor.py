@@ -609,16 +609,20 @@ def main():
 
         # validate_state checks structure + refs only. Also enforce the durable
         # contract on the re-derived plan: every code milestone keeps its
-        # code_intents and doc-only <=> no intents (audit: code_intents are
-        # load-bearing). Kept out of validate_state because the planner saves
-        # partial plans mid-build, which would not yet satisfy completeness.
+        # code_intents and is covered by a wave (validate_completeness). Kept out of
+        # validate_state because the planner saves partial plans mid-build, which
+        # would not yet satisfy completeness. Fail CLOSED on a missing plan.json:
+        # a step>1 run always expects the real plan, and validate_state silently
+        # skips absent files -- so without this guard the executor would dispatch an
+        # empty implementation with no completeness check at all.
         plan_path = Path(state_dir) / "plan.json"
-        if plan_path.exists():
-            errors = Plan.model_validate(
-                json.loads(plan_path.read_text())
-            ).validate_completeness("plan-design")
-            if errors:
-                sys.exit("Plan completeness failed: " + "; ".join(errors))
+        if not plan_path.exists():
+            sys.exit(f"Error: plan.json not found in {state_dir} (required for step {args.step})")
+        errors = Plan.model_validate(
+            json.loads(plan_path.read_text())
+        ).validate_completeness("plan-design")
+        if errors:
+            sys.exit("Plan completeness failed: " + "; ".join(errors))
 
     print(format_output(args.step, state_dir, args.qr_status, args.reconciliation_check))
 

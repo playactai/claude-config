@@ -431,6 +431,34 @@ def test_executor_main_rejects_plan_missing_code_intents(tmp_path):
     assert "completeness" in (result.stdout + result.stderr).lower()
 
 
+def test_executor_step2_requires_plan_json(tmp_path):
+    # Fail closed: a step>1 run whose state dir lacks plan.json must error, not
+    # silently dispatch an empty implementation with no completeness check
+    # (validate_state also skips an absent plan.json).
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    scripts_dir = Path(__file__).parent.parent
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "skills.planner.orchestrator.executor",
+            "--step",
+            "2",
+            "--state-dir",
+            str(tmp_path),
+        ],
+        capture_output=True,
+        text=True,
+        timeout=30,
+        cwd=scripts_dir,
+    )
+    assert result.returncode != 0
+    assert "plan.json not found" in (result.stdout + result.stderr)
+
+
 def test_wave_referencing_unknown_milestone_fails_validation(tmp_path):
     # Waves are first-class milestone cross-references; a dangling ref must abort.
     import json

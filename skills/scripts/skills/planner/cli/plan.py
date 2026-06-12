@@ -332,11 +332,25 @@ class SetMilestoneCommand(Command):
             if tests:
                 ms.tests = tests
             # Reversible: None means "not specified" (leave as-is); True/False set explicitly.
+            # Marking doc-only means "no code" (doc-only <=> no code_intents -- the exclusivity
+            # validate_completeness enforces). A milestone may already carry intents and there
+            # is no delete-intent op, so realize the toggle by clearing them here; otherwise the
+            # save passes but final validation rejects the plan and the architect cannot recover
+            # it via the CLI.
+            cleared_intents = 0
             if args.documentation_only is not None:
                 ms.is_documentation_only = args.documentation_only
+                if args.documentation_only and ms.code_intents:
+                    cleared_intents = len(ms.code_intents)
+                    ms.code_intents = []
 
             bump_version(ms)
             save_plan(state_dir, plan)
+            if cleared_intents:
+                success(
+                    f"Cleared {cleared_intents} code intent(s) from {ms.id} "
+                    f"to make it documentation-only."
+                )
             print_entity_result(EntityResult(id=ms.id, version=ms.version, operation="updated"))
 
         else:

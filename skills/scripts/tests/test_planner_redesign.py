@@ -186,18 +186,50 @@ def test_set_intent_on_doc_only_milestone_is_rejected(tmp_path):
         pc.set_intent(ctx, milestone="M-001", file="README.md", behavior="x")
 
 
-def test_doc_only_flag_on_milestone_with_intents_fails_validation(tmp_path):
-    # Belt-and-suspenders: exclusivity is still caught at validate time when the flag
-    # is set on a milestone that already has intents (the path the guard can't cover).
+def test_doc_only_toggle_clears_intents_to_stay_valid(tmp_path):
+    # Reviewer P2: toggling a code milestone to documentation-only must not save a plan
+    # that final validation then rejects (doc-only <=> no code_intents). With no
+    # delete-intent op, the toggle clears the now-contradictory intents so the milestone
+    # becomes genuinely doc-only and validates -- the architect is never wedged.
     from skills.planner.cli import plan_commands as pc
 
     ctx = pc.PlanContext(state_dir=tmp_path)
     pc.init(ctx, task="t")
     pc.set_milestone(ctx, name="Code", files="a.py")
     pc.set_intent(ctx, milestone="M-001", file="a.py", behavior="x")
-    pc.set_milestone(ctx, id="M-001", documentation_only=True)
-    errors = ctx.load_plan().validate_completeness("plan-design")
-    assert any("documentation-only but has code_intents" in e for e in errors)
+    result = pc.set_milestone(ctx, id="M-001", documentation_only=True)
+    assert result["cleared_code_intents"] == 1  # the clear is reported, not silent
+
+    plan = ctx.load_plan()
+    assert plan.milestones[0].is_documentation_only is True
+    assert plan.milestones[0].code_intents == []  # contradiction removed
+    assert plan.validate_completeness("plan-design") == []  # no longer wedged invalid
+
+
+def test_doc_only_cli_toggle_clears_intents(tmp_path, capsys):
+    # The single-CLI path (plan.py) mirrors the batch RPC: toggling doc-only on a
+    # milestone with intents clears them, reports the count, and leaves a valid plan.
+    from skills.planner.cli import plan as plan_cli
+
+    plan_cli.cli(["--state-dir", str(tmp_path), "init", "--task", "t"])
+    plan_cli.cli(
+        ["--state-dir", str(tmp_path), "set-milestone", "--name", "Code", "--files", "a.py"]
+    )
+    plan_cli.cli(
+        ["--state-dir", str(tmp_path), "set-intent", "--milestone", "M-001",
+         "--file", "a.py", "--behavior", "x"]
+    )
+    capsys.readouterr()  # discard the setup output
+    plan_cli.cli(
+        ["--state-dir", str(tmp_path), "set-milestone", "--id", "M-001", "--documentation-only"]
+    )
+    out = capsys.readouterr().out
+    assert "Cleared 1 code intent" in out
+
+    plan = plan_cli.load_plan(tmp_path)
+    assert plan.milestones[0].is_documentation_only is True
+    assert plan.milestones[0].code_intents == []
+    assert plan.validate_completeness("plan-design") == []
 
 
 def test_documentation_only_is_reversible(tmp_path):
@@ -656,6 +688,89 @@ def test_wave_overlap_detected_across_path_spellings(tmp_path):
     plan = _plan_with_waves(
         [("M-001", ["src/a.py"], False), ("M-002", ["./src/a.py"], False)],
         [("W-001", ["M-001", "M-002"])],
+    )
+    (tmp_path / "plan.json").write_text(plan.model_dump_json())
+    with pytest.raises(SchemaValidationError, match="share file"):
+        validate_state(str(tmp_path))
+
+
+def test_wave_overlap_detected_via_code_intent_files(tmp_path):
+    # Reviewer P2: Milestone.files is empty, but two milestones' code_intents target the
+    # SAME physical file (differing spellings). A developer agent is dispatched per
+    # milestone and writes every file across that milestone's code_intents[], so the
+    # overlap guard must union intent targets into each milestone's file set (and
+    # normalize them) -- else the two milestones' developers race on shared.py mid-write,
+    # the corruption this check exists to prevent.
+    from skills.planner.shared.schema import (
+        CodeIntent,
+        Milestone,
+        Overview,
+        Plan,
+        SchemaValidationError,
+        Wave,
+        validate_state,
+    )
+
+    plan = Plan(
+        overview=Overview(problem="p", approach="a"),
+        milestones=[
+            Milestone(
+                id="M-001",
+                number=1,
+                name="A",
+                files=[],
+                code_intents=[CodeIntent(id="CI-001", file="shared.py", behavior="x")],
+            ),
+            Milestone(
+                id="M-002",
+                number=2,
+                name="B",
+                files=[],
+                code_intents=[CodeIntent(id="CI-002", file="./shared.py", behavior="y")],
+            ),
+        ],
+        waves=[Wave(id="W-001", milestones=["M-001", "M-002"])],
+    )
+    (tmp_path / "plan.json").write_text(plan.model_dump_json())
+    with pytest.raises(SchemaValidationError, match="share file"):
+        validate_state(str(tmp_path))
+
+
+def test_wave_overlap_detected_cross_source_files_vs_intent(tmp_path):
+    # The union must catch a CROSS-SOURCE collision: M-001 declares the file in
+    # Milestone.files while M-002 reaches it only via code_intents[].file. Both
+    # milestones' developers would write shared.py, so co-scheduling them is still the
+    # corruption case -- the guard must not require both sides to come from the same
+    # field.
+    from skills.planner.shared.schema import (
+        CodeIntent,
+        Milestone,
+        Overview,
+        Plan,
+        SchemaValidationError,
+        Wave,
+        validate_state,
+    )
+
+    plan = Plan(
+        overview=Overview(problem="p", approach="a"),
+        milestones=[
+            Milestone(
+                id="M-001",
+                number=1,
+                name="A",
+                files=["shared.py"],
+                code_intents=[CodeIntent(id="CI-001", file="a.py", behavior="x")],
+            ),
+            Milestone(
+                id="M-002",
+                number=2,
+                name="B",
+                files=["b.py"],
+                code_intents=[CodeIntent(id="CI-002", file="shared.py", behavior="y")],
+            ),
+        ],
+        waves=[Wave(id="W-001", milestones=["M-001", "M-002"])],
     )
     (tmp_path / "plan.json").write_text(plan.model_dump_json())
     with pytest.raises(SchemaValidationError, match="share file"):

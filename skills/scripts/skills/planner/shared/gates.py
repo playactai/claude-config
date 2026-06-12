@@ -14,7 +14,7 @@ from skills.planner.shared.builders import (
     shell_quote,
 )
 from skills.planner.shared.qr.constants import QR_ITERATION_LIMIT
-from skills.planner.shared.qr.types import AgentRole, QRState
+from skills.planner.shared.qr.types import AgentRole, QRState, QRStatus
 from skills.planner.shared.qr.utils import (
     by_blocking_severity,
     by_status,
@@ -53,6 +53,21 @@ def _unresolved_blocking_findings(state_dir: str, phase: str, iteration: int) ->
         if item.get("finding"):
             lines.append(f"        finding: {item['finding']}")
     return lines
+
+
+def _has_recorded_failure(state_dir: str, phase: str) -> bool:
+    """True when qr-{phase}.json records at least one FAIL item (any severity).
+
+    Distinguishes a *de-escalated* pass (FAIL items exist but none blocking at the
+    current iteration -- the legitimate case that upgrades a severity-blind
+    --qr-status fail to a pass) from an *absent* verdict (no FAIL recorded at all:
+    a verifier returned FAIL without persisting its item, or items remain TODO).
+    Only the former may upgrade an explicit fail to a pass.
+    """
+    qr_state = load_qr_state(state_dir, phase)
+    if not qr_state:
+        return False
+    return bool(query_items(qr_state, by_status("FAIL")))
 
 
 def _build_iteration_limit_escalation(
@@ -194,7 +209,7 @@ def build_gate_output(
     authority is absolute): treat QR as passed despite unresolved findings, so a
     terminal gate (pass_step=None) finalizes the plan instead of re-escalating.
     """
-    # Severity-aware on-disk state is the single source of truth. The
+    # Severity-aware on-disk state is the primary source of truth. The
     # agent-supplied qr.status (--qr-status) is a severity-blind PASS/FAIL
     # tally; past the de-escalation threshold it disagrees with the work step
     # and router (which read has_qr_failures), so routing on it made the gate
@@ -205,6 +220,18 @@ def build_gate_output(
     if state_dir and phase:
         passed = not has_qr_failures(state_dir, phase)
         iteration = get_qr_iteration(state_dir, phase)
+        # has_qr_failures reads False in two distinct situations: failures have
+        # de-escalated below the blocking threshold (a real pass), OR nothing is
+        # recorded yet -- a verifier returned FAIL without persisting its item, or
+        # items are still TODO. An explicit --qr-status fail must not be silently
+        # upgraded to a pass in the second case: with no recorded FAIL there is no
+        # de-escalation to justify the upgrade, so the aggregator's failure stands.
+        if (
+            passed
+            and qr.status == QRStatus.FAIL
+            and not _has_recorded_failure(state_dir, phase)
+        ):
+            passed = False
     else:
         passed = qr.passed
         iteration = qr.iteration

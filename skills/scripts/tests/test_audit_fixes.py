@@ -186,6 +186,36 @@ class TestGateSourceOfTruth:
         assert "GATE RESULT: FAIL" in out
         assert "--step 2" in out  # routes to the fixer (work_step)
 
+    def test_explicit_fail_vetoes_pass_when_no_failure_recorded(self, tmp_path: Path):
+        # Reviewer P1: --qr-status fail with NO recorded FAIL item on disk (a verifier
+        # returned FAIL without persisting its item, or items remain TODO) must NOT be
+        # upgraded to a disk-derived pass -- absent any recorded failure there is no
+        # de-escalation to justify the upgrade, so the explicit failure stands.
+        _write_qr(
+            tmp_path,
+            "impl-code",
+            1,
+            [{"id": "q1", "scope": "*", "check": "x", "status": "TODO", "severity": "MUST"}],
+        )
+        qr = QRState(iteration=1, state=LoopState.RETRY, status=QRStatus.FAIL)
+        out = _gate(tmp_path, qr).output
+        assert "GATE RESULT: FAIL" in out
+        assert "--step 2" in out  # routes to the fixer, does not finalize
+
+    def test_explicit_fail_does_not_veto_genuine_deescalated_pass(self, tmp_path: Path):
+        # The veto must not defeat the legitimate de-escalation upgrade: a RECORDED
+        # SHOULD FAIL below the blocking threshold (iteration 4 blocks only MUST) is a
+        # real pass even though the aggregator reports --qr-status fail.
+        _write_qr(
+            tmp_path,
+            "impl-code",
+            4,
+            [{"id": "q1", "scope": "*", "check": "x", "status": "FAIL", "severity": "SHOULD"}],
+        )
+        qr = QRState(iteration=4, state=LoopState.INITIAL, status=QRStatus.FAIL)
+        out = _gate(tmp_path, qr).output
+        assert "GATE RESULT: PASS" in out
+
 
 # --- Bug #2: enforced iteration ceiling with user escalation -----------------
 class TestGateIterationCap:

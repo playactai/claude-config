@@ -247,10 +247,20 @@ if True:
             milestone_ids = {ms.id for ms in self.milestones}
 
             # Per-wave invariants in a single pass (id uniqueness, milestone refs,
-            # intra-wave file overlap). Paths are lexically normalized once so the
-            # overlap check compares physical files, not spellings.
+            # intra-wave file overlap). Each milestone's file set is the union of its
+            # declared files AND its code intents' target files, lexically normalized
+            # once so the overlap check compares physical files, not spellings. Intents
+            # are folded in because the executor dispatches one developer per milestone,
+            # and that developer writes every file across the milestone's code_intents[]:
+            # a missing or stale Milestone.files must not let two milestones whose intent
+            # targets collide co-schedule in one wave (their two developers would then
+            # race on the shared file mid-write).
             milestone_files = {
-                ms.id: {os.path.normpath(f) for f in ms.files} for ms in self.milestones
+                ms.id: {
+                    os.path.normpath(f)
+                    for f in (*ms.files, *(ci.file for ci in ms.code_intents))
+                }
+                for ms in self.milestones
             }
             seen_wave_ids: set[str] = set()
             for w in self.waves:
@@ -271,11 +281,12 @@ if True:
 
                 # Two milestones in one wave run as concurrent developer agents; if
                 # they touch the same file they corrupt it mid-write (audit §2 leak 1).
-                # Compare normalized Milestone.files so 'src/a.py' and './src/a.py'
-                # cannot evade the check. Dedupe to distinct resolvable ids: a
-                # milestone listed twice is a coverage issue (caught by
-                # validate_completeness), not a self-overlap, and each pair is
-                # reported once. Dangling refs are reported above.
+                # Compare the normalized file sets built above (declared files plus
+                # intent targets) so 'src/a.py' and './src/a.py' cannot evade the
+                # check. Dedupe to distinct resolvable ids: a milestone listed twice
+                # is a coverage issue (caught by validate_completeness), not a
+                # self-overlap, and each pair is reported once. Dangling refs are
+                # reported above.
                 resolved = list(
                     dict.fromkeys(mid for mid in w.milestones if mid in milestone_files)
                 )

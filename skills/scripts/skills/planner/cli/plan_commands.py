@@ -174,13 +174,23 @@ def set_milestone(
             ms.acceptance_criteria = acceptance_list
         if tests_list:
             ms.tests = tests_list
-        # Reversible: None = leave as-is; True/False set explicitly.
+        # Reversible: None = leave as-is; True/False set explicitly. Marking doc-only
+        # means "no code" (doc-only <=> no code_intents); clear any existing intents here
+        # so the save can't pass while final validate_completeness rejects the plan --
+        # there is no delete-intent op to recover it otherwise.
+        cleared_intents = 0
         if documentation_only is not None:
             ms.is_documentation_only = documentation_only
+            if documentation_only and ms.code_intents:
+                cleared_intents = len(ms.code_intents)
+                ms.code_intents = []
 
         _bump_version(ms)
         ctx.save_plan(plan)
-        return {"id": ms.id, "version": ms.version, "operation": "updated"}
+        result = {"id": ms.id, "version": ms.version, "operation": "updated"}
+        if cleared_intents:
+            result["cleared_code_intents"] = cleared_intents
+        return result
     else:
         # CREATE
         if version is not None:

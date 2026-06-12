@@ -155,15 +155,27 @@ def test_issue_22_mode_main_unit():
 
 
 def _write_plan(state_dir: Path, milestones: list[dict]) -> None:
-    """Write a schema-valid plan.json with the given milestones.
+    """Write a completeness-valid plan.json with the given milestones.
 
-    Each milestone dict may omit number/name/files; sensible defaults fill them so
-    the result passes Plan validation. (The step-6 gate path under test reads qr
-    state, not plan.json -- a valid fixture keeps the test honest and future-proof.)
+    Each milestone dict may omit number/name/files; sensible defaults fill them.
+    Every code milestone gets a default code_intent (unless supplied) and its own
+    single-milestone wave, so the plan satisfies the step-6 gate -- which now
+    enforces the same wave-coverage + intent completeness the executor does, not
+    just qr state.
     """
-    norm = [
-        {"number": i, "name": ms.get("name", f"M{i}"), "files": ms.get("files", ["a.py"]), **ms}
-        for i, ms in enumerate(milestones, 1)
+    norm = []
+    for i, ms in enumerate(milestones, 1):
+        m = {"number": i, "name": ms.get("name", f"M{i}"), "files": ms.get("files", ["a.py"]), **ms}
+        if not m.get("is_documentation_only") and not m.get("code_intents"):
+            m["code_intents"] = [{"id": f"CI-{m.get('id', i)}", "file": m["files"][0], "behavior": "x"}]
+        norm.append(m)
+    # One wave per code milestone: covers every code milestone exactly once, and a
+    # single milestone per wave cannot trip the intra-wave file-overlap guard.
+    waves = [
+        {"id": f"W-{i:03d}", "milestones": [m["id"]]}
+        for i, m in enumerate(
+            (m for m in norm if m.get("id") and not m.get("is_documentation_only")), 1
+        )
     ]
     plan = {
         "overview": {"problem": "x", "approach": "y"},
@@ -175,7 +187,7 @@ def _write_plan(state_dir: Path, milestones: list[dict]) -> None:
         },
         "invisible_knowledge": {"system": "", "invariants": [], "tradeoffs": []},
         "milestones": norm,
-        "waves": [],
+        "waves": waves,
     }
     (state_dir / "plan.json").write_text(json.dumps(plan))
 

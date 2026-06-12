@@ -304,7 +304,10 @@ def _write_ceiling_qr(state_dir, phase="plan-design"):
                         "code_intents": [{"id": "CI-1", "file": "a.py", "behavior": "do x"}],
                     }
                 ],
-                "waves": [],
+                # Completeness-valid (code milestone covered by a wave): isolates the
+                # accept-findings/escalation behaviour under test from the gate's
+                # structural wave-coverage veto.
+                "waves": [{"id": "W-001", "milestones": ["M-001"]}],
             }
         )
     )
@@ -483,7 +486,94 @@ def test_set_wave_batch_mode(tmp_path):
     methods = discover_methods(pc)
     results = batch(methods, [{"method": "set-wave", "params": {"milestones": "M-001"}, "id": 1}], ctx)
     assert results[0]["result"]["operation"] == "created"
+    # Wave has no CAS field, so the result must not carry a meaningless version.
+    assert "version" not in results[0]["result"]
     assert [w.milestones for w in ctx.load_plan().waves] == [["M-001"]]
+
+
+def test_set_wave_accepts_valid_multi_milestone_wave(tmp_path):
+    # Positive control: two file-disjoint code milestones grouped in one wave is a
+    # genuinely well-formed, executable plan -- accepted and completeness-valid.
+    from skills.planner.cli import plan_commands as pc
+
+    ctx = pc.PlanContext(state_dir=tmp_path)
+    pc.init(ctx, task="t")
+    pc.set_milestone(ctx, name="auth", files="a.py")
+    pc.set_milestone(ctx, name="users", files="b.py")
+    pc.set_intent(ctx, milestone="M-001", file="a.py", behavior="x")
+    pc.set_intent(ctx, milestone="M-002", file="b.py", behavior="y")
+    pc.set_wave(ctx, milestones="M-001,M-002")
+
+    plan = ctx.load_plan()
+    assert [(w.id, w.milestones) for w in plan.waves] == [("W-001", ["M-001", "M-002"])]
+    assert plan.validate_completeness("plan-design") == []  # proves acceptance of a valid wave
+
+
+def test_set_wave_update_unknown_id_raises(tmp_path):
+    # An --id that matches no wave must error (not silently create), so a mistyped
+    # update can't strand the intended wave.
+    from skills.planner.cli import plan_commands as pc
+
+    ctx = pc.PlanContext(state_dir=tmp_path)
+    pc.init(ctx, task="t")
+    pc.set_milestone(ctx, name="auth", files="a.py")
+    with pytest.raises(ValueError, match="Wave W-404 not found"):
+        pc.set_wave(ctx, id="W-404", milestones="M-001")
+    assert ctx.load_plan().waves == []  # nothing created on the miss
+
+
+def test_set_wave_batch_requires_milestones(tmp_path):
+    # Batch parity with the CLI's required --milestones: omitting milestones errors
+    # instead of silently creating an empty wave the CLI would reject.
+    from skills.planner.cli import plan_commands as pc
+    from skills.planner.cli.dispatch import batch, discover_methods
+
+    ctx = pc.PlanContext(state_dir=tmp_path)
+    pc.init(ctx, task="t")
+    pc.set_milestone(ctx, name="auth", files="a.py")
+    methods = discover_methods(pc)
+    results = batch(methods, [{"method": "set-wave", "params": {}, "id": 1}], ctx)
+    assert "error" in results[0]
+    assert "milestones" in results[0]["error"]["message"]
+    assert ctx.load_plan().waves == []  # no empty wave persisted
+
+
+def test_duplicate_wave_ids_rejected(tmp_path):
+    # Two waves sharing an id (hand-authored / transcription typo): validate_state
+    # rejects so update-by-id cannot silently edit one and strand the other.
+    import json
+
+    from skills.planner.shared.schema import SchemaValidationError, validate_state
+
+    (tmp_path / "plan.json").write_text(
+        json.dumps(
+            {
+                "overview": {"problem": "p", "approach": "a"},
+                "milestones": [
+                    {
+                        "id": "M-001",
+                        "number": 1,
+                        "name": "m",
+                        "files": ["a.py"],
+                        "code_intents": [{"id": "CI-1", "file": "a.py", "behavior": "x"}],
+                    },
+                    {
+                        "id": "M-002",
+                        "number": 2,
+                        "name": "n",
+                        "files": ["b.py"],
+                        "code_intents": [{"id": "CI-2", "file": "b.py", "behavior": "y"}],
+                    },
+                ],
+                "waves": [
+                    {"id": "W-002", "milestones": ["M-001"]},
+                    {"id": "W-002", "milestones": ["M-002"]},
+                ],
+            }
+        )
+    )
+    with pytest.raises(SchemaValidationError, match="duplicate wave id"):
+        validate_state(str(tmp_path))
 
 
 def _plan_with_waves(milestones, waves):
@@ -521,6 +611,80 @@ def test_wave_with_overlapping_files_rejected(tmp_path):
     (tmp_path / "plan.json").write_text(plan.model_dump_json())
     with pytest.raises(SchemaValidationError, match="share file"):
         validate_state(str(tmp_path))
+
+
+def test_wave_overlap_detected_across_path_spellings(tmp_path):
+    # 'src/a.py' and './src/a.py' are the same physical file; the overlap guard
+    # normalizes paths before intersecting, so the differing spelling can't evade
+    # the concurrent-write check it exists to enforce.
+    from skills.planner.shared.schema import SchemaValidationError, validate_state
+
+    plan = _plan_with_waves(
+        [("M-001", ["src/a.py"], False), ("M-002", ["./src/a.py"], False)],
+        [("W-001", ["M-001", "M-002"])],
+    )
+    (tmp_path / "plan.json").write_text(plan.model_dump_json())
+    with pytest.raises(SchemaValidationError, match="share file"):
+        validate_state(str(tmp_path))
+
+
+def test_plan_gate_blocks_qr_pass_on_incomplete_plan(tmp_path):
+    # A QR-pass on a plan whose code milestone is in no wave must NOT terminal-pass:
+    # the gate runs the same completeness contract the executor hard-exits on and
+    # routes back to the architect instead of saving an unexecutable plan (audit F1).
+    from skills.planner.orchestrator.planner import format_output
+
+    plan = _plan_with_waves([("M-001", ["a.py"], False)], [])  # code milestone, no waves
+    (tmp_path / "plan.json").write_text(plan.model_dump_json())
+    result = format_output(6, "pass", str(tmp_path))
+    assert isinstance(result, GateResult)
+    assert result.terminal_pass is False
+    assert "not assigned to any wave" in result.output
+    assert "--step 3" in result.output  # routes back to the architect (work_step)
+
+
+def test_plan_gate_terminal_pass_on_complete_plan(tmp_path):
+    # Complement: a completeness-valid plan still reaches terminal PLAN APPROVED, so
+    # the structural veto does not block legitimately-finished plans.
+    from skills.planner.orchestrator.planner import format_output
+
+    plan = _plan_with_waves([("M-001", ["a.py"], False)], [("W-001", ["M-001"])])
+    (tmp_path / "plan.json").write_text(plan.model_dump_json())
+    result = format_output(6, "pass", str(tmp_path))
+    assert isinstance(result, GateResult)
+    assert result.terminal_pass is True
+    assert "PLAN APPROVED" in result.output
+
+
+def test_architect_router_surfaces_completeness_gaps_after_veto(tmp_path):
+    # After the step-6 gate vetoes a QR-passing-but-incomplete plan and routes back,
+    # the architect re-enters EXECUTE mode (no QR failures), so the router must list
+    # the structural gaps -- otherwise the re-plan is blind and the loop has no
+    # convergence pressure.
+    from skills.planner.architect.plan_design import get_step_guidance
+
+    plan = _plan_with_waves([("M-001", ["a.py"], False)], [])  # code milestone, no wave
+    (tmp_path / "plan.json").write_text(plan.model_dump_json())
+    guidance = get_step_guidance(1, state_dir=str(tmp_path))
+    body = "\n".join(guidance["actions"])
+    assert "not assigned to any wave" in body
+    assert "set-wave" in body
+
+
+def test_architect_router_silent_on_first_time_skeleton(tmp_path):
+    # An empty skeleton is genuine first-time execution, not a repairable gap: the
+    # router must NOT frame it as "approval blocked by structural gaps".
+    import json
+
+    from skills.planner.architect.plan_design import get_step_guidance
+
+    (tmp_path / "plan.json").write_text(
+        json.dumps({"overview": {"problem": "", "approach": ""}, "milestones": [], "waves": []})
+    )
+    guidance = get_step_guidance(1, state_dir=str(tmp_path))
+    body = "\n".join(guidance["actions"])
+    assert "First-time execution" in body
+    assert "structural gaps" not in body
 
 
 def test_wave_coverage_required_for_code_milestones():
@@ -609,8 +773,9 @@ def test_save_plan_rolls_back_rejected_mutation(tmp_path):
     assert (tmp_path / "plan.json").read_bytes() == before  # rolled back byte-identically
 
 
-def test_save_plan_unlinks_on_rejected_first_write(tmp_path):
-    # prev-is-None path: a rejected FIRST write must not orphan a bad plan.json.
+def test_save_plan_writes_nothing_on_rejected_first_write(tmp_path):
+    # First-write path: validate-before-write rejects a bad mutation without ever
+    # creating plan.json (no orphan, nothing to roll back).
     from skills.planner.cli.plan import save_plan
     from skills.planner.shared.schema import SchemaValidationError
 
@@ -620,7 +785,7 @@ def test_save_plan_unlinks_on_rejected_first_write(tmp_path):
     )
     with pytest.raises(SchemaValidationError, match="share file"):
         save_plan(tmp_path, bad)
-    assert not (tmp_path / "plan.json").exists()  # unlinked, no orphan left behind
+    assert not (tmp_path / "plan.json").exists()  # never written, no orphan left behind
 
 
 def test_milestone_listed_twice_in_wave_is_coverage_not_self_overlap():

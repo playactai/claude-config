@@ -5,6 +5,7 @@ Pydantic is a required dependency (pydantic>=2.0 in pyproject.toml).
 """
 
 import json
+import os
 from pathlib import Path
 from typing import Literal
 
@@ -244,25 +245,42 @@ if True:
             decision_ids = {dl.id for dl in self.planning_context.decisions}
             milestone_ids = {ms.id for ms in self.milestones}
 
-            # Waves are first-class milestone cross-references (executor IR): a wave
-            # listing a nonexistent milestone would silently drop it from execution.
+            # Per-wave invariants in a single pass (id uniqueness, milestone refs,
+            # intra-wave file overlap). Paths are lexically normalized once so the
+            # overlap check compares physical files, not spellings.
+            milestone_files = {
+                ms.id: {os.path.normpath(f) for f in ms.files} for ms in self.milestones
+            }
+            seen_wave_ids: set[str] = set()
             for w in self.waves:
+                # Wave ids are the executor's dispatch handles and the update-by-id
+                # key; a duplicate id makes update-by-id edit only the first match and
+                # silently strand the rest. set-wave only ever derives contiguous ids,
+                # so the realistic source is a hand-authored/transcribed plan.json.
+                if w.id in seen_wave_ids:
+                    errors.append(f"duplicate wave id '{w.id}'")
+                seen_wave_ids.add(w.id)
+
+                # Waves are first-class milestone cross-references (executor IR): a
+                # wave listing a nonexistent milestone would silently drop it from
+                # execution.
                 for mid in w.milestones:
                     if mid not in milestone_ids:
                         errors.append(f"wave {w.id} references unknown milestone '{mid}'")
 
-            # Two milestones in one wave run as concurrent developer agents; if they
-            # touch the same file they corrupt it mid-write (audit §2 leak 1). Reject
-            # file overlap within a wave -- deterministic from Milestone.files. Dangling
-            # refs are reported above, so only compare milestones that resolve.
-            milestone_files = {ms.id: set(ms.files) for ms in self.milestones}
-            for w in self.waves:
-                resolved = [mid for mid in w.milestones if mid in milestone_files]
+                # Two milestones in one wave run as concurrent developer agents; if
+                # they touch the same file they corrupt it mid-write (audit §2 leak 1).
+                # Compare normalized Milestone.files so 'src/a.py' and './src/a.py'
+                # cannot evade the check. Dedupe to distinct resolvable ids: a
+                # milestone listed twice is a coverage issue (caught by
+                # validate_completeness), not a self-overlap, and each pair is
+                # reported once. Dangling refs are reported above.
+                resolved = list(
+                    dict.fromkeys(mid for mid in w.milestones if mid in milestone_files)
+                )
                 for i in range(len(resolved)):
                     for j in range(i + 1, len(resolved)):
                         a, b = resolved[i], resolved[j]
-                        if a == b:
-                            continue  # listed twice -> a coverage issue, not self-overlap
                         shared = milestone_files[a] & milestone_files[b]
                         if shared:
                             errors.append(
@@ -479,6 +497,28 @@ def validate_state(state_dir: str) -> None:
             raise SchemaValidationError(f"{path.name}: {e}") from e
 
 
+def plan_completeness_errors(state_dir: str, phase: str) -> list[str]:
+    """Load plan.json and return its validate_completeness errors ([] when N/A).
+
+    Shared by the QR gate (which vetoes a QR-pass on a structurally incomplete
+    plan) and the architect router (which surfaces the same gaps to the
+    re-dispatched architect), so the two read the contract from one place.
+    Tolerant of a missing/unparseable plan.json -- validate_state already gates
+    schema validity at step entry, so this layers only the phase completeness
+    check; returns [] for phases without a completeness rule (impl-code/docs).
+    """
+    if not (state_dir and phase):
+        return []
+    path = Path(state_dir) / "plan.json"
+    if not path.exists():
+        return []
+    try:
+        plan = Plan.model_validate(json.loads(path.read_text()))
+    except Exception:
+        return []
+    return plan.validate_completeness(phase)
+
+
 # =============================================================================
 # Exports
 # =============================================================================
@@ -510,5 +550,6 @@ __all__ = [
     "SchemaValidationError",
     "Wave",
     "get_qa_state_schema_example",
+    "plan_completeness_errors",
     "validate_state",
 ]

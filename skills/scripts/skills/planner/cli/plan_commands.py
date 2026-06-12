@@ -27,7 +27,6 @@ def _get_schema():
         Overview,
         Plan,
         Wave,
-        validate_state,
     )
 
     return {
@@ -40,7 +39,6 @@ def _get_schema():
         "DiagramNode": DiagramNode,
         "DiagramEdge": DiagramEdge,
         "Wave": Wave,
-        "validate_state": validate_state,
     }
 
 
@@ -66,11 +64,22 @@ class PlanContext:
         return schema["Plan"].model_validate(data)
 
     def save_plan(self, plan: Plan) -> None:
+        """Validate the in-memory plan, then atomically persist it.
+
+        Mirrors the module-level cli.plan.save_plan: validate cross-references
+        BEFORE writing, so a rejected mutation never reaches disk (no bad write,
+        no rollback) and an unrelated malformed qr-{phase}.json does not fail a
+        valid plan mutation. The batch path layers its own transaction snapshot on
+        top for all-or-nothing across multiple commands.
+        """
         from skills.lib.io import atomic_write_text
 
-        schema = _get_schema()
+        from ..shared.schema import SchemaValidationError
+
+        errors = plan.validate_refs()
+        if errors:
+            raise SchemaValidationError(f"plan.json: {errors}")
         atomic_write_text(self.plan_path(), plan.model_dump_json(indent=2))
-        schema["validate_state"](str(self.state_dir))
 
 
 def _parse_csv(value: str | None) -> list[str]:
@@ -421,13 +430,18 @@ def set_diagram_render(ctx: PlanContext, diagram: str, content_file: str) -> dic
 
 def set_wave(
     ctx: PlanContext,
-    milestones: str | None = None,
+    milestones: str,
     id: str | None = None,
 ) -> dict:
     """Create or update an execution wave (milestones that run in parallel).
 
-    No CAS (Wave has no version field). save_plan re-runs validate_state, so a
-    wave co-scheduling two milestones that share a file is rejected on write.
+    `milestones` is required (it may be the empty string to blank a wave), matching
+    the `plan set-wave` CLI's required --milestones flag -- a batch call omitting it
+    errors instead of silently creating an empty wave the CLI would reject.
+
+    No CAS (Wave has no version field), so the result omits `version`: save_plan
+    validates cross-references, rejecting a wave that co-schedules two milestones
+    sharing a file.
     """
     schema = _get_schema()
     plan = ctx.load_plan()
@@ -442,12 +456,12 @@ def set_wave(
             raise ValueError(f"Wave {id} not found. Valid: {ids}")
         wave.milestones = milestones_list
         ctx.save_plan(plan)
-        return {"id": wave.id, "version": 1, "operation": "updated"}
+        return {"id": wave.id, "operation": "updated"}
 
     wid = f"W-{len(plan.waves) + 1:03d}"
     plan.waves.append(schema["Wave"](id=wid, milestones=milestones_list))
     ctx.save_plan(plan)
-    return {"id": wid, "version": 1, "operation": "created"}
+    return {"id": wid, "operation": "created"}
 
 
 def _translate(ctx: PlanContext, output: str) -> dict:

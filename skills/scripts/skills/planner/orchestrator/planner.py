@@ -31,10 +31,14 @@ from skills.lib.workflow.constants import (
     QUESTION_RELAY_HANDLER,
     SUB_AGENT_QUESTION_FORMAT,
 )
-from skills.lib.workflow.prompts import pin_cwd, subagent_dispatch, template_dispatch
+from skills.lib.workflow.prompts import subagent_dispatch
 from skills.lib.workflow.prompts.step import format_step
 from skills.lib.workflow.types import AgentRole
-from skills.planner.shared.builders import THINKING_EFFICIENCY, format_forbidden
+from skills.planner.shared.builders import (
+    THINKING_EFFICIENCY,
+    build_qr_verify_dispatch,
+    format_forbidden,
+)
 from skills.planner.shared.constraints import (
     ORCHESTRATOR_CONSTRAINT_EXTENDED,
     format_state_banner,
@@ -376,11 +380,6 @@ def qr_decompose_step(title, phase, script, model=None):
     return handler
 
 
-def _format_qr_item_flags(item_ids: list[str]) -> str:
-    """Format item IDs as repeated --qr-item flags."""
-    return " ".join(f"--qr-item {id}" for id in item_ids)
-
-
 def qr_verify_step(title, phase):
     """Steps 5, 9, 13: Parallel QR verification with group-aware dispatch.
 
@@ -394,13 +393,8 @@ def qr_verify_step(title, phase):
     """
 
     def handler(ctx):
-        from skills.planner.shared.qr.constants import (
-            VERIFY_MAX_PARALLEL,
-            VERIFY_TARGET_PER_GROUP,
-        )
         from skills.planner.shared.qr.phases import get_phase_config
         from skills.planner.shared.qr.utils import (
-            balance_verify_groups,
             by_blocking_severity,
             by_status,
             load_qr_state,
@@ -439,51 +433,10 @@ def qr_verify_step(title, phase):
         config = get_phase_config(phase)
         verify_script = config["verify_script"]
 
-        # Re-bin items into balanced, capped parallel groups (audit §2 leak 2):
-        # the decompose group_id is an affinity hint, not a 1:1 dispatch key, so
-        # one fat group can't serialize the phase nor N singletons each pay the
-        # per-agent context-load cost. The synthetic vg-NNN label is display-only
-        # (item identity flows via item_ids/qr_item_flags) and is never persisted.
-        balanced = balance_verify_groups(
-            items,
-            max_parallel=VERIFY_MAX_PARALLEL,
-            target_per_group=VERIFY_TARGET_PER_GROUP,
-        )
-
-        targets = [
-            {
-                "group_id": f"vg-{idx:03d}",
-                "item_ids": ",".join(i["id"] for i in group_items),
-                "qr_item_flags": _format_qr_item_flags([i["id"] for i in group_items]),
-                "item_count": str(len(group_items)),
-                "checks_summary": "; ".join(i.get("check", "")[:40] for i in group_items[:3]),
-            }
-            for idx, group_items in enumerate(balanced, 1)
-        ]
-
-        # pin_cwd: the prose "Start:" line is a command the agent may copy and
-        # run directly, so it carries the absolute cd that the invoke block below
-        # already has -- otherwise a drifted cwd yields "No module named 'skills'".
-        start_cmd = pin_cwd(
-            f"uv run python -m {verify_script} --step 1 --state-dir {state_dir} $qr_item_flags"
-        )
-        tmpl = f"""Verify QR group: $group_id ($item_count items)
-Items: $item_ids
-Checks: $checks_summary
-
-Start: {start_cmd}"""
-
-        command = (
-            f"uv run python -m {verify_script} --step 1 --state-dir {state_dir} $qr_item_flags"
-        )
-
-        dispatch_text = template_dispatch(
-            agent_type="quality-reviewer",
-            template=tmpl,
-            targets=targets,
-            command=command,
-            instruction=f"Verify {len(balanced)} groups ({len(items)} items) in parallel.",
-        )
+        # Re-bin items into balanced, capped parallel groups and build the dispatch
+        # (shared with executor.py via build_qr_verify_dispatch -- one owner for the
+        # cap scheme, vg-NNN labels, shell-quoting, and the pinned Start: command).
+        dispatch_text, group_count = build_qr_verify_dispatch(verify_script, state_dir, items)
 
         action_children = [
             ORCHESTRATOR_CONSTRAINT_EXTENDED,
@@ -496,7 +449,7 @@ Start: {start_cmd}"""
             "",
             "=== PHASE 2: AGGREGATE (your action after all agents return) ===",
             "",
-            f"After ALL {len(balanced)} agents return, tally results mechanically:",
+            f"After ALL {group_count} agents return, tally results mechanically:",
             "  ALL agents returned PASS  ->  invoke next step with --qr-status pass",
             "  ANY agent returned FAIL   ->  invoke next step with --qr-status fail",
             "",

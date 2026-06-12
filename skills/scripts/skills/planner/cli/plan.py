@@ -179,31 +179,24 @@ def load_plan(state_dir: Path) -> Plan:
 
 
 def save_plan(state_dir: Path, plan: Plan):
-    """Atomic write via a unique temp file + rename under a lock.
+    """Validate the in-memory plan, then atomically persist it.
 
-    Uses a unique mkstemp temp (not a shared fixed plan.tmp that a concurrent
-    writer would clobber) -- see skills.lib.io.atomic_write_text.
+    Validates cross-references BEFORE writing, so a schema-invalid mutation (e.g.
+    a wave co-scheduling two milestones that share a file) is rejected without
+    ever touching disk -- no bad write, no rollback, and no re-read/re-parse of a
+    plan already held in memory. Scoped to plan.json: a plan mutation is not
+    failed by an unrelated malformed qr-{phase}.json in the same state dir (those
+    are validated by the orchestrator's validate_state at step entry).
 
-    Validates after writing and rolls the prior content back if the mutation is
-    rejected, so a schema-invalid plan (e.g. a wave co-scheduling two milestones
-    that share a file) never persists -- matching the batch path's rollback.
+    Atomic write uses a unique mkstemp temp + rename (not a shared fixed plan.tmp
+    a concurrent writer would clobber) -- see skills.lib.io.atomic_write_text.
     """
     from skills.lib.io import atomic_write_text
 
-    from ..shared.schema import validate_state
-
-    path = get_plan_path(state_dir)
-    prev = path.read_text() if path.exists() else None
-    atomic_write_text(path, plan.model_dump_json(indent=2))
-    try:
-        validate_state(str(state_dir))
-    except SchemaValidationError:
-        # Roll back the rejected mutation so the on-disk plan stays valid.
-        if prev is None:
-            path.unlink(missing_ok=True)
-        else:
-            atomic_write_text(path, prev)
-        raise
+    errors = plan.validate_refs()
+    if errors:
+        raise SchemaValidationError(f"plan.json: {errors}")
+    atomic_write_text(get_plan_path(state_dir), plan.model_dump_json(indent=2))
 
 
 # =============================================================================
@@ -720,8 +713,9 @@ class SetWaveCommand(Command):
         plan = load_plan(state_dir)
 
         # No CAS: Wave has no version field; waves are coarse, architect-only, and
-        # low-churn. save_plan re-runs validate_state, so an overlapping wave (two
-        # milestones sharing a file) is rejected the moment it is written.
+        # low-churn. save_plan validates cross-references in memory before writing,
+        # so an overlapping wave (two milestones sharing a file) is rejected without
+        # ever touching disk.
         milestones = [m.strip() for m in args.milestones.split(",") if m.strip()]
 
         if args.id:
@@ -737,13 +731,15 @@ class SetWaveCommand(Command):
                 )
             wave.milestones = milestones
             save_plan(state_dir, plan)
-            print_entity_result(EntityResult(id=wave.id, version=1, operation="updated"))
+            # No version: Wave has no CAS field (unlike milestone/intent/decision),
+            # so emitting one would falsely imply an update bumped it.
+            success(f"Updated wave {wave.id}: {', '.join(milestones) or '(empty)'}")
         else:
             # CREATE path
             wid = f"W-{len(plan.waves) + 1:03d}"
             plan.waves.append(Wave(id=wid, milestones=milestones))
             save_plan(state_dir, plan)
-            print_entity_result(EntityResult(id=wid, version=1, operation="created"))
+            success(f"Created wave {wid}: {', '.join(milestones) or '(empty)'}")
 
 
 # =============================================================================
@@ -1122,8 +1118,8 @@ def cli(args: list[str] | None = None):
         if role_err:
             error_exit(role_err)
 
-    # A mutation rejected by validate_state (e.g. a file-overlapping wave) rolls
-    # back in save_plan; surface it as a clean error, not a traceback.
+    # A mutation rejected by validate_refs (e.g. a file-overlapping wave) raises in
+    # save_plan before writing; surface it as a clean error, not a traceback.
     try:
         cmd_class.run(parsed)
     except SchemaValidationError as e:

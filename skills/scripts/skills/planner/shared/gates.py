@@ -123,6 +123,53 @@ def _build_iteration_limit_escalation(
     return GateResult(output=body, terminal_pass=False)
 
 
+def _build_completeness_block(
+    module_path: str,
+    qr_name: str,
+    work_step: int,
+    state_dir: str,
+    errors: list[str],
+    fix_target: AgentRole | None,
+) -> GateResult:
+    """Gate output when QR passed but the plan is structurally unexecutable.
+
+    Routes back to the fixer (work_step) with the completeness errors, mirroring
+    the executor's validate_completeness hard-exit but BEFORE approval -- so an
+    approved plan is never saved to docs only to dead-end at execution.
+    """
+    target_name = fix_target.value if fix_target else "architect"
+    parts = [
+        format_gate_result(passed=False),
+        "",
+        "QR passed, but the plan is not executable as written. It fails the same",
+        "structural contract the executor enforces (validate_completeness), which",
+        "hard-exits on it:",
+        "",
+    ]
+    parts.extend(f"  - {e}" for e in errors)
+    parts.append("")
+    parts.append(
+        f"NEXT ACTION:\n"
+        f"  Invoke the next step command.\n"
+        f"  The next step will dispatch {target_name} to repair the plan structure "
+        f"(e.g. author the missing execution waves)."
+    )
+    parts.append("")
+    parts.append(
+        format_forbidden(
+            "Finalizing or saving the plan with these structural errors",
+            "Treating wave coverage as optional",
+            "Proceeding to execution -- the executor will reject this plan",
+        )
+    )
+    body = "\n".join(parts)
+    next_cmd = f"uv run python -m {module_path} --step {work_step} --state-dir {shlex.quote(state_dir)}"
+    return GateResult(
+        output=format_step(body, next_cmd, title=f"{qr_name} Gate"),
+        terminal_pass=False,
+    )
+
+
 def build_gate_output(
     module_path: str,
     qr_name: str,
@@ -169,6 +216,27 @@ def build_gate_output(
     # cannot silently pass a gate that has not yet exhausted its fix iterations.
     if accept_findings and iteration >= QR_ITERATION_LIMIT:
         passed = True
+
+    # Deterministic structural gate: QR is LLM judgement, but an approved plan must
+    # also satisfy the same completeness contract the executor enforces (and hard-
+    # exits on). A QR-pass that is structurally unexecutable -- a code milestone in
+    # no wave, a doc-only milestone left in a wave -- routes back to the fixer
+    # instead of finalizing an unexecutable plan. Even --accept-findings cannot
+    # waive this: the override is about QR finding severity, not structural validity.
+    # No-op for the executor (validate_completeness returns [] for impl-code/docs).
+    if passed:
+        from skills.planner.shared.schema import plan_completeness_errors
+
+        completeness_errors = plan_completeness_errors(state_dir, phase)
+        if completeness_errors:
+            return _build_completeness_block(
+                module_path=module_path,
+                qr_name=qr_name,
+                work_step=work_step,
+                state_dir=state_dir,
+                errors=completeness_errors,
+                fix_target=fix_target,
+            )
 
     # Iteration ceiling: de-escalation never drops MUST, so an unfixable MUST
     # blocks every iteration and the work -> verify -> route loop would run

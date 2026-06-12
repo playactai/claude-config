@@ -570,6 +570,15 @@ class TestVerifyGroupBalancing:
         assert len(groups) <= VERIFY_MAX_PARALLEL  # count cap kills singleton explosion
         assert all(g for g in groups)  # no empty group
         if items:
+            # Pin the EXACT group count, not just the upper bound: k must be
+            # min(cap, ceil(n / target_per_group)). Without this a balancer that
+            # ignores target_per_group (k=min(cap,n) -> singleton explosion) or
+            # collapses to k=1 (full serialization) still satisfies every other
+            # assertion below -- the property meant to guard parallelism.
+            expected_k = min(
+                VERIFY_MAX_PARALLEL, math.ceil(len(items) / VERIFY_TARGET_PER_GROUP)
+            )
+            assert len(groups) == expected_k
             sizes = [len(g) for g in groups]
             assert max(sizes) - min(sizes) <= 1  # balanced
             assert max(sizes) == math.ceil(len(items) / len(groups))  # size cap

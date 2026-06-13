@@ -104,9 +104,9 @@ Phases: `qr-plan-design`, `qr-impl-code`, `qr-impl-docs`
 | 1    | plan-init               | `init_step()`             | Creates plan.json    | Orchestrator |
 | 2    | context-verify          | `verify_step()`           | Creates context.json | Orchestrator |
 | 3    | plan-design-work        | `execute_dispatch_step()` | plan.json            | Architect    |
-| 4    | plan-design-qr-decompose| `qr_dispatch_step()`      | qr-plan-design.json  | QR           |
-| 5    | plan-design-qr-verify   | `qr_dispatch_step()`      | qr-plan-design.json  | QR           |
-| 6    | plan-design-qr-route    | `qr_gate_step()`          | Renders plan.md (PASS) | Orchestrator |
+| 4    | plan-design-qr-decompose| `qr_decompose_step()`     | qr-plan-design.json  | QR           |
+| 5    | plan-design-qr-verify   | `qr_verify_step()`        | qr-plan-design.json  | QR           |
+| 6    | plan-design-qr-route    | `qr_route_step()`         | Renders plan.md (PASS) | Orchestrator |
 
 Terminal on PASS at step 6: **PLAN APPROVED**.
 
@@ -202,9 +202,10 @@ def execute_dispatch_step(title, agent, script, ...):
 
 STEPS = {
     1: init_step("plan-init", ...),
-    3: execute_dispatch_step("plan-design-execute", agent="architect", ...),
-    4: qr_dispatch_step("plan-design-qr", ...),
-    5: qr_gate_step("plan-design-qr-gate", ...),
+    3: execute_dispatch_step("plan-design-work", agent="architect", ...),
+    4: qr_decompose_step("plan-design-qr-decompose", ...),
+    5: qr_verify_step("plan-design-qr-verify", ...),
+    6: qr_route_step("plan-design-qr-route", ...),
 }
 ```
 

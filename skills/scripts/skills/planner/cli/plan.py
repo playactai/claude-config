@@ -779,7 +779,7 @@ class SetWaveCommand(Command):
             success(f"Updated wave {wave.id}: {', '.join(milestones) or '(empty)'}")
         else:
             # CREATE path
-            wid = f"W-{max((int(w.id.split('-')[1]) for w in plan.waves), default=0) + 1:03d}"
+            wid = plan.next_wave_id()
             plan.waves.append(Wave(id=wid, milestones=milestones))
             save_plan(state_dir, plan)
             success(f"Created wave {wid}: {', '.join(milestones) or '(empty)'}")

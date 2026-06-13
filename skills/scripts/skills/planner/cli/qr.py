@@ -44,6 +44,7 @@ from xml.sax.saxutils import escape
 
 from skills.lib.io import atomic_write_text
 from skills.planner.shared.qr.utils import qr_write_lock
+from skills.planner.shared.schema import canonicalize_severity
 
 from . import qr_commands
 from .dispatch import batch as batch_dispatch
@@ -52,9 +53,6 @@ from .output import EntityResult, print_entity_result
 
 # Valid status values (match QAItemStatus enum)
 VALID_STATUSES = frozenset({"PASS", "FAIL"})
-
-# Valid severity values (per conventions/severity.md)
-VALID_SEVERITIES = frozenset({"MUST", "SHOULD", "COULD"})
 
 # Terminal statuses that cannot be changed
 TERMINAL_STATUSES = frozenset({"PASS"})
@@ -146,9 +144,14 @@ def cmd_update_item(state_dir: str, phase: str, args: list[str]):
             finding = args[i + 1]
             i += 2
         elif args[i] == "--severity" and i + 1 < len(args):
-            severity = args[i + 1].upper()
-            if severity not in VALID_SEVERITIES:
-                error_exit(f"Invalid severity: {severity}. Must be MUST, SHOULD, or COULD")
+            raw = args[i + 1]
+            canonical = canonicalize_severity(raw)
+            if canonical is None:
+                error_exit(
+                    f"Invalid severity: {raw}. Must be MUST, SHOULD, or COULD "
+                    "(or BLOCKER/CRITICAL)."
+                )
+            severity = canonical
             i += 2
         else:
             i += 1

@@ -35,6 +35,29 @@ QA_ITEM_ALL_FIELDS = QA_ITEM_REQUIRED_FIELDS | QA_ITEM_OPTIONAL_FIELDS
 # Valid severity values (per conventions/severity.md)
 VALID_SEVERITIES = frozenset({"MUST", "SHOULD", "COULD"})
 
+# Out-of-set tokens decompose agents occasionally emit meaning "maximum/blocking".
+_SEVERITY_SYNONYMS = {"BLOCKER": "MUST", "CRITICAL": "MUST"}
+
+
+def canonicalize_severity(v: object) -> str | None:
+    """Map a raw severity token to a canonical tier, or None if unrecognized.
+
+    Recognizes MUST/SHOULD/COULD (case-insensitive) plus the documented
+    high-severity synonyms (BLOCKER/CRITICAL -> MUST, preserving blocking
+    force). Returns None for genuinely-unknown tokens so callers pick policy:
+    schema/routing default None -> SHOULD (lenient ingest, never aborts the
+    run); the interactive update-item CLI rejects None (typo feedback).
+    """
+    if v is None:
+        return None
+    s = str(v).strip().upper()
+    if not s:
+        return None
+    if s in VALID_SEVERITIES:
+        return s
+    return _SEVERITY_SYNONYMS.get(s)
+
+
 PYDANTIC_AVAILABLE = True
 
 
@@ -234,6 +257,21 @@ if True:
             """
             return [ms for ms in self.milestones if not ms.is_documentation_only]
 
+        def next_wave_id(self) -> str:
+            """Next contiguous W-NNN id, skipping non-canonical existing ids.
+
+            max()-based (not len()+1) because waves can be pruned (a doc-only
+            toggle drops an emptied wave), so len()+1 could collide with a
+            surviving id. A hand-authored/transcribed id like 'W1' or 'W-1a' is
+            skipped rather than crashing int(w.id.split('-')[1]).
+            """
+            nums = []
+            for w in self.waves:
+                prefix, _, suffix = w.id.partition("-")
+                if prefix == "W" and suffix.isdigit():
+                    nums.append(int(suffix))
+            return f"W-{max(nums, default=0) + 1:03d}"
+
         def validate_diagram_edges(self, diagram_id: str) -> list[str]:
             """Validate edges for a specific diagram."""
             errors = []
@@ -411,20 +449,16 @@ if True:
         @field_validator("severity", mode="before")
         @classmethod
         def _normalize_severity(cls, v: object) -> str:
-            """Case-fold and coerce severity on ingest.
+            """Coerce severity on ingest; never aborts the run.
 
-            Decompose agents occasionally emit lower-case ("must") or
-            out-of-set ("BLOCKER") severities. The routing layer
-            (by_blocking_severity) already tolerates unknowns by treating them
-            as non-blocking, so a strict Literal that aborts validate_state --
-            and with it the whole planner/executor run -- is more brittle than
-            the behaviour it guards. Normalise to the canonical set, defaulting
-            unknown/empty values to SHOULD.
+            Delegates to canonicalize_severity (MUST/SHOULD/COULD plus the
+            high-severity synonyms BLOCKER/CRITICAL -> MUST). A strict Literal
+            that aborted validate_state -- and with it the whole
+            planner/executor run -- would be more brittle than the behaviour it
+            guards, so a genuinely-unknown token defaults to SHOULD rather than
+            raising.
             """
-            if v is None:
-                return "SHOULD"
-            s = str(v).strip().upper()
-            return s if s in VALID_SEVERITIES else "SHOULD"
+            return canonicalize_severity(v) or "SHOULD"
 
     class QRFile(BaseModel):
         """qr-{phase}.json file structure."""
@@ -584,6 +618,7 @@ __all__ = [
     "Risk",
     "SchemaValidationError",
     "Wave",
+    "canonicalize_severity",
     "get_qa_state_schema_example",
     "plan_completeness_errors",
     "validate_state",

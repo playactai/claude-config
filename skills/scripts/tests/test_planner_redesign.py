@@ -667,6 +667,66 @@ def test_set_wave_update_unknown_id_raises(tmp_path):
     assert ctx.load_plan().waves == []  # nothing created on the miss
 
 
+def test_next_wave_id_skips_non_canonical(tmp_path):
+    # A hand-authored/transcribed plan.json may carry a non-canonical wave id
+    # (e.g. "W1" or "legacy"). next_wave_id must skip those instead of crashing
+    # int(w.id.split('-')[1]), and derive the next id from the max canonical one
+    # (max(), not len()+1, because waves can be pruned and len()+1 would collide).
+    from skills.planner.shared.schema import Overview, Plan, Wave
+
+    plan = Plan(
+        overview=Overview(problem="p", approach="a"),
+        waves=[
+            Wave(id="W-001", milestones=[]),
+            Wave(id="W1", milestones=[]),
+            Wave(id="legacy", milestones=[]),
+        ],
+    )
+    assert plan.next_wave_id() == "W-002"  # max canonical (1) + 1; no crash
+
+
+def test_next_wave_id_avoids_pruned_gap_collision():
+    # next_wave_id is max()-based (not len()+1) precisely so that, after a doc-only
+    # toggle prunes an emptied middle wave, the next id cannot collide with a
+    # surviving one: here len()+1 would yield the colliding W-003, max()+1 gives W-004.
+    from skills.planner.shared.schema import Overview, Plan, Wave
+
+    plan = Plan(
+        overview=Overview(problem="p", approach="a"),
+        waves=[Wave(id="W-001", milestones=["M-001"]), Wave(id="W-003", milestones=["M-003"])],
+    )
+    assert plan.next_wave_id() == "W-004"
+
+
+def test_set_wave_create_survives_non_canonical_existing_id(tmp_path):
+    # End-to-end: a create against a plan already holding a non-canonical wave id
+    # returns a clean next id instead of an unhandled traceback.
+    from skills.planner.cli import plan_commands as pc
+    from skills.planner.shared.schema import Wave
+
+    ctx = pc.PlanContext(state_dir=tmp_path)
+    pc.init(ctx, task="t")
+    pc.set_milestone(ctx, name="auth", files="a.py")
+    plan = ctx.load_plan()
+    plan.waves.append(Wave(id="W1", milestones=[]))  # non-canonical, schema-valid
+    ctx.save_plan(plan)
+    result = pc.set_wave(ctx, milestones="M-001")
+    assert result == {"id": "W-001", "operation": "created"}
+
+
+# --- Plan-design QR verify resolves code_intent-scoped items (review fix #1) ---
+def test_plan_design_qr_code_intent_scope_emits_locator():
+    from skills.planner.quality_reviewer.prompts.content import PlanDesignVerify
+
+    g = "\n".join(
+        PlanDesignVerify().get_verification_guidance(
+            {"scope": "code_intent:CI-001", "check": "intent valid"}, "/tmp/x"
+        )
+    )
+    assert "CODE INTENT CHECK - Focus on CI-001" in g
+    assert '.milestones[].code_intents[] | select(.id == "CI-001")' in g
+
+
 def test_set_wave_batch_requires_milestones(tmp_path):
     # Batch parity with the CLI's required --milestones: omitting milestones errors
     # instead of silently creating an empty wave the CLI would reject.

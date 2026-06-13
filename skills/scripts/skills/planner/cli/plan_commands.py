@@ -507,7 +507,7 @@ def set_wave(
         ctx.save_plan(plan)
         return {"id": wave.id, "operation": "updated"}
 
-    wid = f"W-{max((int(w.id.split('-')[1]) for w in plan.waves), default=0) + 1:03d}"
+    wid = plan.next_wave_id()
     plan.waves.append(schema["Wave"](id=wid, milestones=milestones_list))
     ctx.save_plan(plan)
     return {"id": wid, "operation": "created"}

@@ -53,9 +53,11 @@ def _unresolved_blocking_findings_from_state(qr_state: dict | None, iteration: i
     """Same as _unresolved_blocking_findings but accepts a pre-loaded qr_state dict."""
     if not qr_state:
         return []
+    from skills.planner.shared.schema import canonicalize_severity
+
     lines: list[str] = []
     for item in query_items(qr_state, by_status("FAIL"), by_blocking_severity(iteration)):
-        sev = str(item.get("severity") or "SHOULD").strip().upper()
+        sev = canonicalize_severity(item.get("severity")) or "SHOULD"
         lines.append(f"  [{sev}] {item.get('id', '?')}: {item.get('check', '')}")
         if item.get("finding"):
             lines.append(f"        finding: {item['finding']}")

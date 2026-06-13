@@ -407,6 +407,17 @@ class PlanDesignVerify(VerifyBase):
                     "",
                 ]
             )
+        elif scope.startswith("code_intent:"):
+            intent_id = scope.split(":", 1)[1]
+            guidance.extend(
+                [
+                    f"CODE INTENT CHECK - Focus on {intent_id}:",
+                    "",
+                    "  Read intent (find containing milestone first):",
+                    f"    cat {state_dir}/plan.json | jq '.milestones[].code_intents[] | select(.id == \"{intent_id}\")'",
+                    "",
+                ]
+            )
         else:
             guidance.extend(
                 [

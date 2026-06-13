@@ -104,8 +104,14 @@ class TestSeverityCoercion:
     def test_lowercase_severity_coerced(self):
         assert QRItem(id="q1", scope="*", check="x", severity="must").severity == "MUST"  # type: ignore[arg-type]
 
-    def test_unknown_severity_defaults_to_should(self):
-        assert QRItem(id="q1", scope="*", check="x", severity="BLOCKER").severity == "SHOULD"  # type: ignore[arg-type]
+    def test_high_severity_synonyms_map_to_must(self):
+        # An agent emitting BLOCKER/CRITICAL means "maximum/blocking"; mapping to
+        # SHOULD would de-escalate it out of the blocking set by iteration 4.
+        assert QRItem(id="q1", scope="*", check="x", severity="BLOCKER").severity == "MUST"  # type: ignore[arg-type]
+        assert QRItem(id="q2", scope="*", check="x", severity="critical").severity == "MUST"  # type: ignore[arg-type]
+
+    def test_truly_unknown_severity_defaults_to_should(self):
+        assert QRItem(id="q1", scope="*", check="x", severity="FOO").severity == "SHOULD"  # type: ignore[arg-type]
 
     def test_validate_state_does_not_abort_on_bad_severity(self, tmp_path: Path):
         _write_qr(
@@ -121,6 +127,64 @@ class TestSeverityCoercion:
         assert pred({"severity": "must"}) is True
         assert pred({"severity": "MUST"}) is True
         assert pred({"severity": "should"}) is False
+
+    def test_blocker_blocks_after_de_escalation(self):
+        # BLOCKER/CRITICAL now canonicalize to MUST, so they keep blocking at the
+        # iteration-4 ceiling where only MUST blocks (regression: previously SHOULD).
+        pred = by_blocking_severity(4)  # blocking == {MUST}
+        assert pred({"severity": "BLOCKER"}) is True
+        assert pred({"severity": "critical"}) is True
+        assert pred({"severity": "FOO"}) is False  # truly-unknown -> SHOULD, non-blocking
+
+    def test_canonicalize_severity(self):
+        from skills.planner.shared.schema import canonicalize_severity
+
+        assert canonicalize_severity("BLOCKER") == "MUST"
+        assert canonicalize_severity("critical") == "MUST"
+        assert canonicalize_severity("must") == "MUST"
+        assert canonicalize_severity("SHOULD") == "SHOULD"
+        assert canonicalize_severity("FOO") is None
+        assert canonicalize_severity("") is None
+        assert canonicalize_severity(None) is None
+
+    def test_update_item_cli_accepts_synonym_rejects_unknown(self, tmp_path: Path):
+        _write_qr(
+            tmp_path,
+            "impl-code",
+            1,
+            [{"id": "q1", "scope": "*", "check": "x", "status": "TODO", "severity": "SHOULD"}],
+        )
+        # BLOCKER is accepted and stored canonically as MUST.
+        qr_cli.cmd_update_item(
+            str(tmp_path), "impl-code", ["q1", "--status", "PASS", "--severity", "BLOCKER"]
+        )
+        data = json.loads((tmp_path / "qr-impl-code.json").read_text())
+        assert data["items"][0]["severity"] == "MUST"
+        # A genuine typo is still rejected (interactive feedback).
+        with pytest.raises(SystemExit):
+            qr_cli.cmd_update_item(
+                str(tmp_path), "impl-code", ["q1", "--status", "PASS", "--severity", "FOO"]
+            )
+
+    def test_update_item_rejected_transition_leaves_severity_unchanged(self, tmp_path: Path):
+        # PASS is terminal; a PASS->FAIL update is rejected AFTER arg-parse but
+        # BEFORE the in-lock write, so even a VALID --severity must not be
+        # partially applied (no torn write on a rejected transition).
+        _write_qr(
+            tmp_path,
+            "impl-code",
+            1,
+            [{"id": "q1", "scope": "*", "check": "x", "status": "PASS", "severity": "SHOULD"}],
+        )
+        with pytest.raises(SystemExit):
+            qr_cli.cmd_update_item(
+                str(tmp_path),
+                "impl-code",
+                ["q1", "--status", "FAIL", "--severity", "MUST", "--finding", "boom"],
+            )
+        data = json.loads((tmp_path / "qr-impl-code.json").read_text())
+        assert data["items"][0]["severity"] == "SHOULD"  # unchanged
+        assert data["items"][0]["status"] == "PASS"  # unchanged
 
     def test_validate_state_ignores_noncanonical_scratch_files(self, tmp_path: Path):
         # A decompose agent can leave bare-list scratch files in the state dir.

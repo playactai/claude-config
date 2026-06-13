@@ -16,7 +16,7 @@ import math
 from collections.abc import Callable, Iterator
 from pathlib import Path
 
-from skills.planner.shared.schema import QA_ITEM_DEFAULTS
+from skills.planner.shared.schema import QA_ITEM_DEFAULTS, canonicalize_severity
 
 
 @contextlib.contextmanager
@@ -123,24 +123,21 @@ def by_blocking_severity(iteration: int) -> ItemPredicate:
     middle tier -- neither blocks indefinitely (MUST) nor is trivially
     skippable (COULD). See shared/schema.py QA_ITEM_DEFAULTS.
 
-    Severity is upper-cased before the membership test so a decompose agent
-    that writes lower-case "must"/"should" is not silently downgraded to
-    non-blocking. Out-of-set values (\"BLOCKER\", \"CRITICAL\", etc.) are
-    coerced to SHOULD -- matching schema._normalize_severity's intent --
-    rather than silently treated as non-blocking. An agent writing
-    {\"severity\":\"BLOCKER\"} intending maximum severity gets what the
-    validator would have produced, instead of being silently dropped.
+    Severity is canonicalized before the membership test (via
+    canonicalize_severity) so a decompose agent that writes lower-case
+    "must"/"should" is not downgraded, and the high-severity synonyms
+    "BLOCKER"/"CRITICAL" block like MUST -- matching schema._normalize_severity.
+    A genuinely-unknown token defaults to SHOULD rather than being silently
+    treated as non-blocking.
     """
     from skills.planner.shared.qr.constants import get_blocking_severities
 
     blocking = get_blocking_severities(iteration)
 
     def _coerce(raw: object) -> str:
-        sv = str(raw or "SHOULD").strip().upper()
-        # Map lower-case and out-of-set values into the canonical set so
-        # "must" blocks like MUST and "BLOCKER" blocks like SHOULD -- the
-        # same coercion _normalize_severity does at the schema layer.
-        return sv if sv in {"MUST", "SHOULD", "COULD"} else "SHOULD"
+        # Single severity chokepoint (schema.canonicalize_severity): lower-case
+        # -> canonical, BLOCKER/CRITICAL -> MUST, unknown/empty -> SHOULD.
+        return canonicalize_severity(raw) or "SHOULD"
 
     return lambda item: _coerce(item.get("severity")) in blocking
 

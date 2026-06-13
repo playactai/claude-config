@@ -258,6 +258,85 @@ def test_impl_code_qr_excludes_doc_only_milestones():
     assert "is_documentation_only" in combined
 
 
+# --- code_milestones() is wired structurally into impl-code decompose ----------
+def test_render_code_milestone_scope_lists_only_code_milestones(tmp_path):
+    from skills.planner.cli import plan_commands as pc
+    from skills.planner.quality_reviewer.prompts.decompose import render_code_milestone_scope
+
+    ctx = pc.PlanContext(state_dir=tmp_path)
+    pc.init(ctx, task="t")
+    pc.set_milestone(ctx, name="Code", files="src/a.py")  # M-001 (code)
+    pc.set_milestone(ctx, name="Docs", files="README.md", documentation_only=True)  # M-002
+
+    scope = render_code_milestone_scope(str(tmp_path), "impl-code")
+    assert "CODE MILESTONES IN SCOPE" in scope
+    assert "M-001" in scope
+    assert "M-002" not in scope
+
+
+def test_impl_code_decompose_injects_scope_into_steps_1_and_3(tmp_path):
+    from skills.planner.cli import plan_commands as pc
+    from skills.planner.quality_reviewer.prompts.content import get_decompose_content
+    from skills.planner.quality_reviewer.prompts.decompose import dispatch_step
+
+    ctx = pc.PlanContext(state_dir=tmp_path)
+    pc.init(ctx, task="t")
+    pc.set_milestone(ctx, name="Code", files="src/a.py")  # M-001
+    pc.set_milestone(ctx, name="Docs", files="README.md", documentation_only=True)  # M-002
+
+    content = get_decompose_content("impl-code")
+    for step in (1, 3):
+        result = dispatch_step(
+            step,
+            "impl-code",
+            "m",
+            content["phase_prompts"],
+            content["grouping_config"],
+            state_dir=str(tmp_path),
+        )
+        body = "\n".join(result["actions"])
+        assert "CODE MILESTONES IN SCOPE" in body, f"step {step}"
+        assert "M-001" in body and "M-002" not in body, f"step {step}"
+
+
+def test_code_milestone_scope_empty_for_non_impl_code_phases(tmp_path):
+    from skills.planner.cli import plan_commands as pc
+    from skills.planner.quality_reviewer.prompts.decompose import render_code_milestone_scope
+
+    ctx = pc.PlanContext(state_dir=tmp_path)
+    pc.init(ctx, task="t")
+    pc.set_milestone(ctx, name="Code", files="src/a.py")
+    assert render_code_milestone_scope(str(tmp_path), "plan-design") == ""
+    assert render_code_milestone_scope(str(tmp_path), "impl-docs") == ""
+
+
+def test_code_milestone_scope_degrades_without_plan(tmp_path):
+    from skills.planner.quality_reviewer.prompts.decompose import render_code_milestone_scope
+
+    assert render_code_milestone_scope("", "impl-code") == ""  # no state dir
+    assert render_code_milestone_scope(str(tmp_path), "impl-code") == ""  # no plan.json
+    (tmp_path / "plan.json").write_text("{not valid json")
+    assert render_code_milestone_scope(str(tmp_path), "impl-code") == ""  # unparseable
+
+
+# --- plan_completeness_errors fails CLOSED on an empty plan by default ----------
+def test_completeness_fails_closed_on_empty_milestones_by_default(tmp_path):
+    # The gate veto and executor step>1 guard use the default (fail closed): a
+    # milestone-less plan is a real completeness error. Only the architect router
+    # passes suppress_if_no_milestones=True (first-time skeleton).
+    from skills.planner.shared.schema import Overview, Plan, plan_completeness_errors
+
+    (tmp_path / "plan.json").write_text(
+        Plan(overview=Overview(problem="p", approach="a")).model_dump_json()
+    )
+    errs = plan_completeness_errors(str(tmp_path), "plan-design")
+    assert any("at least one milestone" in e for e in errs)
+    assert (
+        plan_completeness_errors(str(tmp_path), "plan-design", suppress_if_no_milestones=True)
+        == []
+    )
+
+
 # --- Doc-only deliverables are authored (exec-docs) and verified (impl-docs QR) ---
 def test_doc_only_milestone_surfaces_in_plan_markdown():
     # translate_to_markdown must render the flag, or the executor (which re-derives

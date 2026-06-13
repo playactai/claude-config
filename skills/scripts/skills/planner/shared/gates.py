@@ -20,9 +20,7 @@ from skills.planner.shared.qr.utils import (
     _blocking_items_from_state,
     by_blocking_severity,
     by_status,
-    get_qr_iteration,
     get_qr_iteration_from_state,
-    has_qr_failures,
     has_qr_failures_from_state,
     load_qr_state,
     query_items,
@@ -51,7 +49,7 @@ def _unresolved_blocking_findings(state_dir: str, phase: str, iteration: int) ->
     return _unresolved_blocking_findings_from_state(qr_state, iteration)
 
 
-def _unresolved_blocking_findings_from_state(qr_state: dict, iteration: int) -> list[str]:
+def _unresolved_blocking_findings_from_state(qr_state: dict | None, iteration: int) -> list[str]:
     """Same as _unresolved_blocking_findings but accepts a pre-loaded qr_state dict."""
     if not qr_state:
         return []
@@ -79,7 +77,7 @@ def _has_recorded_failure(state_dir: str, phase: str) -> bool:
     return bool(query_items(qr_state, by_status("FAIL")))
 
 
-def _has_recorded_failure_from_state(qr_state: dict) -> bool:
+def _has_recorded_failure_from_state(qr_state: dict | None) -> bool:
     """Same as _has_recorded_failure but accepts a pre-loaded qr_state dict."""
     if not qr_state:
         return False
@@ -96,7 +94,7 @@ def _has_blocking_todo(state_dir: str, phase: str) -> bool:
     return bool(_blocking_items(state_dir, phase, "TODO"))
 
 
-def _has_blocking_todo_from_state(qr_state: dict) -> bool:
+def _has_blocking_todo_from_state(qr_state: dict | None) -> bool:
     """Same as _has_blocking_todo but accepts a pre-loaded qr_state dict."""
     return bool(_blocking_items_from_state(qr_state, "TODO"))
 

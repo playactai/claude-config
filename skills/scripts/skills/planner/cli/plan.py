@@ -300,6 +300,12 @@ class SetMilestoneCommand(Command):
         )
         tests = [t.strip() for t in args.tests.split(",")] if args.tests else []
 
+        for f in files:
+            if os.path.isabs(f) or f.startswith(".."):
+                error_exit(
+                    f"Absolute or parent-relative path not allowed in --files: {f}"
+                )
+
         if args.id:
             # UPDATE path
             ms = plan.get_milestone(args.id)
@@ -350,9 +356,12 @@ class SetMilestoneCommand(Command):
                 # for validate_completeness would wedge the plan with no hint.
                 if args.documentation_only:
                     for w in plan.waves:
-                        if ms.id in w.milestones:
-                            w.milestones.remove(ms.id)
-                            removed_from_waves += 1
+                        before = len(w.milestones)
+                        w.milestones = [m for m in w.milestones if m != ms.id]
+                        removed_from_waves += before - len(w.milestones)
+                    # Prune emptied waves so the plan doesn't accumulate dead waves
+                    # across repeated toggles.
+                    plan.waves = [w for w in plan.waves if w.milestones]
 
             bump_version(ms)
             save_plan(state_dir, plan)
@@ -435,6 +444,11 @@ class SetIntentCommand(Command):
                 f"'set-milestone --id {args.milestone} --no-documentation-only' "
                 f"before adding code intents"
             )
+
+        if args.file:
+            f = args.file.strip()
+            if os.path.isabs(f) or f.startswith(".."):
+                error_exit(f"Absolute or parent-relative path not allowed in --file: {f}")
 
         decision_refs = (
             [r.strip() for r in args.decision_refs.split(",")] if args.decision_refs else []
@@ -765,7 +779,7 @@ class SetWaveCommand(Command):
             success(f"Updated wave {wave.id}: {', '.join(milestones) or '(empty)'}")
         else:
             # CREATE path
-            wid = f"W-{len(plan.waves) + 1:03d}"
+            wid = f"W-{max((int(w.id.split('-')[1]) for w in plan.waves), default=0) + 1:03d}"
             plan.waves.append(Wave(id=wid, milestones=milestones))
             save_plan(state_dir, plan)
             success(f"Created wave {wid}: {', '.join(milestones) or '(empty)'}")
@@ -1127,6 +1141,9 @@ def cli(args: list[str] | None = None):
             requests = json.loads(parsed.input)
         else:
             requests = json.load(sys.stdin)
+
+        if not isinstance(requests, list) or not all(isinstance(r, dict) for r in requests):
+            error_exit("batch input must be a JSON array of {method, params} objects")
 
         # Role enforcement: the per-command role check runs after the batch
         # early-return and is never reached. Reject any restricted method

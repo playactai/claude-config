@@ -36,22 +36,31 @@ def _expand_template_targets(
         List of dicts with "prompt" and "command" keys, values substituted
 
     Raises:
-        ValueError: If a target dict has a key whose $key survives
-            safe_substitute in the output -- meaning the substitution was
-            silently missed. Literal $ in paths (/tmp/x$y) don't have
-            matching keys, so they're tolerated.
+        ValueError: If the template/command references a $var that some target
+            provides as a key but THIS target omits -- a per-target inconsistency
+            (e.g. one target missing a flag its siblings carry) that would
+            silently emit a literal "$var". A $name that no target declares is
+            treated as literal text (a "$" baked into a path like /tmp/x$y) and
+            tolerated: the dispatch system validates only the variables it
+            manages (the union of the targets' keys), checked against the
+            template's declared identifiers rather than the substituted output
+            (so a "$" inside a substituted value never trips it).
     """
+    managed = set().union(*(set(t) for t in targets)) if targets else set()
     result = []
     for i, t in enumerate(targets):
         prompt = Template(template).safe_substitute(t)
         cmd = Template(command).safe_substitute(t)
-        for k in t:
-            if f"${k}" in prompt or f"${k}" in cmd:
-                raise ValueError(
-                    f"Template variable ${k} not substituted in target {i}. "
-                    f"Target had key '{k}' but the literal ${k} survived. "
-                    f"Provided keys: {sorted(t.keys())}"
-                )
+        referenced = set(Template(template).get_identifiers()) | set(
+            Template(command).get_identifiers()
+        )
+        missing = (referenced & managed) - set(t)
+        if missing:
+            raise ValueError(
+                f"Template variable(s) {sorted('$' + m for m in missing)} not "
+                f"substituted in target {i}: managed by sibling targets but "
+                f"absent here. Provided keys: {sorted(t.keys())}"
+            )
         result.append({"prompt": prompt, "command": cmd})
     return result
 

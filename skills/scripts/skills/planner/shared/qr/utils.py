@@ -161,7 +161,7 @@ def _blocking_items(state_dir: str, phase: str, *statuses: str) -> list[dict]:
     return query_items(qr_state, by_status(*statuses), by_blocking_severity(iteration))
 
 
-def _blocking_items_from_state(qr_state: dict, *statuses: str) -> list[dict]:
+def _blocking_items_from_state(qr_state: dict | None, *statuses: str) -> list[dict]:
     """Same as _blocking_items but accepts a pre-loaded qr_state dict."""
     if not qr_state:
         return []

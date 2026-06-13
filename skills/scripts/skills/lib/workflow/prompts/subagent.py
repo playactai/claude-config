@@ -8,7 +8,6 @@ Three dispatch patterns:
 - roster_dispatch: Parallel agents, shared context + unique tasks, fixed command
 """
 
-import re
 import shlex
 from pathlib import Path
 from string import Template
@@ -224,25 +223,29 @@ def template_dispatch(
         Complete dispatch prompt with expanded agent entries
 
     Raises:
-        ValueError: If a $var from the template survives safe_substitute in the
-            output, AND the var name matches a key in the target dict. Literal
-            $ in paths (/tmp/x$y) won't have corresponding keys, so they're
-            silently tolerated. A surviving $var WITH a matching key means the
-            substitution was no-oped because the value was empty/missing --
-            that's a logic bug that must crash loudly.
+        ValueError: If the template/command references a $var that some target
+            provides as a key but THIS target omits -- a per-target inconsistency
+            that would silently emit a literal "$var". A $name no target declares
+            is treated as literal text (a "$" baked into a path like /tmp/x$y) and
+            tolerated: only the managed variables (the union of the targets' keys)
+            are validated, against the template's declared identifiers rather than
+            the substituted output (so a "$" inside a value never trips it).
     """
+    managed = set().union(*(set(t) for t in targets)) if targets else set()
     expanded = []
     for i, t in enumerate(targets):
         prompt = Template(template).safe_substitute(t)
         cmd = Template(command).safe_substitute(t)
-        for k in t:
-            if f"${k}" in prompt or f"${k}" in cmd:
-                raise ValueError(
-                    f"Template variable ${k} not substituted in target {i}. "
-                    f"Target had key '{k}' but the literal ${k} survived in "
-                    f"the output -- the value may be empty or the Template "
-                    f"recognized a neighboring $ as part of the name."
-                )
+        referenced = set(Template(template).get_identifiers()) | set(
+            Template(command).get_identifiers()
+        )
+        missing = (referenced & managed) - set(t)
+        if missing:
+            raise ValueError(
+                f"Template variable(s) {sorted('$' + m for m in missing)} not "
+                f"substituted in target {i}: managed by sibling targets but "
+                f"absent here. Provided keys: {sorted(t.keys())}"
+            )
         expanded.append(
             {
                 "prompt": prompt,

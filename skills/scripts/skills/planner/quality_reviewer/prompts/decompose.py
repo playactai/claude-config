@@ -183,6 +183,39 @@ After writing, proceed to grouping phase."""
 # =============================================================================
 
 
+def render_code_milestone_scope(state_dir: str, phase: str) -> str:
+    """Explicit in-scope code-milestone ids for the impl-code decompose agent.
+
+    Structural backstop for the prose "exclude documentation-only" nudge: the
+    agent is handed the literal id list from Plan.code_milestones() so a doc-only
+    milestone's acceptance_criteria can't be enumerated as unsatisfiable impl-code
+    QR items. Returns "" for non-impl-code phases (plan-design enumerates
+    everything; impl-docs targets doc-only milestones) and whenever plan.json is
+    absent or unparseable -- the static prose then stands alone, as before
+    (graceful degrade, like render_context_file's missing_ok).
+    """
+    if phase != "impl-code" or not state_dir:
+        return ""
+    # Local import + tolerant load mirror plan_completeness_errors: do NOT use
+    # cli.plan.load_plan (it error_exit()s, which would abort a prompt build).
+    from skills.planner.shared.schema import Plan
+
+    path = Path(state_dir) / "plan.json"
+    if not path.exists():
+        return ""
+    try:
+        plan = Plan.model_validate(json.loads(path.read_text()))
+    except Exception:
+        return ""
+    ids = ", ".join(ms.id for ms in plan.code_milestones()) or "(none)"
+    return (
+        "CODE MILESTONES IN SCOPE (enumerate items ONLY for these; "
+        "documentation-only\n"
+        "milestones produce no code and are verified in impl-docs, not here):\n"
+        f"  {ids}"
+    )
+
+
 def dispatch_step(
     step: int,
     phase: str,
@@ -211,6 +244,10 @@ def dispatch_step(
     """
     state_dir_arg = f" --state-dir {shell_quote(state_dir)}" if state_dir else ""
     phase_arg = f" --phase {phase}"
+    # Explicit code-milestone scope for impl-code (structural doc-only exclusion);
+    # "" for other phases / missing plan, so the conditional injections below add
+    # nothing.
+    code_scope = render_code_milestone_scope(state_dir, phase)
 
     def next_cmd(s):
         return f"uv run python -m {module_path} --step {s}{phase_arg}{state_dir_arg}"
@@ -233,6 +270,7 @@ def dispatch_step(
                 "",
                 phase_prompts[1],
                 "",
+                *([code_scope, ""] if code_scope else []),
                 "PLANNING CONTEXT:",
                 context_display,
                 "",
@@ -272,6 +310,7 @@ def dispatch_step(
                 "",
                 phase_prompts[3],
                 "",
+                *([code_scope, ""] if code_scope else []),
                 "OUTPUT: Structured list of plan elements.",
                 "  - Use IDs where available (DL-001, M-001, CI-001)",
                 "  - Note counts (e.g., '3 decisions, 5 milestones')",

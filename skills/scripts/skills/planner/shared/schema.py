@@ -225,10 +225,12 @@ if True:
         def code_milestones(self) -> list[Milestone]:
             """Milestones that produce code (not is_documentation_only).
 
-            Shared by decompose (to enumerate the correct scope), verify
-            (to check the right subset), and the executor (to dispatch
-            developer agents). Single source of truth so no caller
-            reimplements the filter.
+            Consumed by impl-code decompose (render_code_milestone_scope injects
+            the explicit in-scope id list so the agent enumerates only these).
+            Verify enforces the same subset via its `jq select(.is_documentation_only
+            != true)` macro filter, and the executor needs no call because the
+            wave invariant (validate_completeness forbids a doc-only milestone in
+            any wave) already excludes them from developer dispatch.
             """
             return [ms for ms in self.milestones if not ms.is_documentation_only]
 
@@ -519,7 +521,9 @@ def validate_state(state_dir: str) -> None:
             raise SchemaValidationError(f"{path.name}: {e}") from e
 
 
-def plan_completeness_errors(state_dir: str, phase: str) -> list[str]:
+def plan_completeness_errors(
+    state_dir: str, phase: str, suppress_if_no_milestones: bool = False
+) -> list[str]:
     """Load plan.json and return its validate_completeness errors ([] when N/A).
 
     Shared by the QR gate (which vetoes a QR-pass on a structurally incomplete
@@ -529,9 +533,12 @@ def plan_completeness_errors(state_dir: str, phase: str) -> list[str]:
     schema validity at step entry, so this layers only the phase completeness
     check; returns [] for phases without a completeness rule (impl-code/docs).
 
-    Gated on milestones existing: an empty skeleton is genuine first-time
-    execution, not a repairable gap, so it stays silent -- the router prints
-    "First-time execution" instead of surfacing spurious completeness errors.
+    The gate veto and the executor's step>1 guard call this to fail CLOSED: an
+    empty/partial plan ("at least one milestone required") is a real completeness
+    error they must reject. Only the architect router opts into
+    suppress_if_no_milestones=True, because at step 1 an empty skeleton is
+    genuine first-time execution (not a repairable gap) and it prints
+    "First-time execution" rather than surfacing spurious completeness errors.
     """
     if not (state_dir and phase):
         return []
@@ -542,7 +549,7 @@ def plan_completeness_errors(state_dir: str, phase: str) -> list[str]:
         plan = Plan.model_validate(json.loads(path.read_text()))
     except Exception:
         return []
-    if not plan.milestones:
+    if suppress_if_no_milestones and not plan.milestones:
         return []
     return plan.validate_completeness(phase)
 

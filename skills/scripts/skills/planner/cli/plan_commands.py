@@ -7,6 +7,7 @@ Function names use underscores, converted to hyphens for method names.
 from __future__ import annotations
 
 import json
+import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal, cast
@@ -89,6 +90,25 @@ def _parse_csv(value: str | None) -> list[str]:
     return [v.strip() for v in value.split(",") if v.strip()]
 
 
+def _validate_relpath(path: str, context: str) -> str:
+    """Reject absolute and parent-relative paths so the overlap guard works.
+
+    validate_refs compares lexical os.path.normpath strings; abs-vs-rel
+    and differently-rooted relative spellings of the same file slip past
+    and let the executor co-schedule two milestones that race-write one
+    file. Enforcing the relative-path convention at write time closes
+    that gap without touching the filesystem at plan time (realpath).
+    """
+    if not path:
+        return path
+    stripped = path.strip()
+    if os.path.isabs(stripped):
+        raise ValueError(f"Absolute path not allowed in {context}: {stripped}")
+    if stripped.startswith(".."):
+        raise ValueError(f"Parent-relative path not allowed in {context}: {stripped}")
+    return stripped
+
+
 def _check_version(entity, provided: int | None, entity_id: str) -> None:
     """CAS version check. Raises if mismatch."""
     if provided is None:
@@ -153,6 +173,10 @@ def set_milestone(
     acceptance_list = _parse_csv(acceptance_criteria)
     tests_list = _parse_csv(tests)
 
+    if files_list:
+        for f in files_list:
+            _validate_relpath(f, "milestone --files")
+
     if id:
         # UPDATE
         ms = plan.get_milestone(id)
@@ -188,9 +212,12 @@ def set_milestone(
             # Doc-only milestones route to exec-docs, not the executor's waves.
             if documentation_only:
                 for w in plan.waves:
-                    if ms.id in w.milestones:
-                        w.milestones.remove(ms.id)
-                        dropped_from_waves += 1
+                    before = len(w.milestones)
+                    w.milestones = [m for m in w.milestones if m != ms.id]
+                    dropped_from_waves += before - len(w.milestones)
+                # Prune emptied waves so the plan doesn't accumulate dead waves
+                # across repeated toggles.
+                plan.waves = [w for w in plan.waves if w.milestones]
 
         _bump_version(ms)
         ctx.save_plan(plan)
@@ -253,6 +280,9 @@ def set_intent(
             f"milestone {milestone} is documentation-only; clear it with "
             f"set-milestone --no-documentation-only before adding code intents"
         )
+
+    if file:
+        _validate_relpath(file.strip(), "set-intent --file")
 
     refs_list = _parse_csv(decision_refs)
     for ref in refs_list:
@@ -477,7 +507,7 @@ def set_wave(
         ctx.save_plan(plan)
         return {"id": wave.id, "operation": "updated"}
 
-    wid = f"W-{len(plan.waves) + 1:03d}"
+    wid = f"W-{max((int(w.id.split('-')[1]) for w in plan.waves), default=0) + 1:03d}"
     plan.waves.append(schema["Wave"](id=wid, milestones=milestones_list))
     ctx.save_plan(plan)
     return {"id": wid, "operation": "created"}

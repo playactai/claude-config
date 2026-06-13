@@ -159,6 +159,33 @@ class TestTemplateDollarSafety:
         assert res[0]["prompt"] == "a X /tmp/p$q"
         assert res[0]["command"] == "cmd X /tmp/p$q"
 
+    def test_expand_template_targets_raises_when_a_target_omits_a_managed_var(self):
+        # $flags is provided by the first target but omitted by the second; the
+        # unsubstituted "$flags" would ship as a literal -> a real per-target bug.
+        with pytest.raises(ValueError):
+            _expand_template_targets(
+                "do $task with $flags",
+                "run $flags",
+                ({"task": "a", "flags": "--x"}, {"task": "b"}),
+            )
+
+    def test_expand_template_targets_tolerates_uniform_unmanaged_dollar(self):
+        # $q is declared by NO target -> a literal "$" in a path, tolerated across
+        # all targets (the guard only validates vars some target manages).
+        res = _expand_template_targets(
+            "a $v /tmp/p$q", "cmd $v /tmp/p$q", ({"v": "X"}, {"v": "Y"})
+        )
+        assert [r["command"] for r in res] == ["cmd X /tmp/p$q", "cmd Y /tmp/p$q"]
+
+    def test_template_dispatch_raises_when_a_target_omits_a_managed_var(self):
+        with pytest.raises(ValueError):
+            template_dispatch(
+                agent_type="quality-reviewer",
+                template="Verify $group_id $flags",
+                targets=[{"group_id": "g1", "flags": "--x"}, {"group_id": "g2"}],
+                command="run $flags",
+            )
+
 
 # --- Bug #4: gate must route on severity-aware on-disk state -----------------
 class TestGateSourceOfTruth:

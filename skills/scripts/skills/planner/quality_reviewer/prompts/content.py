@@ -148,9 +148,11 @@ DO NOT brainstorm plan structure or documentation concerns."""
 
 IMPL_CODE_STEP_3_ENUMERATION = """\
 For impl-code, enumerate IMPLEMENTATION ARTIFACTS.
-EXCLUDE is_documentation_only milestones -- no code is implemented for them; their
-deliverables are verified in impl-docs, not here. Enumerating them produces
-unsatisfiable acceptance-criteria items that never converge.
+Enumerate items ONLY for the code milestones listed under "CODE MILESTONES IN
+SCOPE" above; is_documentation_only milestones are excluded by construction (no
+code is implemented for them -- their deliverables are verified in impl-docs).
+Enumerating a doc-only milestone produces unsatisfiable acceptance-criteria
+items that never converge.
 
 ACCEPTANCE CRITERIA (code milestones only):
   - Each milestone with acceptance_criteria (ID, criteria count)

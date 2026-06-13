@@ -61,7 +61,7 @@ class XMLRenderer:
         """
         attrs_str = ""
         if node.attrs:
-            for k, v in node.attrs.items():
+            for k in node.attrs:
                 if not _XML_NAME_RE.match(k):
                     raise ValueError(f"Invalid XML attribute key: {k!r}")
             attrs_str = " " + " ".join(f"{k}={quoteattr(str(v))}" for k, v in node.attrs.items())

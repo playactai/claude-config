@@ -25,11 +25,13 @@ def _completeness_gaps(state_dir: str) -> list[str]:
 
     Delegates to the single shared helper so the architect router, the QR gate,
     and the executor all read the completeness contract from one place and
-    cannot drift.
+    cannot drift. The router alone passes suppress_if_no_milestones=True: at
+    step 1 an empty skeleton is first-time execution, not a repairable gap (the
+    gate and executor keep the default and fail closed on a milestone-less plan).
     """
     from skills.planner.shared.schema import plan_completeness_errors
 
-    return plan_completeness_errors(state_dir, PHASE_KEY)
+    return plan_completeness_errors(state_dir, PHASE_KEY, suppress_if_no_milestones=True)
 
 
 def get_step_guidance(step: int, module_path: str | None = None, **kwargs) -> dict:

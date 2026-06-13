@@ -16,7 +16,6 @@ planning session); there is no `schema_version` field.
 plan.json
   plan_id: uuid                      (auto)
   created_at: ISO-8601               (auto)
-  frozen_at: null | ISO-8601
 
   overview:
     problem: string

@@ -17,6 +17,7 @@ Constants are phase-prefixed ([PHASE]_[TYPE]) so the three phases coexist here.
 """
 
 from skills.planner.quality_reviewer.qr_verify_base import VerifyBase
+from skills.planner.shared.qr.phases import QR_PHASES
 
 # ============================================================================
 # DECOMPOSE PROMPTS
@@ -784,6 +785,19 @@ VERIFIERS: dict[str, type[VerifyBase]] = {
     "impl-code": ImplCodeVerify,
     "impl-docs": ImplDocsVerify,
 }
+
+# All three QR phase registries -- DECOMPOSE_CONTENT (decompose prompts), VERIFIERS
+# (verify classes), and QR_PHASES (the argparse --phase source of truth) -- are keyed
+# by the same phase strings but defined far apart. A phase added to QR_PHASES (so it
+# passes argparse) yet missing here slips past CLI validation and only crashes at
+# dispatch with "Unknown QR phase". Fail loudly at import instead. raise, not assert,
+# so the guard survives `python -O`.
+if not (set(DECOMPOSE_CONTENT) == set(VERIFIERS) == set(QR_PHASES)):
+    raise RuntimeError(
+        "QR phase registries out of sync: "
+        f"DECOMPOSE_CONTENT={sorted(DECOMPOSE_CONTENT)}, "
+        f"VERIFIERS={sorted(VERIFIERS)}, QR_PHASES={sorted(QR_PHASES)}"
+    )
 
 
 def get_verifier(phase: str) -> VerifyBase:

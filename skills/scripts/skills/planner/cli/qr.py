@@ -42,7 +42,6 @@ from pathlib import Path
 from typing import NoReturn
 from xml.sax.saxutils import escape
 
-from skills.lib.io import atomic_write_text
 from skills.planner.shared.qr.utils import qr_write_lock
 from skills.planner.shared.schema import canonicalize_severity
 
@@ -50,18 +49,16 @@ from . import qr_commands
 from .dispatch import batch as batch_dispatch
 from .dispatch import discover_methods, list_methods
 from .output import EntityResult, print_entity_result
-
-# Valid status values (match QAItemStatus enum)
-VALID_STATUSES = frozenset({"PASS", "FAIL"})
-
-# Terminal statuses that cannot be changed
-TERMINAL_STATUSES = frozenset({"PASS"})
-
-# Statuses that require finding
-REQUIRES_FINDING = frozenset({"FAIL"})
-
-# Statuses that forbid finding
-FORBIDS_FINDING = frozenset({"PASS"})
+from .qr_common import (
+    FORBIDS_FINDING,
+    REQUIRES_FINDING,
+    TERMINAL_STATUSES,
+    VALID_STATUSES,
+    find_item,
+    is_valid_group_id,
+    load_qr_state_under_lock,
+    save_qr_state_atomic,
+)
 
 
 def error_exit(msg: str, code: int = 1) -> NoReturn:
@@ -75,31 +72,6 @@ def error_exit(msg: str, code: int = 1) -> NoReturn:
 def get_qr_path(state_dir: str, phase: str) -> Path:
     """Get path to qr-{phase}.json file."""
     return Path(state_dir) / f"qr-{phase}.json"
-
-
-def load_qr_state_under_lock(qr_path: Path) -> dict:
-    """Read QR state from qr_path. Caller must hold the phase write lock."""
-    content = qr_path.read_text() if qr_path.exists() else ""
-    if not content:
-        return {"phase": "", "items": []}
-    return json.loads(content)
-
-
-def save_qr_state_atomic(state_dir: str, phase: str, qr_state: dict):
-    """Write QR state atomically (unique temp + rename via the shared helper).
-
-    Caller must hold qr_write_lock(state_dir, phase) across the read -> mutate ->
-    save cycle: atomic_write_text gives per-write atomicity but no RMW exclusion.
-    """
-    atomic_write_text(get_qr_path(state_dir, phase), json.dumps(qr_state, indent=2))
-
-
-def find_item(qr_state: dict, item_id: str) -> tuple[int, dict | None]:
-    """Find item by ID. Returns (index, item) or (-1, None) if not found."""
-    for i, item in enumerate(qr_state.get("items", [])):
-        if item.get("id") == item_id:
-            return i, item
-    return -1, None
 
 
 def validate_transition(current_status: str, new_status: str, item_id: str):
@@ -202,7 +174,7 @@ def cmd_update_item(state_dir: str, phase: str, args: list[str]):
         qr_state["items"][idx] = item
 
         # Atomic write under the held lock.
-        save_qr_state_atomic(state_dir, phase, qr_state)
+        save_qr_state_atomic(qr_path, qr_state)
 
     # Structured output matching plan.py format
     print_entity_result(EntityResult(id=item_id, version=item["version"], operation="updated"))
@@ -306,8 +278,7 @@ def cmd_assign_group(state_dir: str, phase: str, args: list[str]):
     if not qr_path.exists():
         error_exit(f"QR state file not found: {qr_path}")
 
-    valid_prefixes = ("umbrella", "parent-", "component-", "concern-", "affinity-")
-    if not (group_id == "umbrella" or any(group_id.startswith(p) for p in valid_prefixes[1:])):
+    if not is_valid_group_id(group_id):
         error_exit(
             f"Invalid group_id '{group_id}'. Must be 'umbrella' or start with: parent-, component-, concern-, affinity-"
         )
@@ -322,7 +293,7 @@ def cmd_assign_group(state_dir: str, phase: str, args: list[str]):
 
         item["group_id"] = group_id
         qr_state["items"][idx] = item
-        save_qr_state_atomic(state_dir, phase, qr_state)
+        save_qr_state_atomic(qr_path, qr_state)
 
     print_entity_result(
         EntityResult(id=item_id, version=item.get("version", 1), operation="updated")

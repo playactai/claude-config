@@ -4,6 +4,7 @@ Single implementation eliminates ~150 lines of duplicated gate logic.
 Both planner.py and executor.py call this with their MODULE_PATH.
 """
 
+import sys
 from dataclasses import dataclass
 
 from skills.lib.workflow.prompts.step import SKILLS_DIR, format_step
@@ -16,7 +17,6 @@ from skills.planner.shared.builders import (
 from skills.planner.shared.qr.constants import QR_ITERATION_LIMIT
 from skills.planner.shared.qr.types import AgentRole, QRState, QRStatus
 from skills.planner.shared.qr.utils import (
-    _blocking_items,
     _blocking_items_from_state,
     by_blocking_severity,
     by_status,
@@ -41,16 +41,12 @@ class GateResult:
     terminal_pass: bool
 
 
-def _unresolved_blocking_findings(state_dir: str, phase: str, iteration: int) -> list[str]:
-    """Format the still-blocking FAIL items for the escalation prompt."""
-    if not (state_dir and phase):
-        return []
-    qr_state = load_qr_state(state_dir, phase)
-    return _unresolved_blocking_findings_from_state(qr_state, iteration)
-
-
 def _unresolved_blocking_findings_from_state(qr_state: dict | None, iteration: int) -> list[str]:
-    """Same as _unresolved_blocking_findings but accepts a pre-loaded qr_state dict."""
+    """Format the still-blocking FAIL items for the escalation prompt.
+
+    Takes the pre-loaded qr_state dict build_gate_output already read, so the
+    escalation path adds no second load of qr-{phase}.json.
+    """
     if not qr_state:
         return []
     from skills.planner.shared.schema import canonicalize_severity
@@ -64,40 +60,29 @@ def _unresolved_blocking_findings_from_state(qr_state: dict | None, iteration: i
     return lines
 
 
-def _has_recorded_failure(state_dir: str, phase: str) -> bool:
-    """True when qr-{phase}.json records at least one FAIL item (any severity).
+def _has_recorded_failure_from_state(qr_state: dict | None) -> bool:
+    """True when qr_state records at least one FAIL item (any severity).
 
     Distinguishes a *de-escalated* pass (FAIL items exist but none blocking at the
     current iteration -- the legitimate case that upgrades a severity-blind
     --qr-status fail to a pass) from an *absent* verdict (no FAIL recorded at all:
     a verifier returned FAIL without persisting its item, or items remain TODO).
-    Only the former may upgrade an explicit fail to a pass.
+    Only the former may upgrade an explicit fail to a pass. Takes the pre-loaded
+    qr_state dict build_gate_output already read.
     """
-    qr_state = load_qr_state(state_dir, phase)
     if not qr_state:
         return False
     return bool(query_items(qr_state, by_status("FAIL")))
-
-
-def _has_recorded_failure_from_state(qr_state: dict | None) -> bool:
-    """Same as _has_recorded_failure but accepts a pre-loaded qr_state dict."""
-    if not qr_state:
-        return False
-    return bool(query_items(qr_state, by_status("FAIL")))
-
-
-def _has_blocking_todo(state_dir: str, phase: str) -> bool:
-    """True when qr-{phase}.json still has an unverified item that blocks now.
-
-    Delegates to _blocking_items (the single read/filter pipeline shared with
-    has_qr_failures) with status="TODO", so the iteration-default and severity
-    logic lives in one place.
-    """
-    return bool(_blocking_items(state_dir, phase, "TODO"))
 
 
 def _has_blocking_todo_from_state(qr_state: dict | None) -> bool:
-    """Same as _has_blocking_todo but accepts a pre-loaded qr_state dict."""
+    """True when qr_state still has an unverified item that blocks now.
+
+    Delegates to _blocking_items_from_state (the single read/filter pipeline
+    shared with has_qr_failures) with status="TODO", so the iteration-default and
+    severity logic lives in one place. Takes the pre-loaded qr_state dict
+    build_gate_output already read.
+    """
     return bool(_blocking_items_from_state(qr_state, "TODO"))
 
 
@@ -108,7 +93,6 @@ def _build_iteration_limit_escalation(
     iteration: int,
     pass_step: int | None,
     state_dir: str,
-    phase: str,
     qr_state: dict | None = None,
 ) -> GateResult:
     """Build the user-escalation step shown when QR hits QR_ITERATION_LIMIT.
@@ -120,7 +104,7 @@ def _build_iteration_limit_escalation(
     "WORKFLOW COMPLETE" nor an imperative "NEXT STEP" footer -- the user's
     choice selects the next command.
     """
-    findings = _unresolved_blocking_findings_from_state(qr_state, iteration) if qr_state else _unresolved_blocking_findings(state_dir, phase, iteration)
+    findings = _unresolved_blocking_findings_from_state(qr_state, iteration)
 
     parts = [
         format_gate_result(passed=False),
@@ -247,9 +231,11 @@ def build_gate_output(
     # and router (which read has_qr_failures), so routing on it made the gate
     # dispatch a fixer while the work step ran first-time EXECUTE with no fix
     # context. Derive the verdict from the same predicate everyone else uses.
-    # Load qr_state once -- every helper (has_qr_failures, _has_recorded_failure,
-    # _has_blocking_todo, _unresolved_blocking_findings) previously called
-    # load_qr_state independently, yielding 4-5 redundant open()+json.load().
+    # Load qr_state once -- the _from_state predicates below (has_qr_failures_from_state,
+    # _has_recorded_failure_from_state, _has_blocking_todo_from_state,
+    # _unresolved_blocking_findings_from_state) all read this one dict; their
+    # former state_dir-taking twins each called load_qr_state independently,
+    # yielding 4-5 redundant open()+json.load() per gate.
     if state_dir and phase:
         qr_state = load_qr_state(state_dir, phase)
         passed = not has_qr_failures_from_state(qr_state) if qr_state else True
@@ -279,6 +265,19 @@ def build_gate_output(
         qr_state = None
         passed = qr.passed
         iteration = qr.iteration
+
+    # --accept-findings only applies at the ceiling (the override just below is
+    # gated on iteration >= QR_ITERATION_LIMIT). Passed earlier -- while the gate
+    # still has fix iterations left -- it has no effect; warn to stderr instead of
+    # silently dropping it, so a mistimed or copied override is visible rather than
+    # appearing to have been honored. stderr keeps the step's stdout output clean.
+    if accept_findings and iteration < QR_ITERATION_LIMIT:
+        print(
+            f"WARNING: --accept-findings ignored: gate is at iteration {iteration}, "
+            f"below the ceiling ({QR_ITERATION_LIMIT}); the override only applies "
+            f"at the ceiling.",
+            file=sys.stderr,
+        )
 
     # User accepted the findings AT THE CEILING: override to passed so the gate
     # neither re-escalates nor loops, and a terminal gate finalizes the plan. Gated
@@ -320,7 +319,6 @@ def build_gate_output(
             iteration=iteration,
             pass_step=pass_step,
             state_dir=state_dir,
-            phase=phase,
             qr_state=qr_state,
         )
 

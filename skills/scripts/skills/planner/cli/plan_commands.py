@@ -204,6 +204,7 @@ def set_milestone(
         # there is no delete-intent op to recover it otherwise.
         cleared_intents = 0
         dropped_from_waves = 0
+        toggle_off_warning = None
         if documentation_only is not None:
             ms.is_documentation_only = documentation_only
             if documentation_only and ms.code_intents:
@@ -218,6 +219,24 @@ def set_milestone(
                 # Prune emptied waves so the plan doesn't accumulate dead waves
                 # across repeated toggles.
                 plan.waves = [w for w in plan.waves if w.milestones]
+            # The reverse toggle (doc-only -> code) only flips the flag; it does NOT
+            # re-add the code_intents or wave the forward toggle stripped, leaving a
+            # code milestone that validate_completeness rejects -- yet the command
+            # still returns success. Surface a non-fatal warning so the gap is visible
+            # (mirrors set_intent pointing users at --no-documentation-only).
+            if documentation_only is False:
+                in_wave = any(ms.id in w.milestones for w in plan.waves)
+                missing = []
+                if not ms.code_intents:
+                    missing.append(f"code_intents (set-intent --milestone {ms.id} ...)")
+                if not in_wave:
+                    missing.append("a wave assignment")
+                if missing:
+                    toggle_off_warning = (
+                        f"milestone {ms.id} is now a code milestone but is missing "
+                        f"{' and '.join(missing)}; validate_completeness will reject "
+                        f"the plan until re-authored."
+                    )
 
         _bump_version(ms)
         ctx.save_plan(plan)
@@ -226,6 +245,8 @@ def set_milestone(
             result["cleared_code_intents"] = cleared_intents
         if dropped_from_waves:
             result["dropped_from_waves"] = dropped_from_waves
+        if toggle_off_warning:
+            result["warning"] = toggle_off_warning
         return result
     else:
         # CREATE

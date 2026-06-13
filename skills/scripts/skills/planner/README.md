@@ -21,7 +21,7 @@ All state mutations (except initial context.json) happen via Python CLI commands
 
 | File              | Schema         | Created     | Mutated By     | Lifecycle              |
 | ----------------- | -------------- | ----------- | -------------- | ---------------------- |
-| `plan.json`       | Pydantic v2    | Step 1 init | CLI commands   | mutable -> frozen      |
+| `plan.json`       | Pydantic v2    | Step 1 init | CLI commands   | mutable                |
 | `context.json`    | Loose JSON     | Step 2      | LLM Write tool | frozen after step 2    |
 | `qr-{phase}.json` | QA item schema | QR dispatch | LLM during QR  | ephemeral per QR cycle |
 
@@ -31,7 +31,6 @@ All state mutations (except initial context.json) happen via Python CLI commands
 Plan
   plan_id: UUID                      (auto)
   created_at: ISO-8601 timestamp     (auto)
-  frozen_at: Optional[timestamp]
 
   overview:
     problem, approach
@@ -107,7 +106,7 @@ Phases: `qr-plan-design`, `qr-impl-code`, `qr-impl-docs`
 | 3    | plan-design-work        | `execute_dispatch_step()` | plan.json            | Architect    |
 | 4    | plan-design-qr-decompose| `qr_dispatch_step()`      | qr-plan-design.json  | QR           |
 | 5    | plan-design-qr-verify   | `qr_dispatch_step()`      | qr-plan-design.json  | QR           |
-| 6    | plan-design-qr-route    | `qr_gate_step()`          | Sets frozen_at       | Orchestrator |
+| 6    | plan-design-qr-route    | `qr_gate_step()`          | Renders plan.md (PASS) | Orchestrator |
 
 Terminal on PASS at step 6: **PLAN APPROVED**.
 
@@ -228,6 +227,5 @@ STEPS = {
 1. Every skill entry point defines exactly ONE Workflow
 2. discover_workflows() finds all Workflows without import errors
 3. plan.json is self-contained for execution
-4. Frozen plan.json is immutable (frozen_at timestamp means no writes)
-5. qr-{phase}.json files are ephemeral (exist only during QR cycle)
-6. QR iteration blocking: iter 1-2 all; iter 3 MUST/SHOULD; iter 4+ MUST only
+4. qr-{phase}.json files are ephemeral (exist only during QR cycle)
+5. QR iteration blocking: iter 1-2 all; iter 3 MUST/SHOULD; iter 4+ MUST only

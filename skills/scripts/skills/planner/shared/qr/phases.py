@@ -32,8 +32,6 @@ from __future__ import annotations
 #   decompose_script: Python module for decomposition (phase-parameterized runner,
 #                     dispatched with --phase {name}; same module for every phase)
 #   verify_script: Python module for single-item verification (same --phase runner)
-#   decompose_steps: number of steps in decompose script
-#   verify_steps: number of steps in verify script
 
 QR_PHASES: dict[str, dict] = {
     "plan-design": {
@@ -45,8 +43,6 @@ QR_PHASES: dict[str, dict] = {
         "artifact": "plan.json",
         "decompose_script": "skills.planner.quality_reviewer.qr_decompose",
         "verify_script": "skills.planner.quality_reviewer.qr_verify",
-        "decompose_steps": 13,
-        "verify_steps": 3,
     },
     "impl-code": {
         "workflow": "executor",
@@ -57,8 +53,6 @@ QR_PHASES: dict[str, dict] = {
         "artifact": "plan.json",
         "decompose_script": "skills.planner.quality_reviewer.qr_decompose",
         "verify_script": "skills.planner.quality_reviewer.qr_verify",
-        "decompose_steps": 13,
-        "verify_steps": 3,
     },
     "impl-docs": {
         "workflow": "executor",
@@ -69,8 +63,6 @@ QR_PHASES: dict[str, dict] = {
         "artifact": "plan.json",
         "decompose_script": "skills.planner.quality_reviewer.qr_decompose",
         "verify_script": "skills.planner.quality_reviewer.qr_verify",
-        "decompose_steps": 13,
-        "verify_steps": 3,
     },
 }
 

@@ -21,24 +21,3 @@ EXECUTOR_GATE_STEPS = frozenset({5, 9})
 PLAN_DESIGN_TOTAL_STEPS = 6
 EXEC_IMPLEMENT_TOTAL_STEPS = 4
 EXEC_DOCS_TOTAL_STEPS = 6
-
-# QR workflow step counts (for QR modules)
-QR_PLAN_DESIGN_TOTAL_STEPS = 7
-QR_IMPL_CODE_TOTAL_STEPS = 5
-QR_IMPL_DOCS_TOTAL_STEPS = 4
-
-
-def validate_step_count(steps_dict: dict, expected_total: int, workflow_name: str) -> None:
-    """Validate that STEPS dict matches expected total.
-
-    WHY: Step count constants can diverge from actual handler counts.
-    If a developer adds step 12, they must remember to update the constant.
-    This validation enforces consistency at module load time.
-
-    Call at module load: validate_step_count(STEPS, PLANNER_TOTAL_STEPS, 'planner')
-    """
-    actual = len(steps_dict)
-    if actual != expected_total:
-        raise ValueError(
-            f"{workflow_name}: STEPS has {actual} entries but {expected_total} expected"
-        )

@@ -9,13 +9,18 @@ import json
 from dataclasses import dataclass
 from pathlib import Path
 
-from skills.lib.io import atomic_write_text
 from skills.planner.shared.qr.utils import qr_write_lock
 
-VALID_STATUSES = frozenset({"PASS", "FAIL"})
-TERMINAL_STATUSES = frozenset({"PASS"})
-REQUIRES_FINDING = frozenset({"FAIL"})
-FORBIDS_FINDING = frozenset({"PASS"})
+from .qr_common import (
+    FORBIDS_FINDING,
+    REQUIRES_FINDING,
+    TERMINAL_STATUSES,
+    VALID_STATUSES,
+    find_item,
+    is_valid_group_id,
+    load_qr_state_under_lock,
+    save_qr_state_atomic,
+)
 
 
 @dataclass
@@ -31,30 +36,6 @@ class QRContext:
     def state_file(self) -> Path:
         """Single mutable state file (used by batch snapshot/rollback)."""
         return self.qr_path()
-
-
-def _load_qr_state_under_lock(qr_path: Path) -> dict:
-    """Read QR state from qr_path. Caller must hold the phase write lock."""
-    content = qr_path.read_text() if qr_path.exists() else ""
-    if not content:
-        return {"phase": "", "items": []}
-    return json.loads(content)
-
-
-def _save_qr_state_atomic(ctx: QRContext, qr_state: dict) -> None:
-    """Write QR state atomically (unique temp + rename via the shared helper).
-
-    Caller must hold qr_write_lock(ctx.state_dir, ctx.phase) across the RMW.
-    """
-    atomic_write_text(ctx.qr_path(), json.dumps(qr_state, indent=2))
-
-
-def _find_item(qr_state: dict, item_id: str) -> tuple[int, dict | None]:
-    """Find item by ID. Returns (index, item) or (-1, None)."""
-    for i, item in enumerate(qr_state.get("items", [])):
-        if item.get("id") == item_id:
-            return i, item
-    return -1, None
 
 
 def update_item(ctx: QRContext, item_id: str, status: str, finding: str | None = None) -> dict:
@@ -75,9 +56,9 @@ def update_item(ctx: QRContext, item_id: str, status: str, finding: str | None =
         raise FileNotFoundError(f"QR state file not found: {qr_path}")
 
     with qr_write_lock(ctx.state_dir, ctx.phase):
-        qr_state = _load_qr_state_under_lock(qr_path)
+        qr_state = load_qr_state_under_lock(qr_path)
 
-        idx, item = _find_item(qr_state, item_id)
+        idx, item = find_item(qr_state, item_id)
         if idx < 0:
             raise ValueError(f"Item {item_id} not found in qr-{ctx.phase}.json")
         assert item is not None
@@ -97,7 +78,7 @@ def update_item(ctx: QRContext, item_id: str, status: str, finding: str | None =
             del item["finding"]
 
         qr_state["items"][idx] = item
-        _save_qr_state_atomic(ctx, qr_state)
+        save_qr_state_atomic(ctx.qr_path(), qr_state)
 
     return {"id": item_id, "version": item["version"], "operation": "updated"}
 
@@ -111,7 +92,7 @@ def get_item(ctx: QRContext, item_id: str) -> dict:
     with open(qr_path) as f:
         qr_state = json.load(f)
 
-    _, item = _find_item(qr_state, item_id)
+    _, item = find_item(qr_state, item_id)
     if item is None:
         raise ValueError(f"Item {item_id} not found")
 
@@ -166,8 +147,7 @@ def summary(ctx: QRContext) -> dict:
 
 def assign_group(ctx: QRContext, item_id: str, group_id: str) -> dict:
     """Assign QR item to a group."""
-    valid_prefixes = ("umbrella", "parent-", "component-", "concern-", "affinity-")
-    if not (group_id == "umbrella" or any(group_id.startswith(p) for p in valid_prefixes[1:])):
+    if not is_valid_group_id(group_id):
         raise ValueError(
             f"Invalid group_id '{group_id}'. "
             f"Must be 'umbrella' or start with: parent-, component-, concern-, affinity-"
@@ -178,15 +158,15 @@ def assign_group(ctx: QRContext, item_id: str, group_id: str) -> dict:
         raise FileNotFoundError(f"QR state file not found: {qr_path}")
 
     with qr_write_lock(ctx.state_dir, ctx.phase):
-        qr_state = _load_qr_state_under_lock(qr_path)
+        qr_state = load_qr_state_under_lock(qr_path)
 
-        idx, item = _find_item(qr_state, item_id)
+        idx, item = find_item(qr_state, item_id)
         if idx < 0:
             raise ValueError(f"Item {item_id} not found in qr-{ctx.phase}.json")
         assert item is not None
 
         item["group_id"] = group_id
         qr_state["items"][idx] = item
-        _save_qr_state_atomic(ctx, qr_state)
+        save_qr_state_atomic(ctx.qr_path(), qr_state)
 
     return {"id": item_id, "version": item.get("version", 1), "operation": "updated"}

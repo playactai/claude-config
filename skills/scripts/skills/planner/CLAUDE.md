@@ -37,7 +37,7 @@ All plan state lives in plan.json. Context captured separately in context.json. 
 
 | File              | What                                    | Mutability          | When to read                   |
 | ----------------- | --------------------------------------- | ------------------- | ------------------------------ |
-| `plan.json`       | Complete plan state (milestones,        | mutable -> frozen   | All planning phases            |
+| `plan.json`       | Complete plan state (milestones,        | mutable             | All planning phases            |
 |                   | code_intents)                           |                     |                                |
 | `context.json`    | User-provided planning context          | frozen after step 2 | Sub-agent context handover     |
 | `qr-{phase}.json` | QA items for specific phase (ephemeral) | ephemeral           | QA decomposition, verification |

@@ -350,8 +350,8 @@ class TestGateSourceOfTruth:
         # The veto must use the SAME blocking-severity threshold as the verify dispatch:
         # at iteration 4 only MUST blocks, so a SHOULD left at TODO (never dispatched for
         # verification) is not unfinished blocking work and must NOT veto a genuine
-        # de-escalated pass. Guards _has_blocking_todo against regressing to a
-        # severity-blind TODO match.
+        # de-escalated pass. Guards _has_blocking_todo_from_state against regressing
+        # to a severity-blind TODO match.
         _write_qr(
             tmp_path,
             "impl-code",
@@ -867,6 +867,313 @@ class TestVerifyGroupBalancing:
         assert out.count("Verify QR group:") == VERIFY_MAX_PARALLEL  # 30 distinct -> 8, not 30
         for i in range(30):
             assert f"--qr-item qa-{i:03d}" in out  # all conserved
+
+
+# =============================================================================
+# Max-review follow-up fixes (2026-06-13): 14 audit findings
+# =============================================================================
+
+
+# --- #1: next_wave_id must skip a Unicode-numeric suffix, not crash ----------
+class TestNextWaveIdUnicode:
+    def test_unicode_numeric_suffix_is_skipped(self):
+        from skills.planner.shared.schema import Overview, Plan, Wave
+
+        # "²" (superscript two) passes str.isdigit() but int() rejects it; the
+        # isascii() guard must skip it (docstring promise) instead of raising.
+        plan = Plan(
+            overview=Overview(problem="p", approach="a"),
+            waves=[Wave(id="W-²", milestones=[])],
+        )
+        assert plan.next_wave_id() == "W-001"  # no ValueError
+
+    def test_unicode_suffix_skipped_among_valid_ids(self):
+        from skills.planner.shared.schema import Overview, Plan, Wave
+
+        plan = Plan(
+            overview=Overview(problem="p", approach="a"),
+            waves=[Wave(id="W-001", milestones=[]), Wave(id="W-²", milestones=[])],
+        )
+        assert plan.next_wave_id() == "W-002"  # max of the ASCII-numeric ids only
+
+
+# --- #2: a $-bearing --scope must survive template substitution as a literal --
+class TestExploreScopeDollarSafety:
+    def test_scope_with_dollar_is_not_interpolated(self):
+        from skills.refactor.refactor import build_explore_dispatch
+
+        out = build_explore_dispatch(n=1, mode_filter="both", scope="src/$mode")
+        # $mode in the scope must reach the agent verbatim, not be substituted with
+        # the per-target mode value (audit #2). The real $ref/$mode placeholders are
+        # still substituted because they are concatenated into the command separately.
+        assert "--scope 'src/$mode'" in out
+
+
+# --- #3: dead state_dir gate helpers removed; escalation still works ----------
+class TestGatesDeadHelpersRemoved:
+    def test_state_dir_helper_variants_are_gone(self):
+        import skills.planner.shared.gates as g
+
+        for dead in (
+            "_unresolved_blocking_findings",
+            "_has_recorded_failure",
+            "_has_blocking_todo",
+        ):
+            assert not hasattr(g, dead), f"{dead} should be deleted (dead code)"
+        for kept in (
+            "_unresolved_blocking_findings_from_state",
+            "_has_recorded_failure_from_state",
+            "_has_blocking_todo_from_state",
+        ):
+            assert hasattr(g, kept), f"{kept} must remain (the live pre-loaded path)"
+
+    def test_escalation_surfaces_findings_via_from_state_path(self, tmp_path: Path):
+        _write_qr(
+            tmp_path,
+            "impl-code",
+            QR_ITERATION_LIMIT,
+            [
+                {
+                    "id": "q1",
+                    "scope": "*",
+                    "check": "x",
+                    "status": "FAIL",
+                    "severity": "MUST",
+                    "finding": "still-broken",
+                }
+            ],
+        )
+        qr = QRState(iteration=QR_ITERATION_LIMIT, state=LoopState.RETRY, status=QRStatus.FAIL)
+        res = _gate(tmp_path, qr)
+        assert "ITERATION LIMIT" in res.output
+        assert "still-broken" in res.output  # _unresolved_blocking_findings_from_state path
+
+
+# --- #5: shared qr_common (constants/validator/RMW); the two CLIs cannot drift -
+class TestQrCommonExtraction:
+    def test_both_clis_share_qr_common_objects(self):
+        from skills.planner.cli import qr_common
+
+        assert qr_cli.VALID_STATUSES is qr_common.VALID_STATUSES
+        assert qr_commands.VALID_STATUSES is qr_common.VALID_STATUSES
+        assert qr_cli.find_item is qr_common.find_item
+        assert qr_commands.find_item is qr_common.find_item
+        assert qr_cli.save_qr_state_atomic is qr_common.save_qr_state_atomic
+        assert qr_commands.save_qr_state_atomic is qr_common.save_qr_state_atomic
+
+    def test_is_valid_group_id(self):
+        from skills.planner.cli.qr_common import is_valid_group_id
+
+        assert is_valid_group_id("umbrella")
+        assert is_valid_group_id("parent-x")
+        assert is_valid_group_id("component-a")
+        assert is_valid_group_id("concern-z")
+        assert is_valid_group_id("affinity-1")
+        assert not is_valid_group_id("bogus")
+        assert not is_valid_group_id("umbrellaX")  # only the bare token, not a prefix
+        assert not is_valid_group_id("")
+
+    def test_rmw_round_trip_persists(self, tmp_path: Path):
+        from skills.planner.cli.qr import get_qr_path
+        from skills.planner.cli.qr_common import (
+            find_item,
+            load_qr_state_under_lock,
+            save_qr_state_atomic,
+        )
+
+        _write_qr(
+            tmp_path,
+            "impl-code",
+            1,
+            [{"id": "q1", "scope": "*", "check": "c", "status": "TODO", "severity": "MUST"}],
+        )
+        path = get_qr_path(str(tmp_path), "impl-code")
+        state = load_qr_state_under_lock(path)
+        idx, item = find_item(state, "q1")
+        assert idx == 0 and item is not None
+        item["status"] = "PASS"
+        state["items"][idx] = item
+        save_qr_state_atomic(path, state)
+        assert load_qr_state_under_lock(path)["items"][0]["status"] == "PASS"
+
+    def test_qr_commands_assign_group_validates_via_shared_predicate(self, tmp_path: Path):
+        _write_qr(
+            tmp_path,
+            "impl-code",
+            1,
+            [{"id": "q1", "scope": "*", "check": "c", "status": "TODO", "severity": "MUST"}],
+        )
+        ctx = qr_commands.QRContext(state_dir=tmp_path, phase="impl-code")
+        with pytest.raises(ValueError, match="Invalid group_id"):
+            qr_commands.assign_group(ctx, "q1", "bogus")
+        qr_commands.assign_group(ctx, "q1", "component-x")  # valid prefix accepted
+        state = json.loads((tmp_path / "qr-impl-code.json").read_text())
+        assert state["items"][0]["group_id"] == "component-x"
+
+
+# --- #6: the three verify steps share one arg-triple builder -----------------
+class TestVerifyCmdArgs:
+    def test_verify_cmd_args_triple(self):
+        from skills.planner.shared.builders import shell_quote
+
+        sd_arg, phase_arg, item_flags = ImplCodeVerify()._verify_cmd_args("/tmp/s d", ["a", "b"])
+        assert sd_arg == f" --state-dir {shell_quote('/tmp/s d')}"
+        assert phase_arg == " --phase impl-code"
+        assert item_flags == f"--qr-item {shell_quote('a')} --qr-item {shell_quote('b')}"
+
+
+# --- #7/#9: validate_state returns the Plan; structural check is phase-free ---
+class TestStructuralExecutability:
+    def test_validate_state_returns_parsed_plan(self, tmp_path: Path):
+        (tmp_path / "plan.json").write_text(
+            json.dumps({"overview": {"problem": "prob", "approach": "appr"}})
+        )
+        plan = validate_state(str(tmp_path))
+        assert plan is not None
+        assert plan.overview.problem == "prob"
+
+    def test_validate_state_returns_none_without_plan(self, tmp_path: Path):
+        assert validate_state(str(tmp_path)) is None
+
+    def test_structural_executability_flags_code_milestone_in_no_wave(self):
+        from skills.planner.shared.schema import CodeIntent, Milestone, Overview, Plan
+
+        plan = Plan(
+            overview=Overview(problem="p", approach="a"),
+            milestones=[
+                Milestone(
+                    id="M-001",
+                    number=1,
+                    name="m",
+                    files=["a.py"],
+                    code_intents=[CodeIntent(id="CI-001", file="a.py", behavior="b")],
+                )
+            ],
+            waves=[],
+        )
+        errs = plan.validate_structural_executability()
+        assert any("M-001 is not assigned to any wave" in e for e in errs)
+
+    def test_validate_completeness_equals_problem_plus_structural(self):
+        from skills.planner.shared.schema import CodeIntent, Milestone, Overview, Plan
+
+        # Empty overview.problem AND a code milestone in no wave: validate_completeness
+        # must be exactly the prose check followed by the structural errors, in order
+        # (proves the delegation preserves plan-design behavior).
+        plan = Plan(
+            overview=Overview(problem="", approach="a"),
+            milestones=[
+                Milestone(
+                    id="M-001",
+                    number=1,
+                    name="m",
+                    files=["a.py"],
+                    code_intents=[CodeIntent(id="CI-001", file="a.py", behavior="b")],
+                )
+            ],
+            waves=[],
+        )
+        comp = plan.validate_completeness("plan-design")
+        assert comp == ["overview.problem required", *plan.validate_structural_executability()]
+        assert "milestone M-001 is not assigned to any wave" in comp
+        assert plan.validate_completeness("impl-code") == []  # no rule for other phases
+
+
+# --- #10: the three QR phase registries must stay key-synced -----------------
+class TestQrPhaseRegistrySync:
+    def test_registries_in_sync(self):
+        from skills.planner.quality_reviewer.prompts.content import DECOMPOSE_CONTENT, VERIFIERS
+        from skills.planner.shared.qr.phases import QR_PHASES
+
+        assert set(DECOMPOSE_CONTENT) == set(VERIFIERS) == set(QR_PHASES)
+
+    def test_drifted_registry_raises_on_import(self):
+        import importlib
+
+        import skills.planner.quality_reviewer.prompts.content as content_mod
+        import skills.planner.shared.qr.phases as phases_mod
+
+        original = phases_mod.QR_PHASES
+        drifted = dict(original)
+        drifted["phantom-phase"] = dict(next(iter(original.values())))
+        try:
+            phases_mod.QR_PHASES = drifted  # a 4th phase argparse would accept
+            with pytest.raises(RuntimeError, match="registries out of sync"):
+                importlib.reload(content_mod)
+        finally:
+            phases_mod.QR_PHASES = original
+            importlib.reload(content_mod)  # restore a consistent module for other tests
+
+
+# --- #11: a mistimed --accept-findings warns instead of silently no-op'ing ---
+class TestAcceptFindingsWarning:
+    def _gate_accept(self, tmp_path: Path, qr: QRState):
+        return build_gate_output(
+            module_path="m",
+            qr_name="QR",
+            qr=qr,
+            step=5,
+            work_step=2,
+            pass_step=6,
+            pass_message="proceed",
+            fix_target=None,
+            state_dir=str(tmp_path),
+            phase="impl-code",
+            accept_findings=True,
+        )
+
+    def test_warns_below_ceiling(self, tmp_path: Path, capsys):
+        _write_qr(
+            tmp_path,
+            "impl-code",
+            1,
+            [{"id": "q1", "scope": "*", "check": "x", "status": "FAIL", "severity": "MUST"}],
+        )
+        qr = QRState(iteration=1, state=LoopState.RETRY, status=QRStatus.FAIL)
+        self._gate_accept(tmp_path, qr)
+        err = capsys.readouterr().err
+        assert "--accept-findings ignored" in err
+        assert "iteration 1" in err
+
+    def test_no_warning_at_ceiling(self, tmp_path: Path, capsys):
+        _write_qr(
+            tmp_path,
+            "impl-code",
+            QR_ITERATION_LIMIT,
+            [
+                {
+                    "id": "q1",
+                    "scope": "*",
+                    "check": "x",
+                    "status": "FAIL",
+                    "severity": "MUST",
+                    "finding": "f",
+                }
+            ],
+        )
+        qr = QRState(iteration=QR_ITERATION_LIMIT, state=LoopState.RETRY, status=QRStatus.FAIL)
+        self._gate_accept(tmp_path, qr)
+        assert "--accept-findings ignored" not in capsys.readouterr().err
+
+
+# --- #14: reverse doc-only toggle warns when it wedges the plan ---------------
+class TestDocOnlyToggleOffWarning:
+    def test_toggle_off_into_wedged_warns(self, tmp_path: Path):
+        ctx = _init_plan(tmp_path)
+        plan_commands.set_milestone(ctx, name="Docs", documentation_only=True)
+        res = plan_commands.set_milestone(ctx, id="M-001", documentation_only=False)
+        assert "warning" in res
+        assert "code_intents" in res["warning"]
+        assert "wave" in res["warning"]
+
+    def test_toggle_off_with_intent_and_wave_is_clean(self, tmp_path: Path):
+        ctx = _init_plan(tmp_path)
+        # a healthy code milestone: has an intent and sits in a wave
+        plan_commands.set_milestone(ctx, name="Code", files="a.py")
+        plan_commands.set_intent(ctx, milestone="M-001", file="a.py", behavior="do x")
+        plan_commands.set_wave(ctx, milestones="M-001")
+        res = plan_commands.set_milestone(ctx, id="M-001", documentation_only=False)
+        assert "warning" not in res
 
 
 if __name__ == "__main__":

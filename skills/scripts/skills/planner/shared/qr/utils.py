@@ -145,11 +145,11 @@ def by_blocking_severity(iteration: int) -> ItemPredicate:
 def _blocking_items(state_dir: str, phase: str, *statuses: str) -> list[dict]:
     """Return items at any of *statuses whose severity blocks at the current iteration.
 
-    Single load/query pipeline shared by has_qr_failures (statuses="FAIL") and
-    _has_blocking_todo (statuses="TODO"), so a change to iteration default or
-    severity handling applies to both. Named with a leading underscore because
-    higher-level predicates (has_qr_failures, _has_blocking_todo) are the public
-    entry points.
+    Single load/query pipeline behind has_qr_failures (statuses="FAIL"), so a
+    change to iteration default or severity handling applies everywhere it routes.
+    The pre-loaded twin _blocking_items_from_state serves the gate's TODO veto
+    (_has_blocking_todo_from_state). Named with a leading underscore because the
+    higher-level predicate has_qr_failures is the public entry point.
     """
     qr_state = load_qr_state(state_dir, phase)
     if not qr_state:

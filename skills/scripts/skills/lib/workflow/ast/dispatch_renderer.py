@@ -47,13 +47,15 @@ def _expand_template_targets(
             (so a "$" inside a substituted value never trips it).
     """
     managed = set().union(*(set(t) for t in targets)) if targets else set()
+    # Template parsing and identifier extraction are loop-invariant (template and
+    # command never change per target), so build them once instead of 4*N parses.
+    prompt_tmpl = Template(template)
+    cmd_tmpl = Template(command)
+    referenced = set(prompt_tmpl.get_identifiers()) | set(cmd_tmpl.get_identifiers())
     result = []
     for i, t in enumerate(targets):
-        prompt = Template(template).safe_substitute(t)
-        cmd = Template(command).safe_substitute(t)
-        referenced = set(Template(template).get_identifiers()) | set(
-            Template(command).get_identifiers()
-        )
+        prompt = prompt_tmpl.safe_substitute(t)
+        cmd = cmd_tmpl.safe_substitute(t)
         missing = (referenced & managed) - set(t)
         if missing:
             raise ValueError(

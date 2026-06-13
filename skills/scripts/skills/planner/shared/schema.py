@@ -217,7 +217,6 @@ if True:
         created_at: str = Field(
             default_factory=lambda: datetime.now(UTC).isoformat()
         )
-        frozen_at: str | None = None  # Timestamp when plan execution began
 
         overview: Overview
         planning_context: PlanningContext = Field(default_factory=PlanningContext)
@@ -263,12 +262,16 @@ if True:
             max()-based (not len()+1) because waves can be pruned (a doc-only
             toggle drops an emptied wave), so len()+1 could collide with a
             surviving id. A hand-authored/transcribed id like 'W1' or 'W-1a' is
-            skipped rather than crashing int(w.id.split('-')[1]).
+            skipped rather than crashing int(w.id.split('-')[1]). The isascii()
+            guard precedes isdigit() because str.isdigit() also accepts Unicode
+            numerics (e.g. '²', '½', '๓') that int() then rejects with
+            ValueError; restricting to ASCII keeps such a suffix skipped, not
+            crashing.
             """
             nums = []
             for w in self.waves:
                 prefix, _, suffix = w.id.partition("-")
-                if prefix == "W" and suffix.isdigit():
+                if prefix == "W" and suffix.isascii() and suffix.isdigit():
                     nums.append(int(suffix))
             return f"W-{max(nums, default=0) + 1:03d}"
 
@@ -379,51 +382,73 @@ if True:
 
             return errors
 
+        def validate_structural_executability(self) -> list[str]:
+            """Wave/intent topology the executor requires (phase-independent).
+
+            The structural invariant the executor enforces before dispatch: at
+            least one milestone, the doc-only/code-intent exclusivity, and wave
+            coverage (every code milestone in exactly one wave, no doc-only
+            milestone in any wave). Excludes the plan-design prose check
+            (overview.problem), which is not an executability concern -- so the
+            executor calls this directly instead of borrowing the foreign
+            "plan-design" phase name from validate_completeness.
+            """
+            errors = []
+            if not self.milestones:
+                errors.append("at least one milestone required")
+            for ms in self.milestones:
+                # Documentation-only milestones carry no code_intents; the
+                # Technical Writer authors their docs at exec time (impl-docs).
+                # The relationship is exclusive both ways so routing stays
+                # unambiguous: doc-only => no code to implement; code => intent.
+                if ms.is_documentation_only:
+                    if ms.code_intents:
+                        errors.append(
+                            f"milestone {ms.id} is documentation-only but has code_intents"
+                        )
+                elif not ms.code_intents:
+                    errors.append(f"milestone {ms.id} needs at least one code_intent")
+
+            # Waves drive the executor's parallel developer dispatch, which covers
+            # code milestones only; doc-only milestones route to exec-docs instead.
+            # Require every code milestone in exactly one wave and no doc-only
+            # milestone in any wave, so execution neither drops nor mis-routes one.
+            # Completeness-only (not validate_refs): the planner saves partial plans
+            # mid-build, where waves are authored after milestones.
+            code_ids = {ms.id for ms in self.milestones if not ms.is_documentation_only}
+            doc_only_ids = {ms.id for ms in self.milestones if ms.is_documentation_only}
+            wave_counts: dict[str, int] = {}
+            for w in self.waves:
+                for mid in w.milestones:
+                    wave_counts[mid] = wave_counts.get(mid, 0) + 1
+            for mid in sorted(code_ids):
+                count = wave_counts.get(mid, 0)
+                if count == 0:
+                    errors.append(f"milestone {mid} is not assigned to any wave")
+                elif count > 1:
+                    errors.append(f"milestone {mid} appears in multiple waves")
+            for mid in sorted(doc_only_ids):
+                if wave_counts.get(mid, 0) > 0:
+                    errors.append(
+                        f"documentation-only milestone {mid} must not appear in a "
+                        f"wave (routes to exec-docs)"
+                    )
+            return errors
+
         def validate_completeness(self, phase: str) -> list[str]:
-            """Phase-specific completeness validation."""
+            """Phase-specific completeness validation.
+
+            For plan-design this is the prose check (overview.problem) plus the
+            phase-independent structural invariant in
+            validate_structural_executability(). Other phases have no rule and
+            return []. Error ordering is unchanged from the inlined version:
+            overview.problem first, then the structural errors.
+            """
             errors = []
             if phase == "plan-design":
                 if not self.overview.problem:
                     errors.append("overview.problem required")
-                if not self.milestones:
-                    errors.append("at least one milestone required")
-                for ms in self.milestones:
-                    # Documentation-only milestones carry no code_intents; the
-                    # Technical Writer authors their docs at exec time (impl-docs).
-                    # The relationship is exclusive both ways so routing stays
-                    # unambiguous: doc-only => no code to implement; code => intent.
-                    if ms.is_documentation_only:
-                        if ms.code_intents:
-                            errors.append(
-                                f"milestone {ms.id} is documentation-only but has code_intents"
-                            )
-                    elif not ms.code_intents:
-                        errors.append(f"milestone {ms.id} needs at least one code_intent")
-
-                # Waves drive the executor's parallel developer dispatch, which covers
-                # code milestones only; doc-only milestones route to exec-docs instead.
-                # Require every code milestone in exactly one wave and no doc-only
-                # milestone in any wave, so execution neither drops nor mis-routes one.
-                # Completeness-only (not validate_refs): the planner saves partial plans
-                # mid-build, where waves are authored after milestones.
-                code_ids = {ms.id for ms in self.milestones if not ms.is_documentation_only}
-                doc_only_ids = {ms.id for ms in self.milestones if ms.is_documentation_only}
-                wave_counts: dict[str, int] = {}
-                for w in self.waves:
-                    for mid in w.milestones:
-                        wave_counts[mid] = wave_counts.get(mid, 0) + 1
-                for mid in sorted(code_ids):
-                    count = wave_counts.get(mid, 0)
-                    if count == 0:
-                        errors.append(f"milestone {mid} is not assigned to any wave")
-                    elif count > 1:
-                        errors.append(f"milestone {mid} appears in multiple waves")
-                for mid in sorted(doc_only_ids):
-                    if wave_counts.get(mid, 0) > 0:
-                        errors.append(
-                            f"documentation-only milestone {mid} must not appear in a "
-                            f"wave (routes to exec-docs)"
-                        )
+                errors.extend(self.validate_structural_executability())
             return errors
 
 
@@ -514,13 +539,19 @@ _schema_registry: dict = {
 }
 
 
-def validate_state(state_dir: str) -> None:
-    """Validate all state files in state_dir.
+def validate_state(state_dir: str) -> Plan | None:
+    """Validate all state files in state_dir; return the parsed plan.json.
 
     Raises SchemaValidationError on first validation failure.
     Call at start of every planner/executor step and after CLI mutations.
+
+    Returns the validated Plan when plan.json is present, so a caller that needs
+    the plan (the executor's structural-executability gate) reuses this parse
+    instead of re-reading the file; returns None when plan.json is absent.
+    Callers that only validate may ignore the return value.
     """
     state_path = Path(state_dir)
+    plan: Plan | None = None
 
     for filename, (model, post_validate) in _schema_registry.items():
         path = state_path / filename
@@ -533,6 +564,8 @@ def validate_state(state_dir: str) -> None:
                 errors = post_validate(obj)
                 if errors:
                     raise SchemaValidationError(f"{filename}: {errors}")
+            if filename == "plan.json":
+                plan = obj
         except SchemaValidationError:
             raise
         except Exception as e:
@@ -553,6 +586,8 @@ def validate_state(state_dir: str) -> None:
             QRFile.model_validate(data)
         except Exception as e:
             raise SchemaValidationError(f"{path.name}: {e}") from e
+
+    return plan
 
 
 def plan_completeness_errors(

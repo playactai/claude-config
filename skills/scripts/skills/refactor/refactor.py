@@ -36,6 +36,7 @@ from skills.lib.workflow.core import (
     StepDef,
     Workflow,
 )
+from skills.lib.workflow.prompts.step import pin_cwd
 
 
 class DocumentAvailability(Enum):
@@ -60,12 +61,17 @@ EXPLORE_MODULE_PATH = "skills.refactor.explore"
 def _invoke_tag(cmd: str) -> str:
     """Render a well-formed <invoke> directive for the refactor workflow.
 
-    quoteattr escapes the command so a --scope path containing XML metacharacters
-    (&, <, ") cannot break out of the attribute and malform the directive (audit
-    #9 whole-class: scope reached these hand-built invokes unescaped). Matches the
-    escaping render_invoke_after already applies to InvokeAfterNode commands.
+    pin_cwd prefixes an absolute ``cd`` into SKILLS_DIR so a sub-agent whose cwd
+    has drifted still resolves the ``skills`` package (matches
+    dispatch_renderer.py; the prior relative working-dir attr failed with "No
+    module named 'skills'" once the planner subsystem moved to absolute cd).
+    quoteattr then escapes the whole command so a --scope path containing XML
+    metacharacters (&, <, ") cannot break out of the attribute and malform the
+    directive (audit #9 whole-class: scope reached these hand-built invokes
+    unescaped). Matches the escaping render_invoke_after already applies to
+    InvokeAfterNode commands.
     """
-    return f'<invoke working-dir=".claude/skills/scripts" cmd={quoteattr(cmd)} />'
+    return f"<invoke cmd={quoteattr(pin_cwd(cmd))} />"
 
 # Default number of code smell categories to explore per analysis run
 DEFAULT_CATEGORY_COUNT = 10
@@ -244,8 +250,14 @@ def build_explore_dispatch(
         for t in selected
     )
 
-    # Scope propagation to explore agents
-    scope_arg = f" --scope {shlex.quote(scope)}" if scope else ""
+    # Scope propagation to explore agents. Double every $ so the safe_substitute
+    # that render_template_dispatch runs over `command` below treats a $-bearing
+    # scope token (e.g. "src/$mode") as a literal instead of interpolating it as
+    # a $ref/$mode template var (audit #2). The real placeholders are the bare
+    # $ref/$mode concatenated separately into `command`; safe_substitute turns
+    # $$ back into a single $, and shlex's single-quotes still shield it at the
+    # shell layer when the agent runs the invoke.
+    scope_arg = f" --scope {shlex.quote(scope)}".replace("$", "$$") if scope else ""
 
     # Template prompt with $var placeholders. The command lives in `command`
     # below (rendered once as an escaped <invoke> by render_template_dispatch),

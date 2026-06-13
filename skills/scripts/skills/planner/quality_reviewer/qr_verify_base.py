@@ -137,14 +137,23 @@ class VerifyBase(ABC):
         else:
             return {"error": f"Unknown step type for step {step}"}
 
+    def _verify_cmd_args(self, state_dir: str, item_ids: list[str]) -> tuple[str, str, str]:
+        """Build the (state-dir, phase, qr-item flags) CLI fragments shared by the
+        verify re-invoke commands across steps 1/2/3.
+
+        One source so the three steps cannot drift in quoting or flag spelling.
+        """
+        state_dir_arg = f" --state-dir {shell_quote(state_dir)}"
+        phase_arg = f" --phase {self.PHASE}"
+        item_flags = " ".join(f"--qr-item {shell_quote(id)}" for id in item_ids)
+        return state_dir_arg, phase_arg, item_flags
+
     def _step_context(
         self, state_dir: str, module_path: str, item_ids: list[str], total_steps: int
     ) -> dict:
         """Step 1: Load conventions, phase rules, context.json, plan.json. List all items."""
         assert self.PHASE is not None
-        state_dir_arg = f" --state-dir {shell_quote(state_dir)}"
-        phase_arg = f" --phase {self.PHASE}"
-        item_flags = " ".join(f"--qr-item {shell_quote(id)}" for id in item_ids)
+        state_dir_arg, phase_arg, item_flags = self._verify_cmd_args(state_dir, item_ids)
 
         # Execution-phase (impl-*) state dirs have no context.json (the executor
         # writes plan.json only), so degrade gracefully there; plan phases stay
@@ -203,9 +212,7 @@ class VerifyBase(ABC):
     ) -> dict:
         """ANALYZE step: Explore codebase if needed, analyze item, form preliminary conclusion."""
         assert self.PHASE is not None
-        state_dir_arg = f" --state-dir {shell_quote(state_dir)}"
-        phase_arg = f" --phase {self.PHASE}"
-        item_flags = " ".join(f"--qr-item {shell_quote(id)}" for id in item_ids)
+        state_dir_arg, phase_arg, item_flags = self._verify_cmd_args(state_dir, item_ids)
         current_step = 2 + (item_idx * 2)  # ANALYZE is first of the pair
 
         item_id = item_ids[item_idx]
@@ -256,9 +263,7 @@ class VerifyBase(ABC):
     ) -> dict:
         """CONFIRM step: Verify confidence, record result via cli/qr.py."""
         assert self.PHASE is not None
-        state_dir_arg = f" --state-dir {shell_quote(state_dir)}"
-        phase_arg = f" --phase {self.PHASE}"
-        item_flags = " ".join(f"--qr-item {shell_quote(id)}" for id in item_ids)
+        state_dir_arg, phase_arg, item_flags = self._verify_cmd_args(state_dir, item_ids)
         current_step = 2 + (item_idx * 2) + 1  # CONFIRM is second of the pair
 
         item_id = item_ids[item_idx]

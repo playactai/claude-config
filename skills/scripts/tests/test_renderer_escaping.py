@@ -291,7 +291,10 @@ class TestRefactorScopeEscaping:
     def test_invoke_tag_escapes_hostile_cmd(self):
         root = ET.fromstring(_invoke_tag("uv run x --scope 'a&b\"c<d'"))
         assert root.tag == "invoke"
-        assert root.get("cmd") == "uv run x --scope 'a&b\"c<d'"  # decodes intact
+        # _invoke_tag now cwd-pins via pin_cwd (audit #12); the hostile &/"/< still
+        # survive the quoteattr round-trip intact, and the relative working-dir is gone.
+        assert root.get("cmd") == f"cd {SKILLS_DIR} && uv run x --scope 'a&b\"c<d'"
+        assert root.get("working-dir") is None
 
     def test_explore_dispatch_well_formed_with_hostile_scope(self):
         out = build_explore_dispatch(n=2, mode_filter="both", scope=self._HOSTILE)

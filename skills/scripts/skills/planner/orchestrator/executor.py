@@ -592,24 +592,26 @@ def main():
         from skills.planner.shared.schema import SchemaValidationError, validate_state
 
         try:
-            validate_state(state_dir)
+            plan = validate_state(state_dir)
         except SchemaValidationError as e:
             sys.exit(f"Schema validation failed: {e}")
 
         # validate_state checks structure + refs only. Also enforce the durable
         # contract on the re-derived plan: every code milestone keeps its
-        # code_intents and is covered by a wave (validate_completeness). Kept out of
+        # code_intents and is covered by a wave. That is the structural invariant
+        # the executor needs (validate_structural_executability), called directly on
+        # the Plan validate_state already parsed -- no second read of plan.json, and
+        # no borrowing the planner's "plan-design" phase name. Kept out of
         # validate_state because the planner saves partial plans mid-build, which
-        # would not yet satisfy completeness. Fail CLOSED on a missing plan.json:
-        # a step>1 run always expects the real plan, and validate_state silently
-        # skips absent files -- so without this guard the executor would dispatch an
-        # empty implementation with no completeness check at all.
+        # would not yet satisfy it. Fail CLOSED on a missing plan.json: a step>1 run
+        # always expects the real plan, and validate_state returns None for an absent
+        # file -- so without this guard the executor would dispatch an empty
+        # implementation with no structural check at all.
         plan_path = Path(state_dir) / "plan.json"
-        if not plan_path.exists():
+        if plan is None or not plan_path.exists():
             sys.exit(f"Error: plan.json not found in {state_dir} (required for step {args.step})")
-        from skills.planner.shared.schema import plan_completeness_errors
 
-        errors = plan_completeness_errors(state_dir, "plan-design")
+        errors = plan.validate_structural_executability()
         if errors:
             sys.exit("Plan completeness failed: " + "; ".join(errors))
 

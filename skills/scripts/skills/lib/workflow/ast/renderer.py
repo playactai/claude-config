@@ -3,6 +3,7 @@
 Simplified renderer handling only the core node types: TextNode, CodeNode, ElementNode.
 """
 
+import re
 import shlex
 from typing import Protocol
 from xml.sax.saxutils import escape, quoteattr
@@ -32,6 +33,12 @@ class Renderer(Protocol):
     def render_invoke_after(self, node: InvokeAfterNode) -> str: ...
 
 
+# XML 1.0 attribute-name character class (NameStartChar + NameChar).
+# Keys that fail this validation would produce malformed XML; rejecting them
+# here is a fail-fast guard rather than silently emitting broken markup.
+_XML_NAME_RE = re.compile(r'^[A-Za-z_:][\w.:-]*$')
+
+
 class XMLRenderer:
     """Renders AST nodes to XML format."""
 
@@ -54,6 +61,9 @@ class XMLRenderer:
         """
         attrs_str = ""
         if node.attrs:
+            for k, v in node.attrs.items():
+                if not _XML_NAME_RE.match(k):
+                    raise ValueError(f"Invalid XML attribute key: {k!r}")
             attrs_str = " " + " ".join(f"{k}={quoteattr(str(v))}" for k, v in node.attrs.items())
 
         if not node.children:

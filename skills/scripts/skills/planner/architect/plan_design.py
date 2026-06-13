@@ -23,30 +23,13 @@ PHASE_KEY = "plan-design"
 def _completeness_gaps(state_dir: str) -> list[str]:
     """Structural plan-design gaps to surface to a re-dispatched architect.
 
-    The step-6 gate vetoes an otherwise QR-passing plan that fails
-    validate_completeness (e.g. a code milestone in no wave) and routes back here.
-    QR-pass means no FAIL items, so this lands in EXECUTE mode with no findings to
-    act on -- listing the deterministic gaps gives the architect targeted guidance,
-    the convergence pressure the QR loop gets from its FAIL findings.
-
-    Gated on milestones existing: an empty skeleton is genuine first-time
-    execution, not a repairable gap, so it stays silent there.
+    Delegates to the single shared helper so the architect router, the QR gate,
+    and the executor all read the completeness contract from one place and
+    cannot drift.
     """
-    import json
-    from pathlib import Path
+    from skills.planner.shared.schema import plan_completeness_errors
 
-    from skills.planner.shared.schema import Plan
-
-    path = Path(state_dir) / "plan.json"
-    if not path.exists():
-        return []
-    try:
-        plan = Plan.model_validate(json.loads(path.read_text()))
-    except Exception:
-        return []
-    if not plan.milestones:
-        return []
-    return plan.validate_completeness(PHASE_KEY)
+    return plan_completeness_errors(state_dir, PHASE_KEY)
 
 
 def get_step_guidance(step: int, module_path: str | None = None, **kwargs) -> dict:

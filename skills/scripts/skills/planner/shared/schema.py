@@ -222,6 +222,16 @@ if True:
                     return dl
             return None
 
+        def code_milestones(self) -> list[Milestone]:
+            """Milestones that produce code (not is_documentation_only).
+
+            Shared by decompose (to enumerate the correct scope), verify
+            (to check the right subset), and the executor (to dispatch
+            developer agents). Single source of truth so no caller
+            reimplements the filter.
+            """
+            return [ms for ms in self.milestones if not ms.is_documentation_only]
+
         def validate_diagram_edges(self, diagram_id: str) -> list[str]:
             """Validate edges for a specific diagram."""
             errors = []
@@ -518,6 +528,10 @@ def plan_completeness_errors(state_dir: str, phase: str) -> list[str]:
     Tolerant of a missing/unparseable plan.json -- validate_state already gates
     schema validity at step entry, so this layers only the phase completeness
     check; returns [] for phases without a completeness rule (impl-code/docs).
+
+    Gated on milestones existing: an empty skeleton is genuine first-time
+    execution, not a repairable gap, so it stays silent -- the router prints
+    "First-time execution" instead of surfacing spurious completeness errors.
     """
     if not (state_dir and phase):
         return []
@@ -527,6 +541,8 @@ def plan_completeness_errors(state_dir: str, phase: str) -> list[str]:
     try:
         plan = Plan.model_validate(json.loads(path.read_text()))
     except Exception:
+        return []
+    if not plan.milestones:
         return []
     return plan.validate_completeness(phase)
 

@@ -94,10 +94,8 @@ class VerifyBase(ABC):
         if step == final_step:
             return ("SUMMARY", None)
         # Steps 2..final_step-1 are item steps
-        item_offset = step - 2  # 0-indexed from step 2
-        item_index = _item_index_for_step(step)
-        phase = item_offset % 2  # 0=ANALYZE, 1=CONFIRM
-        return ("ANALYZE" if phase == 0 else "CONFIRM", item_index)
+        item_index, parity = _item_index_for_step(step)
+        return ("ANALYZE" if parity == 0 else "CONFIRM", item_index)
 
     def _get_total_steps(self, num_items: int) -> int:
         """Calculate total steps for N items: 1 + (2 * N) + 1."""
@@ -146,7 +144,7 @@ class VerifyBase(ABC):
         assert self.PHASE is not None
         state_dir_arg = f" --state-dir {shell_quote(state_dir)}"
         phase_arg = f" --phase {self.PHASE}"
-        item_flags = " ".join(f"--qr-item {id}" for id in item_ids)
+        item_flags = " ".join(f"--qr-item {shell_quote(id)}" for id in item_ids)
 
         # Execution-phase (impl-*) state dirs have no context.json (the executor
         # writes plan.json only), so degrade gracefully there; plan phases stay
@@ -207,7 +205,7 @@ class VerifyBase(ABC):
         assert self.PHASE is not None
         state_dir_arg = f" --state-dir {shell_quote(state_dir)}"
         phase_arg = f" --phase {self.PHASE}"
-        item_flags = " ".join(f"--qr-item {id}" for id in item_ids)
+        item_flags = " ".join(f"--qr-item {shell_quote(id)}" for id in item_ids)
         current_step = 2 + (item_idx * 2)  # ANALYZE is first of the pair
 
         item_id = item_ids[item_idx]
@@ -260,7 +258,7 @@ class VerifyBase(ABC):
         assert self.PHASE is not None
         state_dir_arg = f" --state-dir {shell_quote(state_dir)}"
         phase_arg = f" --phase {self.PHASE}"
-        item_flags = " ".join(f"--qr-item {id}" for id in item_ids)
+        item_flags = " ".join(f"--qr-item {shell_quote(id)}" for id in item_ids)
         current_step = 2 + (item_idx * 2) + 1  # CONFIRM is second of the pair
 
         item_id = item_ids[item_idx]
@@ -358,17 +356,21 @@ class VerifyBase(ABC):
         }
 
 
-def _item_index_for_step(step: int) -> int:
-    """0-based item index for an ANALYZE/CONFIRM step.
+def _item_index_for_step(step: int) -> tuple[int, int]:
+    """Return (item_index, parity) for an ANALYZE/CONFIRM step.
 
-    Steps 2..2N+1 pair ANALYZE (even offset) and CONFIRM (odd offset) per item,
+    Steps 2..2N+1 pair ANALYZE (parity 0) and CONFIRM (parity 1) per item,
     so both steps of item i map to index i. Single source of truth for the
     step<->item mapping, shared by VerifyBase._get_step_type (forward routing)
     and _resolve_target_item (recording a verdict) so the two cannot drift.
     CONTEXT (step 1) and SUMMARY (final step) are not item steps; callers gate
     those out before relying on the result.
+
+    Returns (item_index, parity) where parity is 0 for ANALYZE or 1 for CONFIRM,
+    so callers don't recompute `step - 2` separately.
     """
-    return (step - 2) // 2
+    offset = step - 2
+    return offset // 2, offset % 2
 
 
 def _resolve_target_item(step: int | None, items: list[str]) -> str:
@@ -385,7 +387,7 @@ def _resolve_target_item(step: int | None, items: list[str]) -> str:
     if not items:
         sys.exit("Error: --qr-item is required to record a result.")
     if step is not None and step >= 2:
-        idx = _item_index_for_step(step)
+        idx, _ = _item_index_for_step(step)
         if 0 <= idx < len(items):
             return items[idx]
     sys.exit(

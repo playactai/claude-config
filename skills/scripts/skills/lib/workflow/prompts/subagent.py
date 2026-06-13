@@ -8,6 +8,7 @@ Three dispatch patterns:
 - roster_dispatch: Parallel agents, shared context + unique tasks, fixed command
 """
 
+import re
 import shlex
 from pathlib import Path
 from string import Template
@@ -222,18 +223,30 @@ def template_dispatch(
     Returns:
         Complete dispatch prompt with expanded agent entries
 
-    Notes:
-        Uses Template.safe_substitute (not substitute) so a literal "$" in an
-        interpolated path/state_dir (e.g. /tmp/x$y) does not raise ValueError.
-        A genuinely missing $var is left as the literal "$var" in the expanded
-        prompt rather than crashing dispatch.
+    Raises:
+        ValueError: If a $var from the template survives safe_substitute in the
+            output, AND the var name matches a key in the target dict. Literal
+            $ in paths (/tmp/x$y) won't have corresponding keys, so they're
+            silently tolerated. A surviving $var WITH a matching key means the
+            substitution was no-oped because the value was empty/missing --
+            that's a logic bug that must crash loudly.
     """
     expanded = []
-    for t in targets:
+    for i, t in enumerate(targets):
+        prompt = Template(template).safe_substitute(t)
+        cmd = Template(command).safe_substitute(t)
+        for k in t:
+            if f"${k}" in prompt or f"${k}" in cmd:
+                raise ValueError(
+                    f"Template variable ${k} not substituted in target {i}. "
+                    f"Target had key '{k}' but the literal ${k} survived in "
+                    f"the output -- the value may be empty or the Template "
+                    f"recognized a neighboring $ as part of the name."
+                )
         expanded.append(
             {
-                "prompt": Template(template).safe_substitute(t),
-                "command": Template(command).safe_substitute(t),
+                "prompt": prompt,
+                "command": cmd,
             }
         )
 

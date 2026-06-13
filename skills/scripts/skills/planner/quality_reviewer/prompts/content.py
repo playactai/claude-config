@@ -405,17 +405,6 @@ class PlanDesignVerify(VerifyBase):
                     "",
                 ]
             )
-        elif scope.startswith("code_intent:"):
-            intent_id = scope.split(":")[1]
-            guidance.extend(
-                [
-                    f"CODE INTENT CHECK - Focus on {intent_id}:",
-                    "",
-                    "  Read intent (find containing milestone first):",
-                    f"    cat {state_dir}/plan.json | jq '.milestones[].code_intents[] | select(.id == \"{intent_id}\")'",
-                    "",
-                ]
-            )
         else:
             guidance.extend(
                 [
@@ -427,7 +416,7 @@ class PlanDesignVerify(VerifyBase):
             )
 
         # Add check-specific guidance
-        if "decision_log" in check.lower() or "decision log" in check.lower():
+        if "decision" in check.lower() or "decision_log" in check.lower():
             guidance.extend(
                 [
                     "DECISION LOG VERIFICATION:",
@@ -748,16 +737,6 @@ class ImplDocsVerify(VerifyBase):
                     "",
                 ]
             )
-        elif "marker" in check.lower():
-            guidance.extend(
-                [
-                    "INTENT MARKER VALIDATION:",
-                    "  Valid format: ':MARKER: [what]; [why]'",
-                    "  - Must have semicolon",
-                    "  - Must have non-empty why after semicolon",
-                    "",
-                ]
-            )
         elif "deliverable" in check.lower() or "acceptance" in check.lower():
             guidance.extend(
                 [
@@ -766,6 +745,16 @@ class ImplDocsVerify(VerifyBase):
                     "  and confirm every acceptance criterion is satisfied by the authored docs.",
                     "  - A milestone with NO acceptance_criteria is vacuously satisfied (PASS).",
                     "  - FAIL a criterion only with concrete evidence it is unmet.",
+                    "",
+                ]
+            )
+        elif "marker" in check.lower():
+            guidance.extend(
+                [
+                    "INTENT MARKER VALIDATION:",
+                    "  Valid format: ':MARKER: [what]; [why]'",
+                    "  - Must have semicolon",
+                    "  - Must have non-empty why after semicolon",
                     "",
                 ]
             )

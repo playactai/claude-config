@@ -338,11 +338,21 @@ class SetMilestoneCommand(Command):
             # save passes but final validation rejects the plan and the architect cannot recover
             # it via the CLI.
             cleared_intents = 0
+            removed_from_waves = 0
             if args.documentation_only is not None:
                 ms.is_documentation_only = args.documentation_only
                 if args.documentation_only and ms.code_intents:
                     cleared_intents = len(ms.code_intents)
                     ms.code_intents = []
+                # Doc-only milestones must not appear in any wave (routes to
+                # exec-docs, not executor). Drop them now so the plan is valid
+                # at save time -- validate_refs doesn't enforce this, so waiting
+                # for validate_completeness would wedge the plan with no hint.
+                if args.documentation_only:
+                    for w in plan.waves:
+                        if ms.id in w.milestones:
+                            w.milestones.remove(ms.id)
+                            removed_from_waves += 1
 
             bump_version(ms)
             save_plan(state_dir, plan)
@@ -350,6 +360,11 @@ class SetMilestoneCommand(Command):
                 success(
                     f"Cleared {cleared_intents} code intent(s) from {ms.id} "
                     f"to make it documentation-only."
+                )
+            if removed_from_waves:
+                success(
+                    f"Removed {ms.id} from {removed_from_waves} wave(s) "
+                    f"(documentation-only milestones route to exec-docs)."
                 )
             print_entity_result(EntityResult(id=ms.id, version=ms.version, operation="updated"))
 
@@ -1112,6 +1127,17 @@ def cli(args: list[str] | None = None):
             requests = json.loads(parsed.input)
         else:
             requests = json.load(sys.stdin)
+
+        # Role enforcement: the per-command role check runs after the batch
+        # early-return and is never reached. Reject any restricted method
+        # up front so a batch payload can't bypass role gates.
+        restricted_methods = {cmd for cmds in ROLE_PERMISSIONS.values() for cmd in cmds}
+        for req in requests:
+            method_name = req.get("method", "")
+            if method_name in restricted_methods:
+                role_err = check_role(method_name)
+                if role_err:
+                    error_exit(role_err)
 
         results = batch_dispatch(methods, requests, ctx)
         print(json.dumps(results, indent=2))

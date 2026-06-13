@@ -179,17 +179,26 @@ def set_milestone(
         # so the save can't pass while final validate_completeness rejects the plan --
         # there is no delete-intent op to recover it otherwise.
         cleared_intents = 0
+        dropped_from_waves = 0
         if documentation_only is not None:
             ms.is_documentation_only = documentation_only
             if documentation_only and ms.code_intents:
                 cleared_intents = len(ms.code_intents)
                 ms.code_intents = []
+            # Doc-only milestones route to exec-docs, not the executor's waves.
+            if documentation_only:
+                for w in plan.waves:
+                    if ms.id in w.milestones:
+                        w.milestones.remove(ms.id)
+                        dropped_from_waves += 1
 
         _bump_version(ms)
         ctx.save_plan(plan)
         result = {"id": ms.id, "version": ms.version, "operation": "updated"}
         if cleared_intents:
             result["cleared_code_intents"] = cleared_intents
+        if dropped_from_waves:
+            result["dropped_from_waves"] = dropped_from_waves
         return result
     else:
         # CREATE
@@ -491,7 +500,18 @@ def _translate(ctx: PlanContext, output: str) -> dict:
 
 
 def validate(ctx: PlanContext, phase: str) -> dict:
-    """Validate plan.json for a specific phase."""
+    """Validate plan.json for a specific phase.
+
+    Mirrors the CLI ValidateCommand's choices=['plan-design'] whitelist, so a
+    batch payload with a non-design phase is rejected rather than silently
+    returning passed (validate_completeness returns [] for non-design phases).
+    """
+    VALID_PHASES = frozenset({"plan-design"})
+    if phase not in VALID_PHASES:
+        raise ValueError(
+            f"Invalid phase '{phase}' for validate. "
+            f"Valid phases: {', '.join(sorted(VALID_PHASES))}"
+        )
     plan = ctx.load_plan()
 
     errors = []

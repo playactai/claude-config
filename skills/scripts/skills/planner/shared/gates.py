@@ -16,10 +16,14 @@ from skills.planner.shared.builders import (
 from skills.planner.shared.qr.constants import QR_ITERATION_LIMIT
 from skills.planner.shared.qr.types import AgentRole, QRState, QRStatus
 from skills.planner.shared.qr.utils import (
+    _blocking_items,
+    _blocking_items_from_state,
     by_blocking_severity,
     by_status,
     get_qr_iteration,
+    get_qr_iteration_from_state,
     has_qr_failures,
+    has_qr_failures_from_state,
     load_qr_state,
     query_items,
 )
@@ -44,6 +48,11 @@ def _unresolved_blocking_findings(state_dir: str, phase: str, iteration: int) ->
     if not (state_dir and phase):
         return []
     qr_state = load_qr_state(state_dir, phase)
+    return _unresolved_blocking_findings_from_state(qr_state, iteration)
+
+
+def _unresolved_blocking_findings_from_state(qr_state: dict, iteration: int) -> list[str]:
+    """Same as _unresolved_blocking_findings but accepts a pre-loaded qr_state dict."""
     if not qr_state:
         return []
     lines: list[str] = []
@@ -70,22 +79,26 @@ def _has_recorded_failure(state_dir: str, phase: str) -> bool:
     return bool(query_items(qr_state, by_status("FAIL")))
 
 
+def _has_recorded_failure_from_state(qr_state: dict) -> bool:
+    """Same as _has_recorded_failure but accepts a pre-loaded qr_state dict."""
+    if not qr_state:
+        return False
+    return bool(query_items(qr_state, by_status("FAIL")))
+
+
 def _has_blocking_todo(state_dir: str, phase: str) -> bool:
     """True when qr-{phase}.json still has an unverified item that blocks now.
 
-    Mirrors has_qr_failures' shape (load state, read iteration from the file, filter
-    by status + the iteration's blocking-severity set) but matches TODO rather than
-    FAIL: a blocking item whose verdict was never recorded. has_qr_failures counts
-    only blocking FAIL, so a blocking MUST left at TODO (its verifier returned FAIL or
-    crashed before persisting the item) is unfinished blocking work the gate would
-    otherwise pass -- via the de-escalation veto (--qr-status fail) or the LLM tally
-    (--qr-status pass). An unverified blocking item is never a pass.
+    Delegates to _blocking_items (the single read/filter pipeline shared with
+    has_qr_failures) with status="TODO", so the iteration-default and severity
+    logic lives in one place.
     """
-    qr_state = load_qr_state(state_dir, phase)
-    if not qr_state:
-        return False
-    iteration = qr_state.get("iteration", 1)
-    return bool(query_items(qr_state, by_status("TODO"), by_blocking_severity(iteration)))
+    return bool(_blocking_items(state_dir, phase, "TODO"))
+
+
+def _has_blocking_todo_from_state(qr_state: dict) -> bool:
+    """Same as _has_blocking_todo but accepts a pre-loaded qr_state dict."""
+    return bool(_blocking_items_from_state(qr_state, "TODO"))
 
 
 def _build_iteration_limit_escalation(
@@ -96,6 +109,7 @@ def _build_iteration_limit_escalation(
     pass_step: int | None,
     state_dir: str,
     phase: str,
+    qr_state: dict | None = None,
 ) -> GateResult:
     """Build the user-escalation step shown when QR hits QR_ITERATION_LIMIT.
 
@@ -106,7 +120,7 @@ def _build_iteration_limit_escalation(
     "WORKFLOW COMPLETE" nor an imperative "NEXT STEP" footer -- the user's
     choice selects the next command.
     """
-    findings = _unresolved_blocking_findings(state_dir, phase, iteration)
+    findings = _unresolved_blocking_findings_from_state(qr_state, iteration) if qr_state else _unresolved_blocking_findings(state_dir, phase, iteration)
 
     parts = [
         format_gate_result(passed=False),
@@ -233,11 +247,13 @@ def build_gate_output(
     # and router (which read has_qr_failures), so routing on it made the gate
     # dispatch a fixer while the work step ran first-time EXECUTE with no fix
     # context. Derive the verdict from the same predicate everyone else uses.
-    # (The else is a defensive fallback for missing state -- every real gate is
-    # invoked with a non-empty state_dir and phase.)
+    # Load qr_state once -- every helper (has_qr_failures, _has_recorded_failure,
+    # _has_blocking_todo, _unresolved_blocking_findings) previously called
+    # load_qr_state independently, yielding 4-5 redundant open()+json.load().
     if state_dir and phase:
-        passed = not has_qr_failures(state_dir, phase)
-        iteration = get_qr_iteration(state_dir, phase)
+        qr_state = load_qr_state(state_dir, phase)
+        passed = not has_qr_failures_from_state(qr_state) if qr_state else True
+        iteration = get_qr_iteration_from_state(qr_state) if qr_state else 1
         # has_qr_failures reads False in two distinct situations: failures have
         # de-escalated below the blocking threshold (a real pass), OR nothing is
         # recorded yet -- a verifier returned FAIL without persisting its item, or
@@ -247,7 +263,7 @@ def build_gate_output(
         if (
             passed
             and qr.status == QRStatus.FAIL
-            and not _has_recorded_failure(state_dir, phase)
+            and not _has_recorded_failure_from_state(qr_state)
         ):
             passed = False
         # A blocking item still at TODO is unverified blocking work, not a pass --
@@ -257,9 +273,10 @@ def build_gate_output(
         # LLM tally. The fail routes to the work step, where re-verify re-dispatches the
         # still-TODO item, so a transient verifier crash self-heals next pass; the loop is
         # intentionally un-ceilinged (iteration advances only on a recorded blocking FAIL).
-        if passed and _has_blocking_todo(state_dir, phase):
+        if passed and _has_blocking_todo_from_state(qr_state):
             passed = False
     else:
+        qr_state = None
         passed = qr.passed
         iteration = qr.iteration
 
@@ -304,6 +321,7 @@ def build_gate_output(
             pass_step=pass_step,
             state_dir=state_dir,
             phase=phase,
+            qr_state=qr_state,
         )
 
     parts = []

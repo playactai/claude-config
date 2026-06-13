@@ -125,13 +125,48 @@ def by_blocking_severity(iteration: int) -> ItemPredicate:
 
     Severity is upper-cased before the membership test so a decompose agent
     that writes lower-case "must"/"should" is not silently downgraded to
-    non-blocking. Genuinely out-of-set values stay non-blocking (the tolerant
-    runtime contract; schema ingest coerces them to SHOULD for validation).
+    non-blocking. Out-of-set values (\"BLOCKER\", \"CRITICAL\", etc.) are
+    coerced to SHOULD -- matching schema._normalize_severity's intent --
+    rather than silently treated as non-blocking. An agent writing
+    {\"severity\":\"BLOCKER\"} intending maximum severity gets what the
+    validator would have produced, instead of being silently dropped.
     """
     from skills.planner.shared.qr.constants import get_blocking_severities
 
     blocking = get_blocking_severities(iteration)
-    return lambda item: str(item.get("severity") or "SHOULD").strip().upper() in blocking
+
+    def _coerce(raw: object) -> str:
+        sv = str(raw or "SHOULD").strip().upper()
+        # Map lower-case and out-of-set values into the canonical set so
+        # "must" blocks like MUST and "BLOCKER" blocks like SHOULD -- the
+        # same coercion _normalize_severity does at the schema layer.
+        return sv if sv in {"MUST", "SHOULD", "COULD"} else "SHOULD"
+
+    return lambda item: _coerce(item.get("severity")) in blocking
+
+
+def _blocking_items(state_dir: str, phase: str, *statuses: str) -> list[dict]:
+    """Return items at any of *statuses whose severity blocks at the current iteration.
+
+    Single load/query pipeline shared by has_qr_failures (statuses="FAIL") and
+    _has_blocking_todo (statuses="TODO"), so a change to iteration default or
+    severity handling applies to both. Named with a leading underscore because
+    higher-level predicates (has_qr_failures, _has_blocking_todo) are the public
+    entry points.
+    """
+    qr_state = load_qr_state(state_dir, phase)
+    if not qr_state:
+        return []
+    iteration = qr_state.get("iteration", 1)
+    return query_items(qr_state, by_status(*statuses), by_blocking_severity(iteration))
+
+
+def _blocking_items_from_state(qr_state: dict, *statuses: str) -> list[dict]:
+    """Same as _blocking_items but accepts a pre-loaded qr_state dict."""
+    if not qr_state:
+        return []
+    iteration = qr_state.get("iteration", 1)
+    return query_items(qr_state, by_status(*statuses), by_blocking_severity(iteration))
 
 
 def query_items(qr_state: dict, *predicates: ItemPredicate) -> list[dict]:
@@ -285,6 +320,11 @@ def get_qr_iteration(state_dir: str, phase: str) -> int:
     return qr_state.get("iteration", 1)
 
 
+def get_qr_iteration_from_state(qr_state: dict) -> int:
+    """Same as get_qr_iteration but accepts a pre-loaded qr_state dict."""
+    return qr_state.get("iteration", 1) if qr_state else 1
+
+
 def has_qr_failures(state_dir: str, phase: str) -> bool:
     """Check if QR state has blocking failures at current iteration.
 
@@ -303,11 +343,12 @@ def has_qr_failures(state_dir: str, phase: str) -> bool:
     Returns:
         True if qr-{phase}.json has FAIL items at blocking severity
     """
-    qr_state = load_qr_state(state_dir, phase)
-    if not qr_state:
-        return False
-    iteration = qr_state.get("iteration", 1)
-    return len(query_items(qr_state, by_status("FAIL"), by_blocking_severity(iteration))) > 0
+    return len(_blocking_items(state_dir, phase, "FAIL")) > 0
+
+
+def has_qr_failures_from_state(qr_state: dict) -> bool:
+    """Same as has_qr_failures but accepts a pre-loaded qr_state dict."""
+    return len(_blocking_items_from_state(qr_state, "FAIL")) > 0
 
 
 def qr_file_exists(state_dir: str, phase: str) -> bool:

@@ -589,7 +589,7 @@ def main():
     # catch a malformed or non-conforming write here instead of letting downstream
     # steps re-derive against a broken contract.
     if args.step > 1 and state_dir:
-        from skills.planner.shared.schema import Plan, SchemaValidationError, validate_state
+        from skills.planner.shared.schema import SchemaValidationError, validate_state
 
         try:
             validate_state(state_dir)
@@ -607,9 +607,9 @@ def main():
         plan_path = Path(state_dir) / "plan.json"
         if not plan_path.exists():
             sys.exit(f"Error: plan.json not found in {state_dir} (required for step {args.step})")
-        errors = Plan.model_validate(
-            json.loads(plan_path.read_text())
-        ).validate_completeness("plan-design")
+        from skills.planner.shared.schema import plan_completeness_errors
+
+        errors = plan_completeness_errors(state_dir, "plan-design")
         if errors:
             sys.exit("Plan completeness failed: " + "; ".join(errors))
 

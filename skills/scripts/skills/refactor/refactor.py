@@ -280,7 +280,7 @@ def format_expected_output(sections: dict[str, str]) -> str:
     """Render expected output block."""
     lines = ["<expected_output>"]
     for name, content in sections.items():
-        lines.append(f'  <section name="{name}">')
+        lines.append(f'  <section name={quoteattr(name)}>')
         for line in content.split("\n"):
             lines.append(f"    {line}" if line else "")
         lines.append("  </section>")

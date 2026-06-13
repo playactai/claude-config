@@ -273,7 +273,7 @@ def dispatch_step(
                 phase_prompts[3],
                 "",
                 "OUTPUT: Structured list of plan elements.",
-                "  - Use IDs where available (DL-001, M-001, CC-001)",
+                "  - Use IDs where available (DL-001, M-001, CI-001)",
                 "  - Note counts (e.g., '3 decisions, 5 milestones')",
                 "",
                 "This enumeration becomes a completeness checklist in Step 7.",

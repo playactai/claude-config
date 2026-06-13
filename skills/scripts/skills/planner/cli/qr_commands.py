@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from skills.planner.shared.qr.utils import qr_write_lock
+from skills.planner.shared.schema import canonicalize_severity
 
 from .qr_common import (
     FORBIDS_FINDING,
@@ -38,7 +39,13 @@ class QRContext:
         return self.qr_path()
 
 
-def update_item(ctx: QRContext, item_id: str, status: str, finding: str | None = None) -> dict:
+def update_item(
+    ctx: QRContext,
+    item_id: str,
+    status: str,
+    finding: str | None = None,
+    severity: str | None = None,
+) -> dict:
     """Update QR item status with file locking."""
     status = status.upper()
 
@@ -50,6 +57,15 @@ def update_item(ctx: QRContext, item_id: str, status: str, finding: str | None =
 
     if status in FORBIDS_FINDING and finding:
         raise ValueError(f"Status {status} forbids finding. PASS means no issues found.")
+
+    if severity is not None:
+        canonical = canonicalize_severity(severity)
+        if canonical is None:
+            raise ValueError(
+                f"Invalid severity: {severity}. Must be MUST, SHOULD, or COULD "
+                "(or BLOCKER/CRITICAL)."
+            )
+        severity = canonical
 
     qr_path = ctx.qr_path()
     if not qr_path.exists():
@@ -76,6 +92,8 @@ def update_item(ctx: QRContext, item_id: str, status: str, finding: str | None =
             item["finding"] = finding
         elif "finding" in item and status == "PASS":
             del item["finding"]
+        if severity:
+            item["severity"] = severity
 
         qr_state["items"][idx] = item
         save_qr_state_atomic(ctx.qr_path(), qr_state)

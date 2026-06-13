@@ -33,8 +33,13 @@ The repository uses three distinct forms because three different callers evaluat
 
 | Form                                                                                              | Used in                                                     | Why                                                                                                                                 |
 | ------------------------------------------------------------------------------------------------- | ----------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
-| `<invoke working-dir=".claude/skills/scripts" cmd="uv run python -m skills.X" />`                 | `SKILL.md` entry points, rendered parallel-dispatch XML     | Claude Code resolves `working-dir` against the active `.claude/` dir — user-global (`~/.claude/`) or project-local (`<repo>/.claude/`). `uv run` auto-discovers the pyproject from that cwd. One form covers both install layouts. |
+| `<invoke working-dir=".claude/skills/scripts" cmd="uv run python -m skills.X" />`                 | `SKILL.md` entry points                                     | Claude Code resolves `working-dir` against the active `.claude/` dir — user-global (`~/.claude/`) or project-local (`<repo>/.claude/`). `uv run` auto-discovers the pyproject from that cwd. One form covers both install layouts. |
 | `uv run --project "${CLAUDE_PROJECT_DIR:-$HOME}/.claude/skills/scripts" python -m skills.X`       | Raw bash blocks in `INTENT.md`, SKIP-invoked `## Run` blocks | Plain bash doesn't get `working-dir` resolution. The env-var fallback points at the project-local install when Claude Code sets `CLAUDE_PROJECT_DIR`, otherwise at the user-global location. |
 | `uv run python -m skills.X`                                                                       | Python `next_cmd` strings fed to `format_step()`            | The `cd '<SKILLS_DIR>' && …` wrapper handles cwd; the command just needs uv's env activation. Adding `--project` here would hardcode the install path the wrapper already resolved. |
 
 When constructing commands for a new caller context, pick the form whose caller evaluates the string — if the caller gets Claude Code `<invoke>` resolution, use form 1; if it runs in plain bash with no wrapper, form 2; if it passes through `format_step()`, form 3.
+
+Rendered sub-agent dispatch XML (`render_subagent_dispatch`, `sub_agent_invoke`,
+`refactor._invoke_tag`) does **not** use Form 1: it embeds the absolute
+`cd '<SKILLS_DIR>' && …` form inside the `cmd` attribute, because the spawned agent
+copies the command into Bash, where `working-dir` resolution does not apply.

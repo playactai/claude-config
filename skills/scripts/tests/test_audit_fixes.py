@@ -203,6 +203,106 @@ class TestSeverityCoercion:
         with pytest.raises(SchemaValidationError):
             validate_state(str(tmp_path))
 
+    def test_qr_commands_update_item_canonicalizes_severity(self, tmp_path: Path):
+        # The batch-RPC twin of cmd_update_item must canonicalize like the CLI:
+        # BLOCKER is a high-severity synonym that maps to MUST (audit follow-up).
+        _write_qr(
+            tmp_path,
+            "impl-code",
+            1,
+            [{"id": "q1", "scope": "*", "check": "x", "status": "TODO", "severity": "SHOULD"}],
+        )
+        ctx = qr_commands.QRContext(state_dir=tmp_path, phase="impl-code")
+        qr_commands.update_item(ctx, "q1", "PASS", severity="BLOCKER")
+        data = json.loads((tmp_path / "qr-impl-code.json").read_text())
+        assert data["items"][0]["severity"] == "MUST"
+
+    def test_qr_commands_update_item_rejects_unknown_severity(self, tmp_path: Path):
+        # A deliberate single update rejects a typo (mirrors the CLI), unlike the
+        # lenient None->SHOULD ingest path.
+        _write_qr(
+            tmp_path,
+            "impl-code",
+            1,
+            [{"id": "q1", "scope": "*", "check": "x", "status": "TODO", "severity": "SHOULD"}],
+        )
+        ctx = qr_commands.QRContext(state_dir=tmp_path, phase="impl-code")
+        with pytest.raises(ValueError, match="Invalid severity"):
+            qr_commands.update_item(ctx, "q1", "PASS", severity="FOO")
+        # An explicit empty string is a caller error, distinct from the omitted default.
+        with pytest.raises(ValueError, match="Invalid severity"):
+            qr_commands.update_item(ctx, "q1", "PASS", severity="")
+
+    def test_batch_update_item_canonicalizes_severity(self, tmp_path: Path):
+        # Through the dispatcher: a batch update-item carrying severity no longer
+        # raises an opaque TypeError (unexpected kwarg) and stores the canonical tier.
+        _write_qr(
+            tmp_path,
+            "impl-code",
+            1,
+            [{"id": "q1", "scope": "*", "check": "x", "status": "TODO", "severity": "SHOULD"}],
+        )
+        ctx = qr_commands.QRContext(state_dir=tmp_path, phase="impl-code")
+        results = batch(
+            discover_methods(qr_commands),
+            [
+                {
+                    "method": "update-item",
+                    "params": {"item_id": "q1", "status": "PASS", "severity": "critical"},
+                    "id": 1,
+                }
+            ],
+            ctx,
+        )
+        assert "error" not in results[0]  # no more TypeError crash
+        data = json.loads((tmp_path / "qr-impl-code.json").read_text())
+        assert data["items"][0]["severity"] == "MUST"
+
+    def test_qr_commands_update_item_rejected_transition_leaves_severity_unchanged(
+        self, tmp_path: Path
+    ):
+        # Severity is validated pre-lock, but the terminal-status check fires INSIDE
+        # the lock before any write. A PASS->FAIL update (PASS is terminal) carrying a
+        # VALID severity must not partially persist it -- the RPC twin of the CLI's
+        # no-torn-write guarantee.
+        _write_qr(
+            tmp_path,
+            "impl-code",
+            1,
+            [{"id": "q1", "scope": "*", "check": "x", "status": "PASS", "severity": "SHOULD"}],
+        )
+        ctx = qr_commands.QRContext(state_dir=tmp_path, phase="impl-code")
+        with pytest.raises(ValueError, match="terminal status"):
+            qr_commands.update_item(ctx, "q1", "FAIL", finding="boom", severity="MUST")
+        item = json.loads((tmp_path / "qr-impl-code.json").read_text())["items"][0]
+        assert item["severity"] == "SHOULD"  # unchanged
+        assert item["status"] == "PASS"  # unchanged
+
+    def test_batch_update_item_rejects_bad_severity_and_rolls_back(self, tmp_path: Path):
+        # An invalid severity in a batch update-item surfaces the ValueError as a
+        # rolled-back batch error (not an escaped exception), leaving disk untouched.
+        _write_qr(
+            tmp_path,
+            "impl-code",
+            1,
+            [{"id": "q1", "scope": "*", "check": "x", "status": "TODO", "severity": "SHOULD"}],
+        )
+        ctx = qr_commands.QRContext(state_dir=tmp_path, phase="impl-code")
+        before = (tmp_path / "qr-impl-code.json").read_bytes()
+        results = batch(
+            discover_methods(qr_commands),
+            [
+                {
+                    "method": "update-item",
+                    "params": {"item_id": "q1", "status": "PASS", "severity": "FOO"},
+                    "id": 1,
+                }
+            ],
+            ctx,
+        )
+        assert results[0]["error"]["rolled_back"] is True
+        assert (tmp_path / "qr-impl-code.json").read_bytes() == before  # unchanged
+
 
 # --- Bug #6: literal "$" in template crashed dispatch ------------------------
 class TestTemplateDollarSafety:
@@ -580,6 +680,28 @@ class TestCwdPinnedCommands:
     def test_decompose_grouping_cli_prose_is_pinned(self):
         out = format_assign_cmd("/tmp/sd", "impl-code", "component-")
         assert f"cd {SKILLS_DIR} && uv run python -m skills.planner.cli.qr" in out
+
+    def test_incoherence_dispatch_lines_are_pinned(self):
+        # The 3 hand-built AGENT PROMPT invoke lines now route through pin_cwd: the
+        # absolute cd is present and the cwd-fragile relative working-dir is gone.
+        from skills.incoherence import incoherence
+
+        for step in (3, 9, 17):
+            actions = incoherence.STEPS[step]["actions"]
+            line = next(a for a in actions if a.strip().startswith("Start: <invoke"))
+            assert f'cmd="cd {SKILLS_DIR} && ' in line
+            assert 'working-dir=".claude/skills/scripts"' not in line
+
+    def test_arxiv_templates_drop_relative_invoke_and_dispatch_is_pinned(self):
+        # The duplicate relative-form Start line is removed from both templates; the
+        # canonical absolute-cd invoke comes from template_dispatch/sub_agent_invoke.
+        from skills.arxiv_to_md import main
+
+        assert 'working-dir=".claude/skills/scripts"' not in main.MODE1_TEMPLATE
+        assert 'working-dir=".claude/skills/scripts"' not in main.MODE2_TEMPLATE
+        out = main.build_mode1_dispatch()
+        assert f"cd {SKILLS_DIR} && uv run python -m skills.arxiv_to_md.sub_agent" in out
+        assert 'working-dir=".claude/skills/scripts"' not in out
 
 
 # --- NEW-B: exec-phase QR tolerates a missing context.json (plan stays strict) -

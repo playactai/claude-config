@@ -47,8 +47,23 @@ from skills.lib.workflow.core import (
     StepDef,
     Workflow,
 )
+from skills.lib.workflow.prompts import pin_cwd
 
 MODULE_PATH = "skills.incoherence.incoherence"
+
+
+def _invoke_line(cmd: str) -> str:
+    """Render a cwd-pinned sub-agent invoke line for an AGENT PROMPT block.
+
+    pin_cwd prefixes an absolute cd into SKILLS_DIR so a spawned agent whose cwd has
+    drifted still resolves the `skills` package; the prior relative
+    working-dir=".claude/skills/scripts" failed with "No module named 'skills'"
+    (audit #12; matches refactor._invoke_tag / render_subagent_dispatch). No quoteattr:
+    render_current_action emits actions verbatim, so the literal `&&` and the
+    \\"...\\" / {{var}} placeholders must survive unescaped.
+    """
+    return f'  Start: <invoke cmd="{pin_cwd(cmd)}" />'
+
 
 DIMENSION_CATALOG = """
 ABSTRACT DIMENSION CATALOG
@@ -244,7 +259,7 @@ STEPS = {
             "",
             "AGENT PROMPT:",
             "  DIMENSION: {letter} - {name}. DESCRIPTION: {from_catalog}",
-            f'  Start: <invoke working-dir=".claude/skills/scripts" cmd="uv run python -m {MODULE_PATH} --step-number 4 --thoughts \\"Dimension: {{{{letter}}}}\\"" />',
+            _invoke_line(f'uv run python -m {MODULE_PATH} --step-number 4 --thoughts \\"Dimension: {{{{letter}}}}\\"'),
         ],
         "next": "After all agents complete, invoke step 8 with combined findings",
     },
@@ -329,7 +344,7 @@ STEPS = {
             "  CANDIDATE: {id} at {location} | DIMENSION: {letter} - {name}",
             "  Claimed: {summary}",
             "  Workflow: step 10 (explore) -> step 11 (format)",
-            f'  Start: <invoke working-dir=".claude/skills/scripts" cmd="uv run python -m {MODULE_PATH} --step-number 10 --thoughts \\"Verifying: {{{{id}}}}\\"" />',
+            _invoke_line(f'uv run python -m {MODULE_PATH} --step-number 10 --thoughts \\"Verifying: {{{{id}}}}\\"'),
         ],
         "next": "After all agents complete, invoke step 12 with all verdicts",
     },
@@ -473,7 +488,7 @@ STEPS = {
             "  TARGET: {file} | ISSUES: {ids}",
             "  Per issue: type, severity, sources, analysis, resolution_text",
             "  Workflow: step 18 (apply) -> step 19 (format)",
-            f'  Start: <invoke working-dir=".claude/skills/scripts" cmd="uv run python -m {MODULE_PATH} --step-number 18 --thoughts \\"FILE: {{{{file}}}}\\"" />',
+            _invoke_line(f'uv run python -m {MODULE_PATH} --step-number 18 --thoughts \\"FILE: {{{{file}}}}\\"'),
             "",
             "Launch ALL wave agents in SINGLE message.",
         ],

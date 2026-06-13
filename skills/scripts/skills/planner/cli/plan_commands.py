@@ -7,10 +7,11 @@ Function names use underscores, converted to hyphens for method names.
 from __future__ import annotations
 
 import json
-import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal, cast
+
+from .plan_common import apply_documentation_only_toggle, parse_csv, validate_relpath, write_plan
 
 if TYPE_CHECKING:
     from ..shared.schema import Plan
@@ -61,52 +62,18 @@ class PlanContext:
         path = self.plan_path()
         if not path.exists():
             raise FileNotFoundError(f"plan.json not found at {path}")
-        data = json.loads(path.read_text())
+        data = json.loads(path.read_text(encoding="utf-8"))
         return schema["Plan"].model_validate(data)
 
     def save_plan(self, plan: Plan) -> None:
         """Validate the in-memory plan, then atomically persist it.
 
-        Mirrors the module-level cli.plan.save_plan: validate cross-references
-        BEFORE writing, so a rejected mutation never reaches disk (no bad write,
-        no rollback) and an unrelated malformed qr-{phase}.json does not fail a
-        valid plan mutation. The batch path layers its own transaction snapshot on
-        top for all-or-nothing across multiple commands.
+        Delegates to plan_common.write_plan (shared with cli.plan.save_plan): the
+        validate-refs-before-write core lives there so the two CLI mirrors cannot
+        drift. The batch path layers its own transaction snapshot on top for
+        all-or-nothing across multiple commands.
         """
-        from skills.lib.io import atomic_write_text
-
-        from ..shared.schema import SchemaValidationError
-
-        errors = plan.validate_refs()
-        if errors:
-            raise SchemaValidationError(f"plan.json: {errors}")
-        atomic_write_text(self.plan_path(), plan.model_dump_json(indent=2))
-
-
-def _parse_csv(value: str | None) -> list[str]:
-    """Parse comma-separated string to list."""
-    if not value:
-        return []
-    return [v.strip() for v in value.split(",") if v.strip()]
-
-
-def _validate_relpath(path: str, context: str) -> str:
-    """Reject absolute and parent-relative paths so the overlap guard works.
-
-    validate_refs compares lexical os.path.normpath strings; abs-vs-rel
-    and differently-rooted relative spellings of the same file slip past
-    and let the executor co-schedule two milestones that race-write one
-    file. Enforcing the relative-path convention at write time closes
-    that gap without touching the filesystem at plan time (realpath).
-    """
-    if not path:
-        return path
-    stripped = path.strip()
-    if os.path.isabs(stripped):
-        raise ValueError(f"Absolute path not allowed in {context}: {stripped}")
-    if stripped.startswith(".."):
-        raise ValueError(f"Parent-relative path not allowed in {context}: {stripped}")
-    return stripped
+        write_plan(self.plan_path(), plan)
 
 
 def _check_version(entity, provided: int | None, entity_id: str) -> None:
@@ -167,15 +134,14 @@ def set_milestone(
     schema = _get_schema()
     plan = ctx.load_plan()
 
-    files_list = _parse_csv(files)
-    flags_list = _parse_csv(flags)
-    requirements_list = _parse_csv(requirements)
-    acceptance_list = _parse_csv(acceptance_criteria)
-    tests_list = _parse_csv(tests)
+    files_list = parse_csv(files)
+    flags_list = parse_csv(flags)
+    requirements_list = parse_csv(requirements)
+    acceptance_list = parse_csv(acceptance_criteria)
+    tests_list = parse_csv(tests)
 
     if files_list:
-        for f in files_list:
-            _validate_relpath(f, "milestone --files")
+        files_list = [validate_relpath(f, "set-milestone --files") for f in files_list]
 
     if id:
         # UPDATE
@@ -198,45 +164,16 @@ def set_milestone(
             ms.acceptance_criteria = acceptance_list
         if tests_list:
             ms.tests = tests_list
-        # Reversible: None = leave as-is; True/False set explicitly. Marking doc-only
-        # means "no code" (doc-only <=> no code_intents); clear any existing intents here
-        # so the save can't pass while final validate_completeness rejects the plan --
-        # there is no delete-intent op to recover it otherwise.
+        # documentation_only: None = leave as-is; True/False applied by the shared
+        # toggle (clears intents + drops the milestone from waves on the forward
+        # flip, warns on the reverse flip). See plan_common.apply_documentation_only_toggle.
         cleared_intents = 0
         dropped_from_waves = 0
         toggle_off_warning = None
         if documentation_only is not None:
-            ms.is_documentation_only = documentation_only
-            if documentation_only and ms.code_intents:
-                cleared_intents = len(ms.code_intents)
-                ms.code_intents = []
-            # Doc-only milestones route to exec-docs, not the executor's waves.
-            if documentation_only:
-                for w in plan.waves:
-                    before = len(w.milestones)
-                    w.milestones = [m for m in w.milestones if m != ms.id]
-                    dropped_from_waves += before - len(w.milestones)
-                # Prune emptied waves so the plan doesn't accumulate dead waves
-                # across repeated toggles.
-                plan.waves = [w for w in plan.waves if w.milestones]
-            # The reverse toggle (doc-only -> code) only flips the flag; it does NOT
-            # re-add the code_intents or wave the forward toggle stripped, leaving a
-            # code milestone that validate_completeness rejects -- yet the command
-            # still returns success. Surface a non-fatal warning so the gap is visible
-            # (mirrors set_intent pointing users at --no-documentation-only).
-            if documentation_only is False:
-                in_wave = any(ms.id in w.milestones for w in plan.waves)
-                missing = []
-                if not ms.code_intents:
-                    missing.append(f"code_intents (set-intent --milestone {ms.id} ...)")
-                if not in_wave:
-                    missing.append("a wave assignment")
-                if missing:
-                    toggle_off_warning = (
-                        f"milestone {ms.id} is now a code milestone but is missing "
-                        f"{' and '.join(missing)}; validate_completeness will reject "
-                        f"the plan until re-authored."
-                    )
+            cleared_intents, dropped_from_waves, toggle_off_warning = (
+                apply_documentation_only_toggle(plan, ms, documentation_only)
+            )
 
         _bump_version(ms)
         ctx.save_plan(plan)
@@ -303,9 +240,9 @@ def set_intent(
         )
 
     if file:
-        _validate_relpath(file.strip(), "set-intent --file")
+        file = validate_relpath(file, "set-intent --file")
 
-    refs_list = _parse_csv(decision_refs)
+    refs_list = parse_csv(decision_refs)
     for ref in refs_list:
         if not plan.get_decision(ref):
             raise ValueError(f"Decision {ref} not found")
@@ -492,7 +429,7 @@ def set_diagram_render(ctx: PlanContext, diagram: str, content_file: str) -> dic
     if not content_path.exists():
         raise FileNotFoundError(f"Content file not found: {content_file}")
 
-    dg.ascii_render = content_path.read_text()
+    dg.ascii_render = content_path.read_text(encoding="utf-8")
     ctx.save_plan(plan)
 
     return {"diagram": diagram, "operation": "updated"}
@@ -516,7 +453,7 @@ def set_wave(
     schema = _get_schema()
     plan = ctx.load_plan()
 
-    milestones_list = _parse_csv(milestones)
+    milestones_list = parse_csv(milestones)
 
     if id:
         # UPDATE: replace the wave's milestone list (upsert).
@@ -540,7 +477,7 @@ def _translate(ctx: PlanContext, output: str) -> dict:
 
     plan = ctx.load_plan()
     md = translate_to_markdown(plan)
-    Path(output).write_text(md)
+    Path(output).write_text(md, encoding="utf-8")
 
     return {"output": output, "operation": "created"}
 

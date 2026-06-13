@@ -219,7 +219,7 @@ def load_context_block(context_file: str | None) -> list[str]:
     if not context_file:
         return []
     try:
-        context = json.loads(Path(context_file).read_text())
+        context = json.loads(Path(context_file).read_text(encoding="utf-8"))
         # Context prepended to actions (not separate block) to ensure LLM reads
         # context BEFORE task instructions. Prompt order = attention priority.
         # XML tags allow sub-agent to distinguish context from instructions.
@@ -254,7 +254,7 @@ def render_context_file(context_file: str | Path, *, missing_ok: bool = False) -
     from skills.lib.workflow.prompts import format_file_content
 
     try:
-        content = Path(context_file).read_text()
+        content = Path(context_file).read_text(encoding="utf-8")
     except FileNotFoundError as e:
         if missing_ok:
             return format_file_content(

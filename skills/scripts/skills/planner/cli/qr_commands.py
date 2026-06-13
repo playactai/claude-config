@@ -107,7 +107,7 @@ def get_item(ctx: QRContext, item_id: str) -> dict:
     if not qr_path.exists():
         raise FileNotFoundError(f"QR state file not found: {qr_path}")
 
-    with open(qr_path) as f:
+    with open(qr_path, encoding="utf-8") as f:
         qr_state = json.load(f)
 
     _, item = find_item(qr_state, item_id)
@@ -123,7 +123,7 @@ def list_items(ctx: QRContext, status: str | None = None) -> list[dict]:
     if not qr_path.exists():
         raise FileNotFoundError(f"QR state file not found: {qr_path}")
 
-    with open(qr_path) as f:
+    with open(qr_path, encoding="utf-8") as f:
         qr_state = json.load(f)
 
     items = []
@@ -148,7 +148,7 @@ def summary(ctx: QRContext) -> dict:
     if not qr_path.exists():
         raise FileNotFoundError(f"QR state file not found: {qr_path}")
 
-    with open(qr_path) as f:
+    with open(qr_path, encoding="utf-8") as f:
         qr_state = json.load(f)
 
     counts = {"TODO": 0, "PASS": 0, "FAIL": 0}

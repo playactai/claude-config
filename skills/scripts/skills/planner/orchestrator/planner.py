@@ -140,7 +140,7 @@ def _save_plan_to_docs(state_dir: str) -> "Path | None":
             print("Warning: plan.md not found in state_dir", file=sys.stderr)
             return None
 
-        plan_data = json.loads(plan_json.read_text())
+        plan_data = json.loads(plan_json.read_text(encoding="utf-8"))
         problem = plan_data.get("overview", {}).get("problem", "")
         slug = _slugify(problem)
 
@@ -161,7 +161,7 @@ def _save_plan_to_docs(state_dir: str) -> "Path | None":
             target = docs_plans / f"{date_prefix}-{slug}-{counter}.md"
             counter += 1
 
-        target.write_text(plan_md.read_text())
+        target.write_text(plan_md.read_text(encoding="utf-8"), encoding="utf-8")
         return target
     except Exception as e:
         print(f"Warning: failed to save plan to docs/plans/: {e}", file=sys.stderr)
@@ -417,7 +417,7 @@ def qr_verify_step(title, phase):
         # qr_state["iteration"] after the increment would use the stale
         # pre-increment value loaded above, lagging de-escalation by one
         # iteration.
-        iteration = qr_state.get("iteration", 1)
+        iteration = (qr_state.get("iteration") or 1)
         if qr.state == LoopState.RETRY:
             new_iter = increment_qr_iteration(state_dir, phase)
             if new_iter is not None:
@@ -498,6 +498,8 @@ def qr_route_step(title, phase, work_step, pass_step, pass_message, fix_target=N
             state_dir=state_dir,
             phase=phase,
             accept_findings=ctx.get("accept_findings", False),
+            qr_state=ctx["qr_state"],
+            plan=ctx.get("plan"),
         )
 
     handler.phase = phase
@@ -596,14 +598,21 @@ STEPS = {
 }
 
 
-def get_step_guidance(step: int, qr_status, state_dir, accept_findings=False) -> dict | str:
+def get_step_guidance(
+    step: int, qr_status, state_dir, accept_findings=False, plan=None
+) -> dict | str:
     """Returns guidance for a step.
 
     Iteration and fix mode derived from qr-{phase}.json file state.
     Phase derived from handler attribute set by step factory.
     accept_findings is the user's ceiling override, consumed only by the route step.
+    plan is the validate_state parse threaded from main, reused by the route gate.
     """
-    from skills.planner.shared.qr.utils import get_qr_iteration, has_qr_failures
+    from skills.planner.shared.qr.utils import (
+        get_qr_iteration_from_state,
+        has_qr_failures_from_state,
+        load_qr_state,
+    )
 
     handler = STEPS.get(step)
     if not handler:
@@ -612,10 +621,11 @@ def get_step_guidance(step: int, qr_status, state_dir, accept_findings=False) ->
     # Phase stored as handler attribute by step factory.
     # None for non-QR steps (1, 2).
     phase = getattr(handler, "phase", None)
-    iteration = get_qr_iteration(state_dir, phase) if state_dir and phase else 1
+    qr_state = load_qr_state(state_dir, phase) if state_dir and phase else None
+    iteration = get_qr_iteration_from_state(qr_state) if qr_state else 1
 
     status = QRStatus(qr_status) if qr_status else None
-    is_fix_mode = state_dir and phase and has_qr_failures(state_dir, phase)
+    is_fix_mode = bool(qr_state and has_qr_failures_from_state(qr_state))
     state = LoopState.RETRY if is_fix_mode else LoopState.INITIAL
     qr = QRState(iteration=iteration, state=state, status=status)
 
@@ -624,15 +634,19 @@ def get_step_guidance(step: int, qr_status, state_dir, accept_findings=False) ->
         "qr": qr,
         "state_dir": state_dir,
         "accept_findings": accept_findings,
+        "qr_state": qr_state,
+        "plan": plan,
     }
 
     return handler(ctx)
 
 
-def format_output(step: int, qr_status, state_dir, accept_findings=False) -> str | GateResult:
+def format_output(
+    step: int, qr_status, state_dir, accept_findings=False, plan=None
+) -> str | GateResult:
     """Format output for display."""
     guidance = get_step_guidance(
-        step, qr_status, state_dir=state_dir, accept_findings=accept_findings
+        step, qr_status, state_dir=state_dir, accept_findings=accept_findings, plan=plan
     )
 
     if isinstance(guidance, GateResult):
@@ -688,12 +702,14 @@ def main():
     if args.step < 1:
         sys.exit("Error: step must be >= 1")
 
-    # Validate state before running step (skip for step 1 which creates state)
+    # Validate state before running step (skip for step 1 which creates state).
+    # Capture the parse so the route gate reuses it instead of re-reading plan.json.
+    plan = None
     if args.step > 1 and args.state_dir:
         from skills.planner.shared.schema import SchemaValidationError, validate_state
 
         try:
-            validate_state(args.state_dir)
+            plan = validate_state(args.state_dir)
         except SchemaValidationError as e:
             sys.exit(f"Schema validation failed: {e}")
 
@@ -707,7 +723,11 @@ def main():
         sys.exit(0)
 
     result = format_output(
-        args.step, args.qr_status, state_dir=args.state_dir, accept_findings=args.accept_findings
+        args.step,
+        args.qr_status,
+        state_dir=args.state_dir,
+        accept_findings=args.accept_findings,
+        plan=plan,
     )
 
     if isinstance(result, GateResult):

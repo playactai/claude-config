@@ -77,7 +77,7 @@ def _snapshot_state(ctx) -> str | None:
     if state_file is None:
         return None
     path = state_file()
-    return path.read_text() if path.exists() else None
+    return path.read_text(encoding="utf-8") if path.exists() else None
 
 
 def _restore_state(ctx, snapshot: str | None) -> None:

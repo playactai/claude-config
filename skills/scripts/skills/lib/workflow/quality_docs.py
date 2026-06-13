@@ -39,7 +39,7 @@ def extract_content(doc_path: Path, phase: Phase) -> ExtractedContent | None:
     if not doc_path.exists():
         return None
 
-    content = doc_path.read_text()
+    content = doc_path.read_text(encoding="utf-8")
 
     applicable = _extract_applicable_phases(content)
     if phase.value not in applicable:

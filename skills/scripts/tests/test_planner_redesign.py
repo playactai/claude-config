@@ -11,6 +11,8 @@ silently return.
 
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from skills.planner.shared.gates import GateResult
@@ -29,6 +31,12 @@ def test_planner_has_six_steps():
 def test_step6_is_terminal_plan_approved(tmp_path):
     from skills.planner.orchestrator.planner import format_output
 
+    # Step 6 is reached after verify persists qr state; write a passing (empty-items)
+    # qr file so the gate is exercised the way real flow reaches it. Fail-closed now
+    # vetoes a missing qr file. No plan.json needed -- completeness tolerates absence.
+    (tmp_path / "qr-plan-design.json").write_text(
+        json.dumps({"phase": "plan-design", "iteration": 1, "items": []})
+    )
     result = format_output(6, "pass", str(tmp_path))
     assert isinstance(result, GateResult)
     assert result.terminal_pass is True
@@ -924,6 +932,9 @@ def test_plan_gate_blocks_qr_pass_on_incomplete_plan(tmp_path):
 
     plan = _plan_with_waves([("M-001", ["a.py"], False)], [])  # code milestone, no waves
     (tmp_path / "plan.json").write_text(plan.model_dump_json())
+    (tmp_path / "qr-plan-design.json").write_text(
+        json.dumps({"phase": "plan-design", "iteration": 1, "items": []})
+    )
     result = format_output(6, "pass", str(tmp_path))
     assert isinstance(result, GateResult)
     assert result.terminal_pass is False
@@ -938,6 +949,9 @@ def test_plan_gate_terminal_pass_on_complete_plan(tmp_path):
 
     plan = _plan_with_waves([("M-001", ["a.py"], False)], [("W-001", ["M-001"])])
     (tmp_path / "plan.json").write_text(plan.model_dump_json())
+    (tmp_path / "qr-plan-design.json").write_text(
+        json.dumps({"phase": "plan-design", "iteration": 1, "items": []})
+    )
     result = format_output(6, "pass", str(tmp_path))
     assert isinstance(result, GateResult)
     assert result.terminal_pass is True

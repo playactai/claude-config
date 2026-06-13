@@ -191,7 +191,7 @@ def cmd_get_item(state_dir: str, phase: str, args: list[str]):
     if not qr_path.exists():
         error_exit(f"QR state file not found: {qr_path}")
 
-    with open(qr_path) as f:
+    with open(qr_path, encoding="utf-8") as f:
         qr_state = json.load(f)
 
     _, item = find_item(qr_state, item_id)
@@ -217,7 +217,7 @@ def cmd_list_items(state_dir: str, phase: str, args: list[str]):
     if not qr_path.exists():
         error_exit(f"QR state file not found: {qr_path}")
 
-    with open(qr_path) as f:
+    with open(qr_path, encoding="utf-8") as f:
         qr_state = json.load(f)
 
     for item in qr_state.get("items", []):
@@ -234,7 +234,7 @@ def cmd_summary(state_dir: str, phase: str, args: list[str]):
     if not qr_path.exists():
         error_exit(f"QR state file not found: {qr_path}")
 
-    with open(qr_path) as f:
+    with open(qr_path, encoding="utf-8") as f:
         qr_state = json.load(f)
 
     counts = {"TODO": 0, "PASS": 0, "FAIL": 0}

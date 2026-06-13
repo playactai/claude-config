@@ -558,7 +558,7 @@ def validate_state(state_dir: str) -> Plan | None:
         if not path.exists():
             continue
         try:
-            data = json.loads(path.read_text())
+            data = json.loads(path.read_text(encoding="utf-8"))
             obj = model.model_validate(data)
             if post_validate:
                 errors = post_validate(obj)
@@ -582,7 +582,7 @@ def validate_state(state_dir: str) -> Plan | None:
         if not path.exists():
             continue
         try:
-            data = json.loads(path.read_text())
+            data = json.loads(path.read_text(encoding="utf-8"))
             QRFile.model_validate(data)
         except Exception as e:
             raise SchemaValidationError(f"{path.name}: {e}") from e
@@ -591,7 +591,10 @@ def validate_state(state_dir: str) -> Plan | None:
 
 
 def plan_completeness_errors(
-    state_dir: str, phase: str, suppress_if_no_milestones: bool = False
+    state_dir: str,
+    phase: str,
+    suppress_if_no_milestones: bool = False,
+    plan: Plan | None = None,
 ) -> list[str]:
     """Load plan.json and return its validate_completeness errors ([] when N/A).
 
@@ -608,16 +611,21 @@ def plan_completeness_errors(
     suppress_if_no_milestones=True, because at step 1 an empty skeleton is
     genuine first-time execution (not a repairable gap) and it prints
     "First-time execution" rather than surfacing spurious completeness errors.
+
+    Pass `plan` when the caller already parsed plan.json (the gate threads its
+    validate_state parse down) to skip the redundant disk read+parse; when None,
+    this loads plan.json itself, tolerating a missing/unparseable file as above.
     """
     if not (state_dir and phase):
         return []
-    path = Path(state_dir) / "plan.json"
-    if not path.exists():
-        return []
-    try:
-        plan = Plan.model_validate(json.loads(path.read_text()))
-    except Exception:
-        return []
+    if plan is None:
+        path = Path(state_dir) / "plan.json"
+        if not path.exists():
+            return []
+        try:
+            plan = Plan.model_validate(json.loads(path.read_text(encoding="utf-8")))
+        except Exception:
+            return []
     if suppress_if_no_milestones and not plan.milestones:
         return []
     return plan.validate_completeness(phase)

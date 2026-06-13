@@ -197,6 +197,9 @@ def test_issue_23_step6_pass_is_terminal(tmp_path):
     from skills.planner.orchestrator.planner import format_output
 
     _write_plan(tmp_path, [{"id": "M-001", "is_documentation_only": False}])
+    (tmp_path / "qr-plan-design.json").write_text(
+        json.dumps({"phase": "plan-design", "iteration": 1, "items": []})
+    )
 
     result = format_output(step=6, qr_status="pass", state_dir=str(tmp_path))
     output = result.output if isinstance(result, GateResult) else result

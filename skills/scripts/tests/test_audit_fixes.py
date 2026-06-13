@@ -39,6 +39,7 @@ from skills.lib.workflow.ast.dispatch_renderer import (
 )
 from skills.lib.workflow.prompts.step import SKILLS_DIR, pin_cwd
 from skills.lib.workflow.prompts.subagent import template_dispatch
+from skills.planner.cli import plan as plan_cli
 from skills.planner.cli import plan_commands, qr_commands
 from skills.planner.cli import qr as qr_cli
 from skills.planner.cli.dispatch import batch, discover_methods
@@ -84,7 +85,7 @@ def _write_qr(tmp_path: Path, phase: str, iteration: int, items: list[dict]) -> 
     )
 
 
-def _gate(tmp_path: Path, qr: QRState, *, phase="impl-code", work_step=2, pass_step=6):
+def _gate(tmp_path: Path, qr: QRState, *, phase="impl-code", work_step=2, pass_step: int | None = 6):
     return build_gate_output(
         module_path="m",
         qr_name="QR",
@@ -1296,6 +1297,308 @@ class TestDocOnlyToggleOffWarning:
         plan_commands.set_wave(ctx, milestones="M-001")
         res = plan_commands.set_milestone(ctx, id="M-001", documentation_only=False)
         assert "warning" not in res
+
+
+# =============================================================================
+# 2026-06-13 follow-up audit fixes: CLI/RPC validate_relpath drift (F1),
+# CLI doc-only toggle warning (F3), fail-closed gate (F6), iteration null (C)
+# =============================================================================
+
+
+# --- F6: a gate with no qr-{phase}.json fails CLOSED -------------------------
+class TestGateFailsClosedOnMissingState:
+    def test_missing_qr_file_with_status_pass_fails_closed(self, tmp_path: Path):
+        # No qr-{phase}.json on disk: the gate cannot confirm QR passed, so it must
+        # fail CLOSED (route to the fixer) rather than finalize on the LLM's
+        # --qr-status pass. _gate omits qr_state -> _UNSET self-load -> None.
+        qr = QRState(iteration=1, state=LoopState.INITIAL, status=QRStatus.PASS)
+        res = _gate(tmp_path, qr)
+        assert "GATE RESULT: FAIL" in res.output
+        assert res.terminal_pass is False
+        assert "--step 2" in res.output  # routes to work_step
+
+    def test_missing_qr_file_with_status_none_fails_closed(self, tmp_path: Path):
+        # Same fail-closed verdict when no --qr-status word is supplied.
+        qr = QRState(iteration=1, state=LoopState.INITIAL, status=None)
+        res = _gate(tmp_path, qr)
+        assert "GATE RESULT: FAIL" in res.output
+        assert res.terminal_pass is False
+        assert "--step 2" in res.output
+
+    def test_missing_qr_file_terminal_gate_does_not_finalize(self, tmp_path: Path):
+        # The dangerous case: a TERMINAL gate (pass_step=None, the planner's step 6)
+        # must never finalize a plan whose QR cannot be confirmed.
+        qr = QRState(iteration=1, state=LoopState.INITIAL, status=QRStatus.PASS)
+        res = _gate(tmp_path, qr, phase="plan-design", work_step=3, pass_step=None)
+        assert "GATE RESULT: FAIL" in res.output
+        assert res.terminal_pass is False
+        assert "PLAN APPROVED" not in res.output
+        assert "--step 3" in res.output  # routes back to the architect, not finalize
+
+    def test_non_dict_qr_file_is_treated_as_absent(self, tmp_path: Path):
+        # load_qr_state honors its dict|None contract: a valid-JSON-but-non-dict file
+        # (e.g. a decompose scratch list) returns None, so the gate fails CLOSED
+        # instead of crashing on `.get`. Defense-in-depth for F6 -- the orchestrators'
+        # validate_state already rejects such a file, but a direct gate caller must
+        # not finalize an unconfirmable QR file either.
+        from skills.planner.shared.qr.utils import load_qr_state
+
+        (tmp_path / "qr-impl-code.json").write_text(json.dumps([{"id": "x"}]))
+        assert load_qr_state(str(tmp_path), "impl-code") is None
+        qr = QRState(iteration=1, state=LoopState.INITIAL, status=QRStatus.PASS)
+        res = _gate(tmp_path, qr)
+        assert "GATE RESULT: FAIL" in res.output
+        assert res.terminal_pass is False
+
+
+# --- F1: every CLI/RPC file site normalizes the path and STORES the result ---
+class TestRelpathNormalizedAndStored:
+    def test_rpc_set_intent_create_strips_leading_space(self, tmp_path: Path):
+        # set_intent was the genuinely store-raw site: it .strip()'d only for the
+        # check, then persisted the unstripped value, so ' src/a.py' never matched
+        # 'src/a.py' in validate_refs' normpath overlap guard. It must now store the
+        # normalized form.
+        ctx = _init_plan(tmp_path)
+        plan_commands.set_milestone(ctx, name="Code", files="a.py")
+        plan_commands.set_intent(ctx, milestone="M-001", file=" src/a.py", behavior="b")
+        ci = json.loads(ctx.plan_path().read_text())["milestones"][0]["code_intents"][0]
+        assert ci["file"] == "src/a.py"
+
+    def test_rpc_set_intent_update_collapses_dot_slash(self, tmp_path: Path):
+        ctx = _init_plan(tmp_path)
+        plan_commands.set_milestone(ctx, name="Code", files="a.py")
+        res = plan_commands.set_intent(ctx, milestone="M-001", file="src/a.py", behavior="b")
+        plan_commands.set_intent(ctx, id=res["id"], milestone="M-001", file="./src/b.py")
+        ci = json.loads(ctx.plan_path().read_text())["milestones"][0]["code_intents"][0]
+        assert ci["file"] == "src/b.py"  # UPDATE path stores normalized too
+
+    def test_rpc_set_intent_rejects_embedded_dotdot(self, tmp_path: Path):
+        # 'a/../../shared.py' has no leading '..' yet normpath collapses it to the
+        # out-of-tree '../shared.py' -- the second evasion the strip-only guard missed.
+        ctx = _init_plan(tmp_path)
+        plan_commands.set_milestone(ctx, name="Code", files="a.py")
+        with pytest.raises(ValueError, match="Parent-relative"):
+            plan_commands.set_intent(ctx, milestone="M-001", file="a/../../shared.py", behavior="b")
+
+    def test_rpc_set_milestone_create_normalizes_files(self, tmp_path: Path):
+        ctx = _init_plan(tmp_path)
+        plan_commands.set_milestone(ctx, name="Code", files="./src/a.py, src/b.py")
+        files = json.loads(ctx.plan_path().read_text())["milestones"][0]["files"]
+        assert files == ["src/a.py", "src/b.py"]
+
+    def test_rpc_set_milestone_update_normalizes_files(self, tmp_path: Path):
+        ctx = _init_plan(tmp_path)
+        plan_commands.set_milestone(ctx, name="Code", files="a.py")
+        plan_commands.set_milestone(ctx, id="M-001", files=" src/x.py")
+        files = json.loads(ctx.plan_path().read_text())["milestones"][0]["files"]
+        assert files == ["src/x.py"]  # UPDATE path stores normalized too
+
+    def test_rpc_set_milestone_rejects_embedded_dotdot(self, tmp_path: Path):
+        ctx = _init_plan(tmp_path)
+        with pytest.raises(ValueError, match="Parent-relative"):
+            plan_commands.set_milestone(ctx, name="Code", files="a/../../shared.py")
+
+    def test_cli_set_milestone_files_normalized(self, tmp_path: Path, monkeypatch):
+        # The CLI mirror persists the normalized value too (no drift from the RPC).
+        monkeypatch.setenv("PLAN_AGENT_ROLE", "architect")
+        plan_cli.cli(["--state-dir", str(tmp_path), "init", "--task", "t"])
+        plan_cli.cli(["--state-dir", str(tmp_path), "set-milestone", "--name", "Code", "--files", "./src/a.py"])
+        files = json.loads((tmp_path / "plan.json").read_text())["milestones"][0]["files"]
+        assert files == ["src/a.py"]
+
+    def test_cli_set_intent_rejects_embedded_dotdot(self, tmp_path: Path, monkeypatch, capsys):
+        # The CLI mirror wraps the ValueError in error_exit -> <validation_error> + exit 1.
+        monkeypatch.setenv("PLAN_AGENT_ROLE", "architect")
+        plan_cli.cli(["--state-dir", str(tmp_path), "init", "--task", "t"])
+        plan_cli.cli(["--state-dir", str(tmp_path), "set-milestone", "--name", "Code", "--files", "a.py"])
+        with pytest.raises(SystemExit):
+            plan_cli.cli([
+                "--state-dir", str(tmp_path), "set-intent",
+                "--milestone", "M-001", "--file", "a/../../shared.py", "--behavior", "b",
+            ])
+        out = capsys.readouterr().out
+        assert "validation_error" in out
+        assert "Parent-relative" in out
+
+
+# --- F3: the CLI mirror warns (stderr) on a wedging reverse doc-only toggle ---
+class TestCliToggleOffWarning:
+    def test_cli_toggle_off_into_wedged_warns_on_stderr(self, tmp_path: Path, monkeypatch, capsys):
+        # The RPC twin is covered by TestDocOnlyToggleOffWarning; this pins the CLI
+        # mirror now surfacing the same warning via warn() to stderr (keeps stdout's
+        # <entity_result> parse-clean).
+        monkeypatch.setenv("PLAN_AGENT_ROLE", "architect")
+        plan_cli.cli(["--state-dir", str(tmp_path), "init", "--task", "t"])
+        plan_cli.cli(["--state-dir", str(tmp_path), "set-milestone", "--name", "Docs", "--documentation-only"])
+        capsys.readouterr()  # drain prior output
+        plan_cli.cli(["--state-dir", str(tmp_path), "set-milestone", "--id", "M-001", "--no-documentation-only"])
+        captured = capsys.readouterr()
+        assert "WARNING:" in captured.err
+        assert "code_intents" in captured.err
+        assert "wave" in captured.err
+        assert "WARNING:" not in captured.out  # warning stays off the parsed stdout
+
+
+# --- Latent C: an explicit "iteration": null falls back to 1 -----------------
+class TestIterationNullDefault:
+    def test_get_qr_iteration_from_state_tolerates_explicit_null(self):
+        from skills.planner.shared.qr.utils import get_qr_iteration_from_state
+
+        assert get_qr_iteration_from_state({"iteration": None}) == 1
+        assert get_qr_iteration_from_state({"iteration": 3}) == 3
+        assert get_qr_iteration_from_state({}) == 1
+
+    def test_increment_qr_iteration_tolerates_explicit_null(self, tmp_path: Path):
+        # The site that actually raised: `(.get("iteration") or 1) + 1` must yield 2,
+        # not TypeError on `None + 1`.
+        from skills.planner.shared.qr.utils import increment_qr_iteration
+
+        (tmp_path / "qr-impl-code.json").write_text(
+            json.dumps({"phase": "impl-code", "iteration": None, "items": []})
+        )
+        assert increment_qr_iteration(str(tmp_path), "impl-code") == 2
+
+
+# --- Follow-up: plan.py CSV parsing shares plan_commands' tokenizer ----------
+class TestCsvParsingShared:
+    def test_parse_csv_drops_empty_tokens(self):
+        from skills.planner.cli.plan_common import parse_csv
+
+        assert parse_csv("a,,b") == ["a", "b"]
+        assert parse_csv(" a , b ") == ["a", "b"]
+        assert parse_csv("   ") == []
+        assert parse_csv(None) == []
+
+    def test_cli_and_rpc_tokenize_files_identically(self, tmp_path: Path, monkeypatch):
+        # Pre-existing drift: plan.py kept empty tokens ('a,,b' -> ['a','','b']) while
+        # the RPC's parse_csv dropped them. Both now route through the shared parse_csv,
+        # so a doubled comma yields the same files list on each path.
+        monkeypatch.setenv("PLAN_AGENT_ROLE", "architect")
+        cli_dir = tmp_path / "cli"
+        cli_dir.mkdir()
+        plan_cli.cli(["--state-dir", str(cli_dir), "init", "--task", "t"])
+        plan_cli.cli(
+            ["--state-dir", str(cli_dir), "set-milestone", "--name", "M", "--files", "a.py,,b.py"]
+        )
+        cli_files = json.loads((cli_dir / "plan.json").read_text())["milestones"][0]["files"]
+
+        rpc_dir = tmp_path / "rpc"
+        rpc_dir.mkdir()
+        ctx = _init_plan(rpc_dir)
+        plan_commands.set_milestone(ctx, name="M", files="a.py,,b.py")
+        rpc_files = json.loads(ctx.plan_path().read_text())["milestones"][0]["files"]
+
+        assert cli_files == rpc_files == ["a.py", "b.py"]
+
+
+# --- F1 follow-up: validate_relpath rejects spellings that collapse to "." ----
+class TestRelpathRejectsCurrentDir:
+    """A path that normalizes to the current directory ('.', './', 'a/..', or a
+    whitespace-only value) names no file; storing it would seed a nonsense
+    milestone/intent target. The single shared guard rejects all of them."""
+
+    @pytest.mark.parametrize("bad", [".", "./", "a/..", "   ", "src/.."])
+    def test_validate_relpath_rejects_dot(self, bad):
+        from skills.planner.cli.plan_common import validate_relpath
+
+        with pytest.raises(ValueError, match="current directory"):
+            validate_relpath(bad, "set-intent --file")
+
+    def test_validate_relpath_keeps_real_paths(self):
+        # Real paths still normalize and pass; an empty string short-circuits
+        # before normpath (so it returns "" rather than the rejected ".").
+        from skills.planner.cli.plan_common import validate_relpath
+
+        assert validate_relpath("./src/b.py", "ctx") == "src/b.py"
+        assert validate_relpath(" a/b.py ", "ctx") == "a/b.py"
+        assert validate_relpath("", "ctx") == ""
+
+    def test_rpc_set_intent_rejects_dot(self, tmp_path: Path):
+        ctx = _init_plan(tmp_path)
+        plan_commands.set_milestone(ctx, name="Code", files="a.py")
+        with pytest.raises(ValueError, match="current directory"):
+            plan_commands.set_intent(ctx, milestone="M-001", file=".", behavior="b")
+
+    def test_rpc_set_milestone_rejects_dot_files(self, tmp_path: Path):
+        ctx = _init_plan(tmp_path)
+        with pytest.raises(ValueError, match="current directory"):
+            plan_commands.set_milestone(ctx, name="Code", files="./")
+
+    def test_cli_set_intent_rejects_dot(self, tmp_path: Path, monkeypatch, capsys):
+        monkeypatch.setenv("PLAN_AGENT_ROLE", "architect")
+        plan_cli.cli(["--state-dir", str(tmp_path), "init", "--task", "t"])
+        plan_cli.cli(
+            ["--state-dir", str(tmp_path), "set-milestone", "--name", "Code", "--files", "a.py"]
+        )
+        with pytest.raises(SystemExit):
+            plan_cli.cli([
+                "--state-dir", str(tmp_path), "set-intent",
+                "--milestone", "M-001", "--file", ".", "--behavior", "b",
+            ])
+        out = capsys.readouterr().out
+        assert "validation_error" in out
+        assert "current directory" in out
+
+
+# --- F8 read-side: state-file reads are UTF-8, not the process locale default --
+class TestStateFileEncoding:
+    """plan.json is the one state file with non-ASCII content (model_dump_json
+    does NOT ensure_ascii, unlike the json.dumps-written qr files). Its reads must
+    pin encoding='utf-8' so the write (already UTF-8 via atomic_write_text) round-
+    trips regardless of the process locale."""
+
+    def test_plan_json_non_ascii_roundtrips(self, tmp_path: Path):
+        # Intent guard: a name with em-dash / accents / astral survives save->load
+        # through every plan.json reader (PlanContext.load_plan and validate_state).
+        from skills.planner.shared.schema import validate_state
+
+        ctx = _init_plan(tmp_path)
+        name = "Café — résumé 𝟙"
+        plan_commands.set_milestone(ctx, name=name, files="a.py")
+        assert ctx.load_plan().milestones[0].name == name
+        plan = validate_state(str(tmp_path))
+        assert plan is not None
+        assert plan.milestones[0].name == name
+
+    def test_plan_json_read_survives_c_locale(self, tmp_path: Path):
+        # The actual bug, reproduced faithfully: a child interpreter under LC_ALL=C
+        # (locale codec ANSI_X3.4-1968, PEP-538 coercion + UTF-8 mode disabled)
+        # writes a non-ASCII plan.json (atomic_write_text is already UTF-8) and reads
+        # it back via PlanContext.load_plan. Without encoding="utf-8" on the read,
+        # load_plan raises UnicodeDecodeError and the child exits nonzero; with the
+        # fix the round-trip is locale-independent. The child self-skips (prints
+        # SKIP) if the platform still coerces the C locale to UTF-8, so the test
+        # never false-fails -- it only asserts where the bug can actually manifest.
+        import os
+
+        child = (
+            "import sys, pathlib, locale\n"
+            "from skills.planner.cli import plan_commands\n"
+            'if locale.getpreferredencoding(False).lower().replace("-", "") == "utf8":\n'
+            '    print("SKIP"); sys.exit(0)\n'
+            "ctx = plan_commands.PlanContext(state_dir=pathlib.Path(sys.argv[1]))\n"
+            'plan_commands.init(ctx, task="t")\n'
+            'name = "café — résumé 𝟙"\n'
+            'plan_commands.set_milestone(ctx, name=name, files="a.py")\n'
+            'got = ctx.load_plan().milestones[0].name\n'  # the read under test
+            'print("OK" if got == name else "FAIL")\n'
+        )
+        script = tmp_path / "child.py"
+        script.write_text(child, encoding="utf-8")  # source is read as utf-8 regardless of locale
+
+        env = {k: v for k, v in os.environ.items() if k != "PYTHONIOENCODING"}
+        env.update(LC_ALL="C", LANG="C", PYTHONUTF8="0", PYTHONCOERCECLOCALE="0")
+        r = subprocess.run(
+            [sys.executable, str(script), str(tmp_path)],
+            capture_output=True,
+            text=True,
+            env=env,
+            cwd=Path(__file__).parent.parent,  # skills/scripts -> `skills` import works from any rootdir
+        )
+        if "SKIP" in r.stdout:
+            pytest.skip("platform coerces the C locale to UTF-8; bug cannot manifest here")
+        assert r.returncode == 0, f"child failed (read not UTF-8?):\n{r.stderr}"
+        assert r.stdout.strip() == "OK"
 
 
 if __name__ == "__main__":

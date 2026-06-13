@@ -49,17 +49,23 @@ def load_qr_state(state_dir: str, phase: str) -> dict | None:
         phase: QR phase name (plan-design, impl-code, impl-docs)
 
     Returns:
-        Parsed QR state dict or None if file doesn't exist/is invalid
+        Parsed QR state dict, or None if the file is missing, unparseable, or
+        not a JSON object
     """
     path = Path(state_dir) / f"qr-{phase}.json"
     if not path.exists():
         return None
 
     try:
-        with open(path) as f:
-            return json.load(f)
+        with open(path, encoding="utf-8") as f:
+            data = json.load(f)
     except (OSError, json.JSONDecodeError):
         return None
+    # A valid-JSON file that isn't an object (e.g. a decompose scratch list)
+    # violates the dict contract every caller relies on -- return None so the gate
+    # fails closed (and `.get`-based callers don't crash) instead of treating an
+    # unconfirmable QR file as present.
+    return data if isinstance(data, dict) else None
 
 
 def get_qr_item(qr_state: dict, item_id: str) -> dict | None:
@@ -154,7 +160,7 @@ def _blocking_items(state_dir: str, phase: str, *statuses: str) -> list[dict]:
     qr_state = load_qr_state(state_dir, phase)
     if not qr_state:
         return []
-    iteration = qr_state.get("iteration", 1)
+    iteration = (qr_state.get("iteration") or 1)
     return query_items(qr_state, by_status(*statuses), by_blocking_severity(iteration))
 
 
@@ -162,7 +168,7 @@ def _blocking_items_from_state(qr_state: dict | None, *statuses: str) -> list[di
     """Same as _blocking_items but accepts a pre-loaded qr_state dict."""
     if not qr_state:
         return []
-    iteration = qr_state.get("iteration", 1)
+    iteration = (qr_state.get("iteration") or 1)
     return query_items(qr_state, by_status(*statuses), by_blocking_severity(iteration))
 
 
@@ -314,12 +320,12 @@ def get_qr_iteration(state_dir: str, phase: str) -> int:
     qr_state = load_qr_state(state_dir, phase)
     if not qr_state:
         return 1
-    return qr_state.get("iteration", 1)
+    return (qr_state.get("iteration") or 1)
 
 
 def get_qr_iteration_from_state(qr_state: dict) -> int:
     """Same as get_qr_iteration but accepts a pre-loaded qr_state dict."""
-    return qr_state.get("iteration", 1) if qr_state else 1
+    return (qr_state.get("iteration") or 1) if qr_state else 1
 
 
 def has_qr_failures(state_dir: str, phase: str) -> bool:
@@ -409,8 +415,8 @@ def increment_qr_iteration(state_dir: str, phase: str) -> int | None:
     if not path.exists():
         return None
 
-    qr_state = json.loads(path.read_text())
-    iteration = qr_state.get("iteration", 1) + 1
+    qr_state = json.loads(path.read_text(encoding="utf-8"))
+    iteration = (qr_state.get("iteration") or 1) + 1
     qr_state["iteration"] = iteration
     atomic_write_text(path, json.dumps(qr_state, indent=2))
     return iteration

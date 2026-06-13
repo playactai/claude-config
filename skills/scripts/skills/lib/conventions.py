@@ -203,7 +203,7 @@ def get_registry() -> dict:
     global _registry_cache
     if _registry_cache is None:
         registry_path = Path(__file__).resolve().parents[4] / "conventions" / "REGISTRY.yaml"
-        _registry_cache = _parse_registry(registry_path.read_text())
+        _registry_cache = _parse_registry(registry_path.read_text(encoding="utf-8"))
     return _registry_cache
 
 

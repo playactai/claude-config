@@ -41,7 +41,7 @@ def is_valid_group_id(group_id: str) -> bool:
 
 def load_qr_state_under_lock(qr_path: Path) -> dict:
     """Read QR state from qr_path. Caller must hold the phase write lock."""
-    content = qr_path.read_text() if qr_path.exists() else ""
+    content = qr_path.read_text(encoding="utf-8") if qr_path.exists() else ""
     if not content:
         return {"phase": "", "items": []}
     return json.loads(content)

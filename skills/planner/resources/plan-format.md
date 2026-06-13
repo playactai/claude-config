@@ -268,13 +268,18 @@ The integration tests in M3 verify the full flow that end users would exercise,
 using real dependencies. This creates fast feedback as soon as all components
 exist.
 
-## Milestone Dependencies (if applicable)
+## Execution Waves
 
-```
-M1 ---> M2
-   \
-    --> M3 --> M4
-```
+Milestones execute in ordered waves: every milestone in a wave runs in parallel
+(one developer agent each), and the waves run strictly in sequence. There is no
+separate dependency block -- the executor transcribes these waves verbatim into
+`plan.json.waves` and never infers them from a diagram.
 
-Independent milestones can execute in parallel during /plan-execution.
+- W-001: M-001
+- W-002: M-002, M-003
+- W-003: M-004
+
+Two milestones that touch the same file must NOT share a wave -- their developer
+agents would race-write it. Authored by the architect with
+`set-wave --milestones M-001,M-002`; see `plan-json-schema.md` for the `waves` JSON.
 ````

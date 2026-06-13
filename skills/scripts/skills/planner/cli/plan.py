@@ -35,6 +35,7 @@ from . import plan_commands
 from .dispatch import batch as batch_dispatch
 from .dispatch import discover_methods, list_methods
 from .output import EntityResult, VersionMismatchError, exit_with_version_error, print_entity_result
+from .plan_common import apply_documentation_only_toggle, parse_csv, validate_relpath, write_plan
 
 PYDANTIC_AVAILABLE = True
 
@@ -130,6 +131,11 @@ def success(msg: str):
     print(msg)
 
 
+def warn(msg: str) -> None:
+    """Print a non-fatal warning to stderr (keeps stdout parse-clean)."""
+    print(f"WARNING: {msg}", file=sys.stderr)
+
+
 # =============================================================================
 # CAS Versioning Helpers
 # =============================================================================
@@ -170,7 +176,7 @@ def load_plan(state_dir: Path) -> Plan:
     if not path.exists():
         error_exit(f"plan.json not found at {path}")
     try:
-        data = json.loads(path.read_text())
+        data = json.loads(path.read_text(encoding="utf-8"))
         return Plan.model_validate(data)
     except json.JSONDecodeError as e:
         error_exit(f"Invalid JSON in plan.json: {e}")
@@ -181,22 +187,11 @@ def load_plan(state_dir: Path) -> Plan:
 def save_plan(state_dir: Path, plan: Plan):
     """Validate the in-memory plan, then atomically persist it.
 
-    Validates cross-references BEFORE writing, so a schema-invalid mutation (e.g.
-    a wave co-scheduling two milestones that share a file) is rejected without
-    ever touching disk -- no bad write, no rollback, and no re-read/re-parse of a
-    plan already held in memory. Scoped to plan.json: a plan mutation is not
-    failed by an unrelated malformed qr-{phase}.json in the same state dir (those
-    are validated by the orchestrator's validate_state at step entry).
-
-    Atomic write uses a unique mkstemp temp + rename (not a shared fixed plan.tmp
-    a concurrent writer would clobber) -- see skills.lib.io.atomic_write_text.
+    Delegates to plan_common.write_plan (shared with plan_commands'
+    PlanContext.save_plan): the validate-refs-before-write core lives there so the
+    two CLI mirrors cannot drift.
     """
-    from skills.lib.io import atomic_write_text
-
-    errors = plan.validate_refs()
-    if errors:
-        raise SchemaValidationError(f"plan.json: {errors}")
-    atomic_write_text(get_plan_path(state_dir), plan.model_dump_json(indent=2))
+    write_plan(get_plan_path(state_dir), plan)
 
 
 # =============================================================================
@@ -288,23 +283,16 @@ class SetMilestoneCommand(Command):
         state_dir = get_state_dir()
         plan = load_plan(state_dir)
 
-        files = [f.strip() for f in args.files.split(",")] if args.files else []
-        flags = [f.strip() for f in args.flags.split(",")] if args.flags else []
-        requirements = (
-            [r.strip() for r in args.requirements.split(",")] if args.requirements else []
-        )
-        acceptance = (
-            [a.strip() for a in args.acceptance_criteria.split(",")]
-            if args.acceptance_criteria
-            else []
-        )
-        tests = [t.strip() for t in args.tests.split(",")] if args.tests else []
+        files = parse_csv(args.files)
+        flags = parse_csv(args.flags)
+        requirements = parse_csv(args.requirements)
+        acceptance = parse_csv(args.acceptance_criteria)
+        tests = parse_csv(args.tests)
 
-        for f in files:
-            if os.path.isabs(f) or f.startswith(".."):
-                error_exit(
-                    f"Absolute or parent-relative path not allowed in --files: {f}"
-                )
+        try:
+            files = [validate_relpath(f, "set-milestone --files") for f in files]
+        except ValueError as e:
+            error_exit(str(e))
 
         if args.id:
             # UPDATE path
@@ -337,31 +325,16 @@ class SetMilestoneCommand(Command):
                 ms.acceptance_criteria = acceptance
             if tests:
                 ms.tests = tests
-            # Reversible: None means "not specified" (leave as-is); True/False set explicitly.
-            # Marking doc-only means "no code" (doc-only <=> no code_intents -- the exclusivity
-            # validate_completeness enforces). A milestone may already carry intents and there
-            # is no delete-intent op, so realize the toggle by clearing them here; otherwise the
-            # save passes but final validation rejects the plan and the architect cannot recover
-            # it via the CLI.
+            # documentation_only: None = leave as-is; True/False applied by the shared
+            # toggle (clears intents + drops the milestone from waves on the forward
+            # flip, warns on the reverse flip). See plan_common.apply_documentation_only_toggle.
             cleared_intents = 0
             removed_from_waves = 0
+            toggle_warning = None
             if args.documentation_only is not None:
-                ms.is_documentation_only = args.documentation_only
-                if args.documentation_only and ms.code_intents:
-                    cleared_intents = len(ms.code_intents)
-                    ms.code_intents = []
-                # Doc-only milestones must not appear in any wave (routes to
-                # exec-docs, not executor). Drop them now so the plan is valid
-                # at save time -- validate_refs doesn't enforce this, so waiting
-                # for validate_completeness would wedge the plan with no hint.
-                if args.documentation_only:
-                    for w in plan.waves:
-                        before = len(w.milestones)
-                        w.milestones = [m for m in w.milestones if m != ms.id]
-                        removed_from_waves += before - len(w.milestones)
-                    # Prune emptied waves so the plan doesn't accumulate dead waves
-                    # across repeated toggles.
-                    plan.waves = [w for w in plan.waves if w.milestones]
+                cleared_intents, removed_from_waves, toggle_warning = (
+                    apply_documentation_only_toggle(plan, ms, args.documentation_only)
+                )
 
             bump_version(ms)
             save_plan(state_dir, plan)
@@ -375,6 +348,8 @@ class SetMilestoneCommand(Command):
                     f"Removed {ms.id} from {removed_from_waves} wave(s) "
                     f"(documentation-only milestones route to exec-docs)."
                 )
+            if toggle_warning:
+                warn(toggle_warning)
             print_entity_result(EntityResult(id=ms.id, version=ms.version, operation="updated"))
 
         else:
@@ -446,13 +421,12 @@ class SetIntentCommand(Command):
             )
 
         if args.file:
-            f = args.file.strip()
-            if os.path.isabs(f) or f.startswith(".."):
-                error_exit(f"Absolute or parent-relative path not allowed in --file: {f}")
+            try:
+                args.file = validate_relpath(args.file, "set-intent --file")
+            except ValueError as e:
+                error_exit(str(e))
 
-        decision_refs = (
-            [r.strip() for r in args.decision_refs.split(",")] if args.decision_refs else []
-        )
+        decision_refs = parse_csv(args.decision_refs)
         for dref in decision_refs:
             if not plan.get_decision(dref):
                 validation_error(
@@ -722,7 +696,7 @@ class SetDiagramRenderCommand(Command):
             error_exit(f"Content file not found: {args.content_file}")
 
         try:
-            dg.ascii_render = content_path.read_text()
+            dg.ascii_render = content_path.read_text(encoding="utf-8")
         except Exception as e:
             error_exit(f"Failed to read render for diagram {args.diagram}: {e}")
 
@@ -759,7 +733,7 @@ class SetWaveCommand(Command):
         # low-churn. save_plan validates cross-references in memory before writing,
         # so an overlapping wave (two milestones sharing a file) is rejected without
         # ever touching disk.
-        milestones = [m.strip() for m in args.milestones.split(",") if m.strip()]
+        milestones = parse_csv(args.milestones)
 
         if args.id:
             # UPDATE path: replace the wave's milestone list (upsert).

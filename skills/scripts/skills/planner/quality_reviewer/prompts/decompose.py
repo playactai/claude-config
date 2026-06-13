@@ -84,16 +84,6 @@ def format_assign_cmd(state_dir: str, phase: str, prefix: str) -> str:
     return f"OUTPUT:\n  {cmd}"
 
 
-def write_qr_state(state_dir: str, phase: str, items: list[dict]) -> None:
-    """Write qr-{phase}.json with iteration=1.
-
-    WHY iteration=1: Decompose runs once per phase (enforced by orchestrator skip logic).
-    Iteration counter tracks verification cycles, not decompose invocations.
-    """
-    qr_state = {"phase": phase, "iteration": 1, "items": items}
-    Path(state_dir, f"qr-{phase}.json").write_text(json.dumps(qr_state, indent=2))
-
-
 # =============================================================================
 # SHARED PROMPTS (truly identical across all 3 phases)
 # =============================================================================
@@ -204,7 +194,7 @@ def render_code_milestone_scope(state_dir: str, phase: str) -> str:
     if not path.exists():
         return ""
     try:
-        plan = Plan.model_validate(json.loads(path.read_text()))
+        plan = Plan.model_validate(json.loads(path.read_text(encoding="utf-8")))
     except Exception:
         return ""
     ids = ", ".join(ms.id for ms in plan.code_milestones()) or "(none)"

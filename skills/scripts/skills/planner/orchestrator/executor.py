@@ -26,6 +26,7 @@ import json
 import sys
 import tempfile
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from skills.lib.workflow.prompts import subagent_dispatch
 from skills.lib.workflow.prompts.step import format_step
@@ -40,21 +41,24 @@ from skills.planner.shared.constraints import (
     ORCHESTRATOR_CONSTRAINT,
     format_state_banner,
 )
-from skills.planner.shared.gates import build_gate_output
+from skills.planner.shared.gates import _UNSET, build_gate_output
 from skills.planner.shared.qr.cli import add_qr_args
 from skills.planner.shared.qr.phases import get_phase_config
 from skills.planner.shared.qr.types import LoopState, QRState, QRStatus
 from skills.planner.shared.qr.utils import (
     by_blocking_severity,
     by_status,
-    get_qr_iteration,
-    has_qr_failures,
+    get_qr_iteration_from_state,
+    has_qr_failures_from_state,
     increment_qr_iteration,
     load_qr_state,
     qr_file_exists,
     query_items,
 )
 from skills.planner.shared.resources import get_mode_script_path
+
+if TYPE_CHECKING:
+    from skills.planner.shared.schema import Plan
 
 # Module path for -m invocation
 MODULE_PATH = "skills.planner.orchestrator.executor"
@@ -296,7 +300,7 @@ def format_qr_verify(step: int, phase: str, state_dir: str, qr: QRState) -> str:
         )
         return format_step(body, retry_cmd, title=title)
 
-    iteration = qr_state.get("iteration", 1)
+    iteration = (qr_state.get("iteration") or 1)
     if qr.state == LoopState.RETRY:
         new_iter = increment_qr_iteration(state_dir, phase)
         if new_iter is not None:
@@ -352,7 +356,14 @@ def format_qr_verify(step: int, phase: str, state_dir: str, qr: QRState) -> str:
 # =============================================================================
 
 
-def format_qr_gate(step: int, phase: str, state_dir: str, qr: QRState) -> str:
+def format_qr_gate(
+    step: int,
+    phase: str,
+    state_dir: str,
+    qr: QRState,
+    qr_state: dict | None = _UNSET,
+    plan: "Plan | None" = None,
+) -> str:
     """Route based on QR results: pass → next phase, fail → fix loop."""
     gate_config = {
         5: (
@@ -384,6 +395,8 @@ def format_qr_gate(step: int, phase: str, state_dir: str, qr: QRState) -> str:
         fix_target=fix_target,
         state_dir=state_dir,
         phase=phase,
+        qr_state=qr_state,
+        plan=plan,
     )
 
     return result.output
@@ -470,7 +483,11 @@ def format_step_10() -> str:
 
 
 def format_output(
-    step: int, state_dir: str, qr_status: str | None, reconciliation_check: bool
+    step: int,
+    state_dir: str,
+    qr_status: str | None,
+    reconciliation_check: bool,
+    plan: "Plan | None" = None,
 ) -> str:
     """Format output for display."""
 
@@ -493,9 +510,10 @@ def format_output(
         9: "impl-docs",
     }
     phase = phase_for_step.get(step)
-    iteration = get_qr_iteration(state_dir, phase) if state_dir and phase else 1
+    qr_state = load_qr_state(state_dir, phase) if state_dir and phase else None
+    iteration = get_qr_iteration_from_state(qr_state) if qr_state else 1
     status = QRStatus(qr_status) if qr_status else None
-    fix_mode = bool(state_dir and phase and has_qr_failures(state_dir, phase))
+    fix_mode = bool(qr_state and has_qr_failures_from_state(qr_state))
     state = LoopState.RETRY if fix_mode else LoopState.INITIAL
     qr = QRState(iteration=iteration, state=state, status=status)
 
@@ -510,7 +528,7 @@ def format_output(
     elif step == 5:
         if not qr_status:
             return "Error: --qr-status required for step 5 (Code QR Gate)"
-        return format_qr_gate(5, "impl-code", state_dir, qr)
+        return format_qr_gate(5, "impl-code", state_dir, qr, qr_state, plan)
     elif step == 6:
         return format_step_6(qr, state_dir)
     elif step == 7:
@@ -520,7 +538,7 @@ def format_output(
     elif step == 9:
         if not qr_status:
             return "Error: --qr-status required for step 9 (Doc QR Gate)"
-        return format_qr_gate(9, "impl-docs", state_dir, qr)
+        return format_qr_gate(9, "impl-docs", state_dir, qr, qr_state, plan)
     elif step == 10:
         return format_step_10()
     else:
@@ -584,6 +602,10 @@ def main():
     if args.step > 1 and not state_dir:
         sys.exit(f"Error: --state-dir required for step {args.step}")
 
+    # plan is threaded into format_output so the QR gate (steps 5/9) reuses this
+    # parse instead of re-reading plan.json. None for step 1 (no plan yet).
+    plan = None
+
     # Validate the (LLM-authored) plan.json before running step 2+ -- mirrors
     # planner.py. The orchestrator hand-writes plan.json in step 1 from the plan;
     # catch a malformed or non-conforming write here instead of letting downstream
@@ -615,7 +637,7 @@ def main():
         if errors:
             sys.exit("Plan completeness failed: " + "; ".join(errors))
 
-    print(format_output(args.step, state_dir, args.qr_status, args.reconciliation_check))
+    print(format_output(args.step, state_dir, args.qr_status, args.reconciliation_check, plan))
 
 
 if __name__ == "__main__":

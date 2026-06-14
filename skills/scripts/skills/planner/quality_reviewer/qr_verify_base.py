@@ -79,6 +79,36 @@ class VerifyBase(ABC):
         """
         raise NotImplementedError
 
+    def _temporal_contamination_guidance(self) -> list[str]:
+        """Shared TEMPORAL CONTAMINATION block.
+
+        Keyword set is canonical — keep in sync with conventions/temporal.md
+        and shared/temporal_detection.py (CHANGE_RELATIVE / BASELINE_REFERENCE).
+        """
+        return [
+            "TEMPORAL CONTAMINATION CHECK:",
+            "  Scan comments in modified files for:",
+            "  - CHANGE_RELATIVE: 'Added', 'Replaced', 'Changed', 'Now uses'",
+            "  - BASELINE_REFERENCE: 'instead of', 'previously', 'replaces'",
+            "",
+        ]
+
+    def _intent_marker_guidance(self, include_examples: bool = True) -> list[str]:
+        """Shared INTENT MARKER VALIDATION block. See conventions/intent-markers.md."""
+        lines = [
+            "INTENT MARKER VALIDATION:",
+            "  Valid format: ':MARKER: [what]; [why]'",
+            "  - Must have semicolon",
+            "  - Must have non-empty why after semicolon",
+        ]
+        if include_examples:
+            lines += [
+                "  Invalid: ':PERF: faster' (no semicolon)",
+                "  Valid: ':PERF: faster; reduces API calls by 50%'",
+            ]
+        lines.append("")
+        return lines
+
     def _get_step_type(self, step: int, num_items: int) -> tuple[str, int | None]:
         """Map step number to step type and item index.
 
@@ -288,7 +318,9 @@ class VerifyBase(ABC):
             f"uv run python -m {module_path} --step {current_step}{phase_arg}{state_dir_arg} {item_flags}"
         )
         record_pass = pin_cwd(f"{record_base} --result PASS")
-        record_fail = pin_cwd(f"{record_base} --result FAIL --finding '<one-line explanation>'")
+        # Wrap the explanation in double quotes; if it contains a double quote,
+        # backslash-escape it.
+        record_fail = pin_cwd(f'{record_base} --result FAIL --finding "<one-line explanation>"')
 
         return {
             "title": f"QR Verify Step {current_step}/{total_steps}: Confirm {item_id} ({self.PHASE})",
@@ -308,6 +340,8 @@ class VerifyBase(ABC):
                 "",
                 "If FAIL:",
                 f"  {record_fail}",
+                '  (Replace <one-line explanation> with your finding; backslash-escape any '
+                '", $, \\, or backtick it contains so the shell preserves it.)',
                 "",
                 "Recording writes the verdict (lock-safe) and prints a confirmation;",
                 "it does not advance the workflow -- run the NEXT STEP afterwards.",
@@ -436,63 +470,58 @@ def verify_main(script_file: str, get_step_guidance, description: str) -> None:
 
     --phase selects the phase (the verifier and the qr-{phase}.json file) and is
     threaded through the emitted next/record commands, so a single runner serves
-    all phases. Without a result flag this behaves like lib.workflow.cli.mode_main:
-    parse --step/--phase/--state-dir/--qr-item, route to the step handler, render
-    via render_step. With --result/--status PASS|FAIL (optionally --finding), it
+    all phases. Without a result flag it delegates to lib.workflow.cli.mode_main,
+    which parses --step/--phase/--state-dir/--qr-item, routes to the step handler,
+    and renders the step. With --result/--status PASS|FAIL (optionally --finding), it
     records the verdict directly and exits, so an agent appending the verdict to
     the verify command succeeds instead of erroring with 'unrecognized arguments'
     (audit §3b NEW-C). The CONFIRM step's own NEXT STEP pointer (read before
     recording) carries the agent onward.
     """
-    import argparse
+    from skills.lib.workflow.cli import mode_main
 
-    from skills.lib.workflow.cli import _compute_module_path, render_step
+    def _pre_dispatch(parsed) -> bool:
+        if getattr(parsed, "result", None) is not None:
+            _record_verify_result(
+                parsed.phase,
+                parsed.step,
+                parsed.state_dir,
+                parsed.qr_item,
+                parsed.result,
+                parsed.finding,
+            )
+            return True
+        return False
 
-    parser = argparse.ArgumentParser(description=description)
-    parser.add_argument("--step", type=int, default=None)
-    parser.add_argument(
-        "--phase",
-        type=str,
-        required=True,
-        choices=get_all_phases(),
-        help="QR phase (selects the verifier and the qr-{phase}.json file)",
+    mode_main(
+        script_file,
+        get_step_guidance,
+        description,
+        extra_args=[
+            (
+                ["--phase"],
+                {
+                    "type": str,
+                    "required": True,
+                    "choices": get_all_phases(),
+                    "help": "QR phase (selects the verifier and the qr-{phase}.json file)",
+                },
+            ),
+            (["--state-dir"], {"type": str, "default": None}),
+            (["--qr-item"], {"action": "append"}),
+            (
+                ["--result", "--status"],
+                {
+                    "dest": "result",
+                    "type": str,
+                    "default": None,
+                    "help": "Record this item's verdict (PASS|FAIL) directly, then exit.",
+                },
+            ),
+            (
+                ["--finding"],
+                {"type": str, "default": None, "help": "Required with --result FAIL."},
+            ),
+        ],
+        pre_dispatch=_pre_dispatch,
     )
-    parser.add_argument("--state-dir", type=str, default=None)
-    parser.add_argument("--qr-item", action="append")
-    parser.add_argument(
-        "--result",
-        "--status",
-        dest="result",
-        type=str,
-        default=None,
-        help="Record this item's verdict (PASS|FAIL) directly, then exit.",
-    )
-    parser.add_argument("--finding", type=str, default=None, help="Required with --result FAIL.")
-    parsed = parser.parse_args()
-
-    if parsed.result is not None:
-        _record_verify_result(
-            parsed.phase,
-            parsed.step,
-            parsed.state_dir,
-            parsed.qr_item,
-            parsed.result,
-            parsed.finding,
-        )
-        return
-
-    if parsed.step is None:
-        parser.error("--step is required")
-
-    module_path = _compute_module_path(script_file)
-    guidance = get_step_guidance(
-        parsed.step,
-        module_path,
-        phase=parsed.phase,
-        state_dir=parsed.state_dir or "",
-        qr_item=parsed.qr_item,
-    )
-    if "error" in guidance:
-        print(f"Error: {guidance['error']}", file=sys.stderr)
-        sys.exit(1)
-    print(render_step(parsed.step, guidance))

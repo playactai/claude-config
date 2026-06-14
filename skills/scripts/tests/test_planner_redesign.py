@@ -608,7 +608,7 @@ def test_wave_referencing_unknown_milestone_fails_validation(tmp_path):
         )
     )
     with pytest.raises(SchemaValidationError, match="unknown milestone"):
-        validate_state(str(tmp_path))
+        _plan, _qr_states = validate_state(str(tmp_path))
 
 
 # --- Execution waves: structured, validated plan-time contract (audit §2 leak 1) ---
@@ -786,7 +786,7 @@ def test_duplicate_wave_ids_rejected(tmp_path):
         )
     )
     with pytest.raises(SchemaValidationError, match="duplicate wave id"):
-        validate_state(str(tmp_path))
+        _plan, _qr_states = validate_state(str(tmp_path))
 
 
 def _plan_with_waves(milestones, waves):
@@ -823,7 +823,7 @@ def test_wave_with_overlapping_files_rejected(tmp_path):
     )
     (tmp_path / "plan.json").write_text(plan.model_dump_json())
     with pytest.raises(SchemaValidationError, match="share file"):
-        validate_state(str(tmp_path))
+        _plan, _qr_states = validate_state(str(tmp_path))
 
 
 def test_wave_overlap_detected_across_path_spellings(tmp_path):
@@ -838,7 +838,7 @@ def test_wave_overlap_detected_across_path_spellings(tmp_path):
     )
     (tmp_path / "plan.json").write_text(plan.model_dump_json())
     with pytest.raises(SchemaValidationError, match="share file"):
-        validate_state(str(tmp_path))
+        _plan, _qr_states = validate_state(str(tmp_path))
 
 
 def test_wave_overlap_detected_via_code_intent_files(tmp_path):
@@ -880,7 +880,7 @@ def test_wave_overlap_detected_via_code_intent_files(tmp_path):
     )
     (tmp_path / "plan.json").write_text(plan.model_dump_json())
     with pytest.raises(SchemaValidationError, match="share file"):
-        validate_state(str(tmp_path))
+        _plan, _qr_states = validate_state(str(tmp_path))
 
 
 def test_wave_overlap_detected_cross_source_files_vs_intent(tmp_path):
@@ -921,7 +921,7 @@ def test_wave_overlap_detected_cross_source_files_vs_intent(tmp_path):
     )
     (tmp_path / "plan.json").write_text(plan.model_dump_json())
     with pytest.raises(SchemaValidationError, match="share file"):
-        validate_state(str(tmp_path))
+        _plan, _qr_states = validate_state(str(tmp_path))
 
 
 def test_plan_gate_blocks_qr_pass_on_incomplete_plan(tmp_path):

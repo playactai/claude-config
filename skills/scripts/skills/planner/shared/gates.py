@@ -16,6 +16,7 @@ from skills.planner.shared.builders import (
     shell_quote,
 )
 from skills.planner.shared.qr.constants import QR_ITERATION_LIMIT
+from skills.planner.shared.qr.phases import get_phase_config
 from skills.planner.shared.qr.types import AgentRole, QRState, QRStatus
 from skills.planner.shared.qr.utils import (
     _blocking_items_from_state,
@@ -318,8 +319,8 @@ def build_gate_output(
     # no wave, a doc-only milestone left in a wave -- routes back to the fixer
     # instead of finalizing an unexecutable plan. Even --accept-findings cannot
     # waive this: the override is about QR finding severity, not structural validity.
-    # No-op for the executor (validate_completeness returns [] for impl-code/docs).
-    if passed:
+    # Gated on completeness_gate in the phase config so it only runs for plan-design.
+    if passed and get_phase_config(phase).get("completeness_gate", False):
         from skills.planner.shared.schema import plan_completeness_errors
 
         completeness_errors = plan_completeness_errors(state_dir, phase, plan=plan)

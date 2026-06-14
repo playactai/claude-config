@@ -599,7 +599,7 @@ STEPS = {
 
 
 def get_step_guidance(
-    step: int, qr_status, state_dir, accept_findings=False, plan=None
+    step: int, qr_status, state_dir, accept_findings=False, plan=None, qr_states=None
 ) -> dict | str:
     """Returns guidance for a step.
 
@@ -607,6 +607,8 @@ def get_step_guidance(
     Phase derived from handler attribute set by step factory.
     accept_findings is the user's ceiling override, consumed only by the route step.
     plan is the validate_state parse threaded from main, reused by the route gate.
+    qr_states is the validate_state qr dict threaded from main so the gate
+    path avoids a second load_qr_state.
     """
     from skills.planner.shared.qr.utils import (
         get_qr_iteration_from_state,
@@ -621,7 +623,10 @@ def get_step_guidance(
     # Phase stored as handler attribute by step factory.
     # None for non-QR steps (1, 2).
     phase = getattr(handler, "phase", None)
-    qr_state = load_qr_state(state_dir, phase) if state_dir and phase else None
+    if qr_states is not None:
+        qr_state = qr_states.get(phase) if state_dir and phase else None
+    else:
+        qr_state = load_qr_state(state_dir, phase) if state_dir and phase else None
     iteration = get_qr_iteration_from_state(qr_state) if qr_state else 1
 
     status = QRStatus(qr_status) if qr_status else None
@@ -642,11 +647,11 @@ def get_step_guidance(
 
 
 def format_output(
-    step: int, qr_status, state_dir, accept_findings=False, plan=None
+    step: int, qr_status, state_dir, accept_findings=False, plan=None, qr_states=None
 ) -> str | GateResult:
     """Format output for display."""
     guidance = get_step_guidance(
-        step, qr_status, state_dir=state_dir, accept_findings=accept_findings, plan=plan
+        step, qr_status, state_dir=state_dir, accept_findings=accept_findings, plan=plan, qr_states=qr_states
     )
 
     if isinstance(guidance, GateResult):
@@ -705,11 +710,12 @@ def main():
     # Validate state before running step (skip for step 1 which creates state).
     # Capture the parse so the route gate reuses it instead of re-reading plan.json.
     plan = None
+    qr_states = None
     if args.step > 1 and args.state_dir:
         from skills.planner.shared.schema import SchemaValidationError, validate_state
 
         try:
-            plan = validate_state(args.state_dir)
+            plan, qr_states = validate_state(args.state_dir)
         except SchemaValidationError as e:
             sys.exit(f"Schema validation failed: {e}")
 
@@ -728,6 +734,7 @@ def main():
         state_dir=args.state_dir,
         accept_findings=args.accept_findings,
         plan=plan,
+        qr_states=qr_states,
     )
 
     if isinstance(result, GateResult):

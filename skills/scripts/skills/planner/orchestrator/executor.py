@@ -488,6 +488,7 @@ def format_output(
     qr_status: str | None,
     reconciliation_check: bool,
     plan: "Plan | None" = None,
+    qr_states: dict | None = None,
 ) -> str:
     """Format output for display."""
 
@@ -510,7 +511,10 @@ def format_output(
         9: "impl-docs",
     }
     phase = phase_for_step.get(step)
-    qr_state = load_qr_state(state_dir, phase) if state_dir and phase else None
+    if qr_states is not None:
+        qr_state = qr_states.get(phase) if state_dir and phase else None
+    else:
+        qr_state = load_qr_state(state_dir, phase) if state_dir and phase else None
     iteration = get_qr_iteration_from_state(qr_state) if qr_state else 1
     status = QRStatus(qr_status) if qr_status else None
     fix_mode = bool(qr_state and has_qr_failures_from_state(qr_state))
@@ -605,6 +609,7 @@ def main():
     # plan is threaded into format_output so the QR gate (steps 5/9) reuses this
     # parse instead of re-reading plan.json. None for step 1 (no plan yet).
     plan = None
+    qr_states = None
 
     # Validate the (LLM-authored) plan.json before running step 2+ -- mirrors
     # planner.py. The orchestrator hand-writes plan.json in step 1 from the plan;
@@ -614,7 +619,7 @@ def main():
         from skills.planner.shared.schema import SchemaValidationError, validate_state
 
         try:
-            plan = validate_state(state_dir)
+            plan, qr_states = validate_state(state_dir)
         except SchemaValidationError as e:
             sys.exit(f"Schema validation failed: {e}")
 
@@ -637,7 +642,7 @@ def main():
         if errors:
             sys.exit("Plan completeness failed: " + "; ".join(errors))
 
-    print(format_output(args.step, state_dir, args.qr_status, args.reconciliation_check, plan))
+    print(format_output(args.step, state_dir, args.qr_status, args.reconciliation_check, plan, qr_states))
 
 
 if __name__ == "__main__":

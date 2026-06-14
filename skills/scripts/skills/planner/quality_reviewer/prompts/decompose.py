@@ -237,7 +237,7 @@ def dispatch_step(
     # Explicit code-milestone scope for impl-code (structural doc-only exclusion);
     # "" for other phases / missing plan, so the conditional injections below add
     # nothing.
-    code_scope = render_code_milestone_scope(state_dir, phase)
+    code_scope = render_code_milestone_scope(state_dir, phase) if step in (1, 3) else ""
 
     def next_cmd(s):
         return f"uv run python -m {module_path} --step {s}{phase_arg}{state_dir_arg}"

@@ -398,7 +398,7 @@ class PlanDesignVerify(VerifyBase):
                 ]
             )
         elif scope.startswith("milestone:"):
-            milestone_id = scope.split(":")[1]
+            milestone_id = scope.split(":", 1)[1]
             guidance.extend(
                 [
                     f"MILESTONE CHECK - Focus on {milestone_id}:",
@@ -430,7 +430,7 @@ class PlanDesignVerify(VerifyBase):
             )
 
         # Add check-specific guidance
-        if "decision" in check.lower() or "decision_log" in check.lower():
+        if "decision_log" in check.lower() or "decision log" in check.lower():
             guidance.extend(
                 [
                     "DECISION LOG VERIFICATION:",
@@ -491,7 +491,7 @@ class ImplCodeVerify(VerifyBase):
                 ]
             )
         elif scope.startswith("milestone:"):
-            ms_id = scope.split(":")[1]
+            ms_id = scope.split(":", 1)[1]
             guidance.extend(
                 [
                     f"MILESTONE CHECK - Focus on {ms_id}:",
@@ -560,27 +560,9 @@ class ImplCodeVerify(VerifyBase):
                 ]
             )
         elif "marker" in check.lower() or ":perf:" in check.lower() or ":unsafe:" in check.lower():
-            guidance.extend(
-                [
-                    "INTENT MARKER VALIDATION:",
-                    "  Valid format: ':MARKER: [what]; [why]'",
-                    "  - Must have semicolon",
-                    "  - Must have non-empty why after semicolon",
-                    "  Invalid: ':PERF: faster' (no semicolon)",
-                    "  Valid: ':PERF: faster; reduces API calls by 50%'",
-                    "",
-                ]
-            )
+            guidance.extend(self._intent_marker_guidance(include_examples=True))
         elif "temporal" in check.lower():
-            guidance.extend(
-                [
-                    "TEMPORAL CONTAMINATION CHECK:",
-                    "  Scan all code comments for:",
-                    "  - CHANGE_RELATIVE: 'Added', 'Replaced', 'Changed', 'Now uses'",
-                    "  - BASELINE_REFERENCE: 'instead of', 'previously', 'replaces'",
-                    "",
-                ]
-            )
+            guidance.extend(self._temporal_contamination_guidance())
         elif "god function" in check.lower() or "nesting" in check.lower():
             guidance.extend(
                 [
@@ -710,15 +692,7 @@ class ImplDocsVerify(VerifyBase):
                 ]
             )
         elif "temporal" in check.lower():
-            guidance.extend(
-                [
-                    "TEMPORAL CONTAMINATION CHECK:",
-                    "  Scan comments in modified files for:",
-                    "  - CHANGE_RELATIVE: 'Added', 'Replaced', 'Changed'",
-                    "  - BASELINE_REFERENCE: 'instead of', 'previously'",
-                    "",
-                ]
-            )
+            guidance.extend(self._temporal_contamination_guidance())
         elif "ik" in check.lower() and "proximity" in check.lower():
             guidance.extend(
                 [
@@ -763,15 +737,7 @@ class ImplDocsVerify(VerifyBase):
                 ]
             )
         elif "marker" in check.lower():
-            guidance.extend(
-                [
-                    "INTENT MARKER VALIDATION:",
-                    "  Valid format: ':MARKER: [what]; [why]'",
-                    "  - Must have semicolon",
-                    "  - Must have non-empty why after semicolon",
-                    "",
-                ]
-            )
+            guidance.extend(self._intent_marker_guidance(include_examples=False))
 
         return guidance
 

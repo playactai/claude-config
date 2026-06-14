@@ -174,7 +174,12 @@ class TestQrRunnerParametrization:
         # plan-design step 1 strictly requires context.json; provide it.
         (tmp_path / "context.json").write_text(json.dumps({"task_spec": ["x"]}))
         for step in range(1, 14):
-            g = decompose_guidance(step, None, phase=phase, state_dir=str(tmp_path))
+            g = decompose_guidance(
+                step,
+                "skills.planner.quality_reviewer.qr_decompose",
+                phase=phase,
+                state_dir=str(tmp_path),
+            )
             assert "error" not in g, (phase, step, g)
             assert g["title"]
             if g.get("next"):
@@ -209,6 +214,8 @@ class TestQrRunnerParametrization:
     def test_decompose_grouping_next_uses_runner_module(self):
         # The grouping steps' next command must target the parameterized runner
         # (so --phase round-trips), not a deleted per-phase module.
-        g = decompose_guidance(9, None, phase="impl-code", state_dir="/tmp/x")
+        g = decompose_guidance(
+            9, "skills.planner.quality_reviewer.qr_decompose", phase="impl-code", state_dir="/tmp/x"
+        )
         assert "skills.planner.quality_reviewer.qr_decompose" in g["next"]
         assert re.search(r"--phase impl-code", g["next"])

@@ -16,6 +16,7 @@ import json
 from pathlib import Path
 
 from skills.lib.io import atomic_write_text
+from skills.planner.shared.qr.utils import find_item as _find_item
 
 # Valid status values (match QAItemStatus enum)
 VALID_STATUSES = frozenset({"PASS", "FAIL"})
@@ -57,8 +58,8 @@ def save_qr_state_atomic(qr_path: Path, qr_state: dict) -> None:
 
 
 def find_item(qr_state: dict, item_id: str) -> tuple[int, dict | None]:
-    """Find item by ID. Returns (index, item) or (-1, None) if not found."""
-    for i, item in enumerate(qr_state.get("items", [])):
-        if item.get("id") == item_id:
-            return i, item
-    return -1, None
+    """Find item by ID. Returns (index, item) or (-1, None) if not found.
+
+    Re-exported from the shared qr/utils layer; the two CLIs stay import-compatible.
+    """
+    return _find_item(qr_state, item_id)

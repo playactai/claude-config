@@ -43,6 +43,7 @@ QR_PHASES: dict[str, dict] = {
         "artifact": "plan.json",
         "decompose_script": "skills.planner.quality_reviewer.qr_decompose",
         "verify_script": "skills.planner.quality_reviewer.qr_verify",
+        "completeness_gate": True,
     },
     "impl-code": {
         "workflow": "executor",
@@ -53,6 +54,7 @@ QR_PHASES: dict[str, dict] = {
         "artifact": "plan.json",
         "decompose_script": "skills.planner.quality_reviewer.qr_decompose",
         "verify_script": "skills.planner.quality_reviewer.qr_verify",
+        "completeness_gate": False,
     },
     "impl-docs": {
         "workflow": "executor",
@@ -63,6 +65,7 @@ QR_PHASES: dict[str, dict] = {
         "artifact": "plan.json",
         "decompose_script": "skills.planner.quality_reviewer.qr_decompose",
         "verify_script": "skills.planner.quality_reviewer.qr_verify",
+        "completeness_gate": False,
     },
 }
 

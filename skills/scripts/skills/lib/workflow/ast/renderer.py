@@ -4,7 +4,6 @@ Simplified renderer handling only the core node types: TextNode, CodeNode, Eleme
 """
 
 import re
-import shlex
 from typing import Protocol
 from xml.sax.saxutils import escape, quoteattr
 
@@ -19,6 +18,7 @@ from skills.lib.workflow.ast.nodes import (
     StepHeaderNode,
     TextNode,
 )
+from skills.lib.workflow.prompts.step import pin_cwd
 
 
 class Renderer(Protocol):
@@ -114,20 +114,22 @@ class XMLRenderer:
         WHY no validation here: __post_init__ validates at construction time.
         Renderer assumes valid node, focuses solely on XML generation.
 
-        WHY shlex.quote + quoteattr: working_dir is embedded in a shell string
-        that the LLM copies verbatim; quoting prevents metacharacter injection
-        from unusual paths. quoteattr escapes the final shell string for safe
-        XML attribute embedding so quotes/angle brackets inside node.cmd do
-        not produce malformed XML. Composition of caller-supplied node.cmd
-        parts remains the caller's responsibility.
+        WHY pin_cwd: routes through the absolute-cd helper (same as
+        dispatch_renderer.py) so the emitted invoke is cwd-independent; the
+        agent can run it from any directory without a "No module named 'skills'"
+        error. quoteattr escapes the final shell string for safe XML attribute
+        embedding so quotes/angle brackets inside node.cmd do not produce
+        malformed XML. Composition of caller-supplied node.cmd parts remains
+        the caller's responsibility.
         """
-        wd = shlex.quote(node.working_dir)
         if node.cmd is not None:
-            invoke = f"<invoke cmd={quoteattr(f'cd {wd} && {node.cmd}')} />"
+            invoke = f"<invoke cmd={quoteattr(pin_cwd(node.cmd))} />"
             return f"<invoke_after>\n{invoke}\n</invoke_after>"
         else:
-            if_pass_invoke = f"<invoke cmd={quoteattr(f'cd {wd} && {node.if_pass}')} />"
-            if_fail_invoke = f"<invoke cmd={quoteattr(f'cd {wd} && {node.if_fail}')} />"
+            # __post_init__ guarantees both branches are set when cmd is None.
+            assert node.if_pass is not None and node.if_fail is not None
+            if_pass_invoke = f"<invoke cmd={quoteattr(pin_cwd(node.if_pass))} />"
+            if_fail_invoke = f"<invoke cmd={quoteattr(pin_cwd(node.if_fail))} />"
             return f"<invoke_after>\n  <if_pass>\n    {if_pass_invoke}\n  </if_pass>\n  <if_fail>\n    {if_fail_invoke}\n  </if_fail>\n</invoke_after>"
 
     def _render_node(self, node: Node) -> str:

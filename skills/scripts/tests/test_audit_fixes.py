@@ -121,7 +121,7 @@ class TestSeverityCoercion:
             1,
             [{"id": "q1", "scope": "*", "check": "x", "status": "TODO", "severity": "blocker"}],
         )
-        validate_state(str(tmp_path))  # must not raise
+        _plan, _qr_states = validate_state(str(tmp_path))  # must not raise
 
     def test_lowercase_must_still_blocks_after_de_escalation(self):
         pred = by_blocking_severity(4)  # blocking == {MUST}
@@ -195,14 +195,14 @@ class TestSeverityCoercion:
         _write_qr(tmp_path, "impl-code", 1, [])
         (tmp_path / "qr-items.json").write_text(json.dumps([1, 2, 3]))
         (tmp_path / "qr-items-draft.json").write_text(json.dumps([{"id": "z"}]))
-        validate_state(str(tmp_path))  # must not raise
+        _plan, _qr_states = validate_state(str(tmp_path))  # must not raise
 
     def test_validate_state_still_aborts_on_corrupt_canonical_file(self, tmp_path: Path):
         # Restricting the glob to canonical names must NOT weaken validation of a
         # real qr-{phase}.json: a list-shaped canonical file is still a hard error.
         (tmp_path / "qr-impl-code.json").write_text(json.dumps([{"id": "bad"}]))
         with pytest.raises(SchemaValidationError):
-            validate_state(str(tmp_path))
+            _plan, _qr_states = validate_state(str(tmp_path))
 
     def test_qr_commands_update_item_canonicalizes_severity(self, tmp_path: Path):
         # The batch-RPC twin of cmd_update_item must canonicalize like the CLI:
@@ -656,6 +656,18 @@ class TestCwdPinnedCommands:
         assert invoke is not None
         assert invoke.get("cmd") == f"cd {SKILLS_DIR} && uv run python -m skills.x --step 1"
         assert "cd .claude/skills/scripts" not in out  # the relative form is gone
+
+    def test_render_invoke_after_uses_absolute_cd(self):
+        from skills.lib.workflow.ast.nodes import InvokeAfterNode
+        from skills.lib.workflow.ast.renderer import render_invoke_after
+
+        node = InvokeAfterNode(cmd="uv run python -m skills.foo --step 1")
+        rendered = render_invoke_after(node)
+        # Parse the XML and assert the *decoded* command carries the absolute cd pin.
+        invoke = ET.fromstring(rendered).find("invoke")
+        assert invoke is not None
+        assert invoke.get("cmd") == f"cd {SKILLS_DIR} && uv run python -m skills.foo --step 1"
+        assert ".claude/skills/scripts" not in rendered
 
     def test_executor_verify_start_line_is_pinned(self, tmp_path: Path):
         _write_qr(
@@ -1151,12 +1163,13 @@ class TestStructuralExecutability:
         (tmp_path / "plan.json").write_text(
             json.dumps({"overview": {"problem": "prob", "approach": "appr"}})
         )
-        plan = validate_state(str(tmp_path))
+        plan, _qr_states = validate_state(str(tmp_path))
         assert plan is not None
         assert plan.overview.problem == "prob"
 
     def test_validate_state_returns_none_without_plan(self, tmp_path: Path):
-        assert validate_state(str(tmp_path)) is None
+        plan, _qr_states = validate_state(str(tmp_path))
+        assert plan is None
 
     def test_structural_executability_flags_code_milestone_in_no_wave(self):
         from skills.planner.shared.schema import CodeIntent, Milestone, Overview, Plan
@@ -1553,10 +1566,10 @@ class TestStateFileEncoding:
         from skills.planner.shared.schema import validate_state
 
         ctx = _init_plan(tmp_path)
-        name = "Café — résumé 𝟙"
+        name = "Café — résumé 𝟙"  # noqa: RUF001
         plan_commands.set_milestone(ctx, name=name, files="a.py")
         assert ctx.load_plan().milestones[0].name == name
-        plan = validate_state(str(tmp_path))
+        plan, _qr_states = validate_state(str(tmp_path))
         assert plan is not None
         assert plan.milestones[0].name == name
 
@@ -1578,7 +1591,7 @@ class TestStateFileEncoding:
             '    print("SKIP"); sys.exit(0)\n'
             "ctx = plan_commands.PlanContext(state_dir=pathlib.Path(sys.argv[1]))\n"
             'plan_commands.init(ctx, task="t")\n'
-            'name = "café — résumé 𝟙"\n'
+            'name = "café — résumé 𝟙"\n'  # noqa: RUF001
             'plan_commands.set_milestone(ctx, name=name, files="a.py")\n'
             'got = ctx.load_plan().milestones[0].name\n'  # the read under test
             'print("OK" if got == name else "FAIL")\n'

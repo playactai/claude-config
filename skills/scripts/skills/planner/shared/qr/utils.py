@@ -78,13 +78,7 @@ def get_qr_item(qr_state: dict, item_id: str) -> dict | None:
     Returns:
         Item dict or None if not found
     """
-    if not qr_state:
-        return None
-
-    for item in qr_state.get("items", []):
-        if item.get("id") == item_id:
-            return item
-    return None
+    return find_item(qr_state, item_id)[1] if qr_state else None
 
 
 def get_qr_items_by_status(qr_state: dict, status: str) -> list[dict]:
@@ -196,6 +190,17 @@ def query_items(qr_state: dict, *predicates: ItemPredicate) -> list[dict]:
     if not predicates:
         return list(items)
     return [i for i in items if all(p(i) for p in predicates)]
+
+
+def find_item(qr_state: dict, item_id: str) -> tuple[int, dict | None]:
+    """Find item by ID. Returns (index, item) or (-1, None) if not found.
+
+    Shared implementation; qr_common re-exports this for CLI callers.
+    """
+    for i, item in enumerate(qr_state.get("items", [])):
+        if item.get("id") == item_id:
+            return i, item
+    return -1, None
 
 
 def balance_verify_groups(

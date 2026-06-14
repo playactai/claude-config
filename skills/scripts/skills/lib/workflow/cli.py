@@ -85,6 +85,7 @@ def mode_main(
     get_step_guidance: Callable[..., dict],
     description: str,
     extra_args: list[tuple[list, dict]] | None = None,
+    pre_dispatch: Callable[[argparse.Namespace], bool] | None = None,
 ):
     """Standard entry point for mode scripts.
 
@@ -93,16 +94,25 @@ def mode_main(
         get_step_guidance: Function that returns guidance dict for each step
         description: Script description for --help
         extra_args: Additional arguments beyond standard QR args
+        pre_dispatch: Optional hook called immediately after parse_args().
+            When it returns True, mode_main returns early (used by verify_main
+            to intercept --result flags before the --step requirement check).
     """
     module_path = _compute_module_path(script_file)
 
     parser = argparse.ArgumentParser(description=description)
-    parser.add_argument("--step", type=int, required=True)
+    parser.add_argument("--step", type=int, default=None)
     parser.add_argument("--qr-iteration", type=int, default=1)
     parser.add_argument("--qr-fail", type=str, default=None)
     for args, kwargs in extra_args or []:
         parser.add_argument(*args, **kwargs)
     parsed = parser.parse_args()
+
+    if pre_dispatch and pre_dispatch(parsed):
+        return
+
+    if parsed.step is None:
+        parser.error("--step is required")
 
     guidance = get_step_guidance(
         parsed.step, module_path, **{k: v for k, v in vars(parsed).items() if k not in ("step",)}

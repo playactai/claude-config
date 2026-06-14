@@ -312,6 +312,7 @@ if True:
                 ms.id: {
                     os.path.normpath(f)
                     for f in (*ms.files, *(ci.file for ci in ms.code_intents))
+                    if f
                 }
                 for ms in self.milestones
             }
@@ -539,8 +540,8 @@ _schema_registry: dict = {
 }
 
 
-def validate_state(state_dir: str) -> Plan | None:
-    """Validate all state files in state_dir; return the parsed plan.json.
+def validate_state(state_dir: str) -> tuple[Plan | None, dict[str, dict]]:
+    """Validate all state files in state_dir; return the parsed plan.json and qr dicts.
 
     Raises SchemaValidationError on first validation failure.
     Call at start of every planner/executor step and after CLI mutations.
@@ -549,6 +550,9 @@ def validate_state(state_dir: str) -> Plan | None:
     the plan (the executor's structural-executability gate) reuses this parse
     instead of re-reading the file; returns None when plan.json is absent.
     Callers that only validate may ignore the return value.
+
+    Also returns a dict of phase -> raw qr-{phase}.json dict, already parsed
+    and validated, so the orchestrator's gate path avoids a second load.
     """
     state_path = Path(state_dir)
     plan: Plan | None = None
@@ -577,6 +581,7 @@ def validate_state(state_dir: str) -> Plan | None:
     # and aborted the whole run on a list-shaped scratch file (audit §3 #3, field
     # evidence ab1dc60a: "Input should be a valid dictionary ... input_type=list").
     # Restricting to the known phases ignores any non-canonical file by construction.
+    qr_states: dict[str, dict] = {}
     for phase in get_all_phases():
         path = state_path / f"qr-{phase}.json"
         if not path.exists():
@@ -584,10 +589,11 @@ def validate_state(state_dir: str) -> Plan | None:
         try:
             data = json.loads(path.read_text(encoding="utf-8"))
             QRFile.model_validate(data)
+            qr_states[phase] = data
         except Exception as e:
             raise SchemaValidationError(f"{path.name}: {e}") from e
 
-    return plan
+    return plan, qr_states
 
 
 def plan_completeness_errors(

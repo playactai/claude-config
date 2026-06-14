@@ -125,13 +125,8 @@ class InvokeAfterNode:
     """Invoke command for workflow step continuation.
 
     Constructs the <invoke_after> element containing the next step command.
-    The working_dir defaults to the skills scripts directory, centralizing
-    the path hardcoded in 47+ locations.
-
-    WHY default working_dir: 99% of invocations use the same path; default eliminates
-    boilerplate and enables single-point path changes.
-
-    WHY branching: QR gates require different commands for pass/fail outcomes.
+    The renderer routes through pin_cwd (absolute cd into SKILLS_DIR), so the
+    emitted command runs from the right directory regardless of the agent's cwd.
 
     WHY __post_init__ validation: Catches invalid construction immediately instead of
     deferring to render time. Prevents workflow failure from invalid node reaching renderer.
@@ -140,7 +135,6 @@ class InvokeAfterNode:
     cmd: str | None = None
     if_pass: str | None = None
     if_fail: str | None = None
-    working_dir: str = ".claude/skills/scripts"
 
     def __post_init__(self):
         if self.cmd is None and (self.if_pass is None or self.if_fail is None):

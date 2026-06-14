@@ -81,20 +81,6 @@ class TestInvokeAfterEscaping:
         cmd = _cmd_attr(rendered)
         assert "a && b" in cmd
 
-    def test_shell_quotes_working_dir_with_space(self):
-        """working_dir with a space must be single-quoted so cd sees one argument."""
-        node = InvokeAfterNode(cmd="true", working_dir="/tmp/a b")
-        rendered = render_invoke_after(node)
-        cmd = _cmd_attr(rendered)
-        assert cmd.startswith("cd '/tmp/a b' && ")
-
-    def test_shell_quotes_working_dir_with_metachar(self):
-        node = InvokeAfterNode(cmd="true", working_dir="/tmp/$(evil)")
-        rendered = render_invoke_after(node)
-        cmd = _cmd_attr(rendered)
-        # shlex.quote wraps the whole string; the $( must not leak as bare shell.
-        assert cmd.startswith("cd '/tmp/$(evil)' && "), cmd
-
     def test_branching_form_escapes_both_branches(self):
         node = InvokeAfterNode(
             if_pass='x --msg "pass"',

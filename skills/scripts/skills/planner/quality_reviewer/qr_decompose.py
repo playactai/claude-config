@@ -11,11 +11,8 @@ prompts/decompose.dispatch_step, so this file only wires --phase to its content.
 from skills.planner.quality_reviewer.prompts.content import get_decompose_content
 from skills.planner.quality_reviewer.prompts.decompose import dispatch_step
 
-MODULE_PATH = "skills.planner.quality_reviewer.qr_decompose"
 
-
-def get_step_guidance(step: int, module_path: str | None = None, **kwargs) -> dict:
-    module_path = module_path or MODULE_PATH
+def get_step_guidance(step: int, module_path: str, **kwargs) -> dict:
     phase = kwargs["phase"]
     state_dir = kwargs.get("state_dir", "")
     content = get_decompose_content(phase)

@@ -6,6 +6,7 @@ No decorators needed - write a function, it becomes a method.
 
 import inspect
 from collections.abc import Callable
+from contextlib import nullcontext
 from typing import Any
 
 from skills.lib.io import atomic_write_text
@@ -110,9 +111,10 @@ def batch(methods: dict, requests: list[dict], ctx) -> list[dict]:
 
     Scope: all-or-nothing covers exactly ctx.state_file() (plan.json or
     qr-{phase}.json); a command that mutates any other file is not rolled back.
-    Assumes a single batch writer -- batch runs sequentially in one process and
-    is not issued concurrently with the per-item, separately-locked update-item
-    writers.
+    When ctx exposes batch_lock(), the lock is held across the entire
+    snapshot+loop+restore so concurrent per-item update-item writers block
+    until the batch's restore completes. Per-item writers that re-acquire the
+    same lock within this process proceed re-entrantly (no self-deadlock).
 
     Raises:
         ValueError: if two requests share the same non-null id (ambiguous
@@ -132,23 +134,28 @@ def batch(methods: dict, requests: list[dict], ctx) -> list[dict]:
     if duplicate_ids:
         raise ValueError(f"Duplicate request id(s) in batch: {duplicate_ids}")
 
-    snapshot = _snapshot_state(ctx)
+    lock_factory = getattr(ctx, "batch_lock", None)
+    with (lock_factory() if lock_factory else nullcontext()):
+        snapshot = _snapshot_state(ctx)
 
-    results = []
-    for req in requests:
-        req_id = req.get("id")
-        method = req.get("method", "")
-        params = req.get("params", {})
+        results = []
+        for req in requests:
+            req_id = req.get("id")
+            method = req.get("method", "")
+            params = req.get("params", {})
 
-        try:
-            result = dispatch(methods, method, params, ctx)
-            results.append({"id": req_id, "result": result})
-        except Exception as e:
-            _restore_state(ctx, snapshot)
-            results.append(
-                {"id": req_id, "error": {"code": -32000, "message": str(e), "rolled_back": True}}
-            )
-            break
+            try:
+                result = dispatch(methods, method, params, ctx)
+                results.append({"id": req_id, "result": result})
+            except Exception as e:
+                _restore_state(ctx, snapshot)
+                for r in results:
+                    if "result" in r:
+                        r["rolled_back"] = True
+                results.append(
+                    {"id": req_id, "error": {"code": -32000, "message": str(e), "rolled_back": True}}
+                )
+                break
     return results
 
 

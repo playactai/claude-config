@@ -16,7 +16,7 @@ import json
 from pathlib import Path
 
 from skills.lib.io import atomic_write_text
-from skills.planner.shared.qr.utils import find_item as _find_item
+from skills.planner.shared.qr.utils import find_item as find_item
 
 # Valid status values (match QAItemStatus enum)
 VALID_STATUSES = frozenset({"PASS", "FAIL"})
@@ -45,7 +45,10 @@ def load_qr_state_under_lock(qr_path: Path) -> dict:
     content = qr_path.read_text(encoding="utf-8") if qr_path.exists() else ""
     if not content:
         return {"phase": "", "items": []}
-    return json.loads(content)
+    data = json.loads(content)
+    if not isinstance(data, dict):
+        raise ValueError(f"{qr_path.name} is not a JSON object")
+    return data
 
 
 def save_qr_state_atomic(qr_path: Path, qr_state: dict) -> None:
@@ -57,9 +60,6 @@ def save_qr_state_atomic(qr_path: Path, qr_state: dict) -> None:
     atomic_write_text(qr_path, json.dumps(qr_state, indent=2))
 
 
-def find_item(qr_state: dict, item_id: str) -> tuple[int, dict | None]:
-    """Find item by ID. Returns (index, item) or (-1, None) if not found.
-
-    Re-exported from the shared qr/utils layer; the two CLIs stay import-compatible.
-    """
-    return _find_item(qr_state, item_id)
+# find_item is re-exported above (explicit ``as`` so pyflakes keeps the re-export
+# rather than pruning it) so both CLIs share the one object via qr_common and
+# cannot drift apart.

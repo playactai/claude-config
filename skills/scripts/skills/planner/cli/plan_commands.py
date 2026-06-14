@@ -455,6 +455,17 @@ def set_wave(
 
     milestones_list = parse_csv(milestones)
 
+    # Doc-only milestones route to exec-docs and must never enter a wave. Mirror
+    # SetWaveCommand.run's write-time guard here so the batch/RPC path (the one
+    # the architect drives) cannot persist an invalid wave; the executor's
+    # validate_structural_executability rejects it later, but fail at write time.
+    doc_only_ids = {m.id for m in plan.milestones if m.is_documentation_only}
+    bad = [mid for mid in milestones_list if mid in doc_only_ids]
+    if bad:
+        raise ValueError(
+            f"documentation-only milestone(s) {bad} cannot be added to a wave (they route to exec-docs)"
+        )
+
     if id:
         # UPDATE: replace the wave's milestone list (upsert).
         wave = next((w for w in plan.waves if w.id == id), None)

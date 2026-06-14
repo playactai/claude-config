@@ -47,7 +47,7 @@ from skills.planner.shared.constraints import (
 from skills.planner.shared.gates import GateResult, build_gate_output
 from skills.planner.shared.qr.cli import add_qr_args
 from skills.planner.shared.qr.types import LoopState, QRState, QRStatus
-from skills.planner.shared.qr.utils import increment_qr_iteration, qr_file_exists
+from skills.planner.shared.qr.utils import prepare_verify_items, qr_file_exists
 from skills.planner.shared.resources import get_mode_script_path
 
 MODULE_PATH = "skills.planner.orchestrator.planner"
@@ -398,33 +398,14 @@ def qr_verify_step(title, phase):
 
     def handler(ctx):
         from skills.planner.shared.qr.phases import get_phase_config
-        from skills.planner.shared.qr.utils import (
-            by_blocking_severity,
-            by_status,
-            load_qr_state,
-            query_items,
-        )
 
         state_dir = ctx["state_dir"]
         step = ctx["step"]
         qr = ctx["qr"]
 
-        qr_state = load_qr_state(state_dir, phase)
-        if not qr_state or "items" not in qr_state:
+        items, _ = prepare_verify_items(state_dir, phase, qr, qr_state=ctx["qr_state"])
+        if items is None:
             return {"error": f"qr-{phase}.json not found or malformed in {state_dir}"}
-
-        # Capture the incremented iteration (executor.py does the same). Reading
-        # qr_state["iteration"] after the increment would use the stale
-        # pre-increment value loaded above, lagging de-escalation by one
-        # iteration.
-        iteration = (qr_state.get("iteration") or 1)
-        if qr.state == LoopState.RETRY:
-            new_iter = increment_qr_iteration(state_dir, phase)
-            if new_iter is not None:
-                iteration = new_iter
-
-        # Dispatch only items at blocking severity for current iteration.
-        items = query_items(qr_state, by_status("TODO", "FAIL"), by_blocking_severity(iteration))
         if not items:
             next_step = step + 1
             return {
@@ -600,7 +581,7 @@ STEPS = {
 
 def get_step_guidance(
     step: int, qr_status, state_dir, accept_findings=False, plan=None, qr_states=None
-) -> dict | str:
+) -> dict | str | GateResult:
     """Returns guidance for a step.
 
     Iteration and fix mode derived from qr-{phase}.json file state.
@@ -718,6 +699,8 @@ def main():
             plan, qr_states = validate_state(args.state_dir)
         except SchemaValidationError as e:
             sys.exit(f"Schema validation failed: {e}")
+        if plan is None:
+            sys.exit(f"Error: plan.json not found in {args.state_dir} (required for step {args.step})")
 
     # Route steps require --qr-status; provide helpful output if missing
     if args.step in PLANNER_GATE_STEPS and not args.qr_status:

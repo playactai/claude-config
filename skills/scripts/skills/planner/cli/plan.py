@@ -735,6 +735,13 @@ class SetWaveCommand(Command):
         # ever touching disk.
         milestones = parse_csv(args.milestones)
 
+        doc_only_ids = {ms.id for ms in plan.milestones if ms.is_documentation_only}
+        bad = [mid for mid in milestones if mid in doc_only_ids]
+        if bad:
+            error_exit(
+                f"documentation-only milestone(s) {bad} cannot be added to a wave (they route to exec-docs)"
+            )
+
         if args.id:
             # UPDATE path: replace the wave's milestone list (upsert).
             wave = next((w for w in plan.waves if w.id == args.id), None)
@@ -1111,26 +1118,29 @@ def cli(args: list[str] | None = None):
         methods = discover_methods(plan_commands)
         ctx = plan_commands.PlanContext(state_dir=Path(parsed.state_dir))
 
-        if hasattr(parsed, "input") and parsed.input:
-            requests = json.loads(parsed.input)
-        else:
-            requests = json.load(sys.stdin)
+        try:
+            if hasattr(parsed, "input") and parsed.input:
+                requests = json.loads(parsed.input)
+            else:
+                requests = json.load(sys.stdin)
 
-        if not isinstance(requests, list) or not all(isinstance(r, dict) for r in requests):
-            error_exit("batch input must be a JSON array of {method, params} objects")
+            if not isinstance(requests, list) or not all(isinstance(r, dict) for r in requests):
+                error_exit("batch input must be a JSON array of {method, params} objects")
 
-        # Role enforcement: the per-command role check runs after the batch
-        # early-return and is never reached. Reject any restricted method
-        # up front so a batch payload can't bypass role gates.
-        restricted_methods = {cmd for cmds in ROLE_PERMISSIONS.values() for cmd in cmds}
-        for req in requests:
-            method_name = req.get("method", "")
-            if method_name in restricted_methods:
-                role_err = check_role(method_name)
-                if role_err:
-                    error_exit(role_err)
+            # Role enforcement: the per-command role check runs after the batch
+            # early-return and is never reached. Reject any restricted method
+            # up front so a batch payload can't bypass role gates.
+            restricted_methods = {cmd for cmds in ROLE_PERMISSIONS.values() for cmd in cmds}
+            for req in requests:
+                method_name = req.get("method", "")
+                if method_name in restricted_methods:
+                    role_err = check_role(method_name)
+                    if role_err:
+                        error_exit(role_err)
 
-        results = batch_dispatch(methods, requests, ctx)
+            results = batch_dispatch(methods, requests, ctx)
+        except ValueError as e:
+            error_exit(str(e))
         print(json.dumps(results, indent=2))
         return
 

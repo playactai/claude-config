@@ -465,6 +465,33 @@ def _record_verify_result(
     cmd_update_item(state_dir, phase, update_args)
 
 
+def decompose_main(script_file: str, get_step_guidance, description: str) -> None:
+    """Entry point for the QR decompose runner: mode_main with --phase/--state-dir wired in.
+
+    Mirrors verify_main's CLI wiring so qr_decompose.py doesn't re-declare the
+    shared extra_args inline.
+    """
+    from skills.lib.workflow.cli import mode_main
+
+    mode_main(
+        script_file,
+        get_step_guidance,
+        description,
+        extra_args=[
+            (
+                ["--phase"],
+                {
+                    "type": str,
+                    "required": True,
+                    "choices": get_all_phases(),
+                    "help": "QR phase to decompose",
+                },
+            ),
+            (["--state-dir"], {"type": str, "required": True, "help": "State directory path"}),
+        ],
+    )
+
+
 def verify_main(script_file: str, get_step_guidance, description: str) -> None:
     """Entry point for the QR verify runner: mode_main plus a result-recording path.
 

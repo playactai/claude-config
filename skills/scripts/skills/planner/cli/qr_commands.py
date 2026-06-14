@@ -38,6 +38,10 @@ class QRContext:
         """Single mutable state file (used by batch snapshot/rollback)."""
         return self.qr_path()
 
+    def batch_lock(self):
+        """Re-entrant write lock for holding across batch snapshot+loop+restore."""
+        return qr_write_lock(self.state_dir, self.phase)
+
 
 def update_item(
     ctx: QRContext,

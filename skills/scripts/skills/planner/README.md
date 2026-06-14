@@ -36,7 +36,7 @@ Plan
     problem, approach
 
   planning_context:
-    decisions[]: id (DL-XXX), version, decision, reasoning   (input alias: decision_log; reasoning <- reasoning_chain)
+    decisions[] (input alias: decision_log): id (DL-XXX), version, decision, reasoning   (reasoning <- reasoning_chain)
     rejected_alternatives[]: id (RA-XXX), alternative, rejection_reason, decision_ref
     constraints[]: plain strings (no IDs/types)
     risks[]: id (R-XXX), risk, mitigation, anchor?, decision_ref?   (input alias: known_risks)

@@ -320,7 +320,7 @@ def build_gate_output(
     # instead of finalizing an unexecutable plan. Even --accept-findings cannot
     # waive this: the override is about QR finding severity, not structural validity.
     # Gated on completeness_gate in the phase config so it only runs for plan-design.
-    if passed and get_phase_config(phase).get("completeness_gate", False):
+    if passed and phase and get_phase_config(phase).get("completeness_gate", False):
         from skills.planner.shared.schema import plan_completeness_errors
 
         completeness_errors = plan_completeness_errors(state_dir, phase, plan=plan)

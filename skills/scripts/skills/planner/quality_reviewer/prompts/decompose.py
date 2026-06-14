@@ -442,11 +442,6 @@ def step_9_structural_grouping(state_dir: str, phase: str, module_path: str) -> 
             "next": "",  # Terminal error
         }
 
-    # pin_cwd: copy-run command needs the absolute cd (drifted-cwd safety).
-    assign_cmd = pin_cwd(
-        f"uv run python -m skills.planner.cli.qr --state-dir {shell_quote(state_dir)} --qr-phase {phase} "
-        "assign-group <item_id> --group-id <group_id>"
-    )
     return {
         "title": f"QR Decomposition Step 9: Structural Grouping ({phase})",
         "actions": [
@@ -465,8 +460,7 @@ def step_9_structural_grouping(state_dir: str, phase: str, module_path: str) -> 
             "   For items with scope='*' and no parent_id:",
             "   - Set group_id = 'umbrella'",
             "",
-            "Execute via CLI:",
-            f"  {assign_cmd}",
+            format_assign_cmd(state_dir, phase, ""),
         ],
         "next": f"uv run python -m {module_path} --step 10 --phase {phase} --state-dir {shell_quote(state_dir)}",
     }

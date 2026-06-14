@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import tempfile
 from collections.abc import Callable
 
@@ -50,16 +51,17 @@ def _flatten_actions(result: dict) -> list[str]:
     return lines
 
 
+_PIN_RE = re.compile(r"cd\s+\S+\s+&&\s+uv run python -m skills\.planner\.cli")
+
+
 def _assert_all_pinned(lines: list[str], context: str) -> None:
     """Assert every uv-run skills.planner.cli line is cwd-pinned."""
     MARKER = "uv run python -m skills.planner.cli"
     for line in lines:
         if MARKER in line:
-            cd_idx = line.find("cd ")
-            uv_idx = line.find(MARKER)
-            assert cd_idx != -1 and cd_idx < uv_idx, (
+            assert _PIN_RE.search(line), (
                 f"Unpinned command found in {context}:\n  {line!r}\n"
-                f"Expected 'cd ' to appear before '{MARKER}'"
+                f"Expected 'cd <path> && uv run python -m skills.planner.cli' pattern"
             )
 
 

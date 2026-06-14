@@ -588,8 +588,8 @@ def validate_state(state_dir: str) -> tuple[Plan | None, dict[str, dict]]:
             continue
         try:
             data = json.loads(path.read_text(encoding="utf-8"))
-            QRFile.model_validate(data)
-            qr_states[phase] = data
+            qr_file = QRFile.model_validate(data)
+            qr_states[phase] = qr_file.model_dump(mode="json")
         except Exception as e:
             raise SchemaValidationError(f"{path.name}: {e}") from e
 

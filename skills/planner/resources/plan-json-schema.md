@@ -137,7 +137,16 @@ CLI: `set-milestone`. `tests` is a flat list of free-form descriptions.
   "requirements": ["Limit to 100 requests per minute per client"],
   "acceptance_criteria": ["Test demonstrates rate limiting behavior"],
   "tests": ["unit: under-limit succeeds; at-limit edge; over-limit returns 429"],
-  "code_intents": [ "...see Code Intent..." ],
+  "code_intents": [
+    {
+      "id": "CI-M-001-001",
+      "version": 1,
+      "file": "src/ratelimit.py",
+      "function": "check_rate_limit",
+      "behavior": "Return True if the request is allowed, False if rate limited.",
+      "decision_refs": ["DL-001"]
+    }
+  ],
   "is_documentation_only": false,
   "delegated_to": null
 }

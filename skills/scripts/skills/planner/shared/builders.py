@@ -117,7 +117,7 @@ def build_qr_verify_dispatch(
     ]
 
     sd = shell_quote(state_dir)
-    base_cmd = f"uv run python -m {verify_script} --step 1 --phase {phase} --state-dir {sd} $qr_item_flags"
+    base_cmd = f"uv run python -m {verify_script} --step 1 --phase {shell_quote(phase)} --state-dir {sd} $qr_item_flags"
     # pin_cwd: the prose "Start:" line is a command the agent may copy and run
     # directly, so it carries the absolute cd the invoke block already has --
     # otherwise a drifted cwd yields "No module named 'skills'".

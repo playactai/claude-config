@@ -27,23 +27,10 @@ def get_step_guidance(step: int, module_path: str, **kwargs) -> dict:
 
 
 if __name__ == "__main__":
-    from skills.lib.workflow.cli import mode_main
-    from skills.planner.shared.qr.phases import get_all_phases
+    from skills.planner.quality_reviewer.qr_verify_base import decompose_main
 
-    mode_main(
+    decompose_main(
         __file__,
         get_step_guidance,
         "QR-Decompose: Generate verification items for a QR phase (--phase selects)",
-        extra_args=[
-            (
-                ["--phase"],
-                {
-                    "type": str,
-                    "required": True,
-                    "choices": get_all_phases(),
-                    "help": "QR phase to decompose",
-                },
-            ),
-            (["--state-dir"], {"type": str, "required": True, "help": "State directory path"}),
-        ],
     )

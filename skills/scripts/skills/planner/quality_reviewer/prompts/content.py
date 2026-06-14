@@ -17,7 +17,7 @@ Constants are phase-prefixed ([PHASE]_[TYPE]) so the three phases coexist here.
 """
 
 from skills.planner.quality_reviewer.qr_verify_base import VerifyBase
-from skills.planner.shared.qr.phases import QR_PHASES
+from skills.planner.shared.qr.phases import QR_PHASES, get_phase_config
 
 # ============================================================================
 # DECOMPOSE PROMPTS
@@ -150,7 +150,7 @@ DO NOT brainstorm plan structure or documentation concerns."""
 IMPL_CODE_STEP_3_ENUMERATION = """\
 For impl-code, enumerate IMPLEMENTATION ARTIFACTS.
 Enumerate items ONLY for the code milestones listed under "CODE MILESTONES IN
-SCOPE" above; is_documentation_only milestones are excluded by construction (no
+SCOPE" below; is_documentation_only milestones are excluded by construction (no
 code is implemented for them -- their deliverables are verified in impl-docs).
 Enumerating a doc-only milestone produces unsatisfiable acceptance-criteria
 items that never converge.
@@ -185,6 +185,7 @@ SEVERITY ASSIGNMENT (per conventions/severity.md, impl-code scope):
     - GOD_OBJECT: >15 methods OR >10 deps
     - GOD_FUNCTION: >50 lines OR >3 nesting
     - CONVENTION_VIOLATION: violates documented project convention
+    - TESTING_STRATEGY_VIOLATION: tests don't follow confirmed strategy
     - INCONSISTENT_ERROR_HANDLING: mixed exceptions/codes
 
   SHOULD (iterations 1-3) - STRUCTURAL SIMPLIFICATION (flag only with a concrete, behavior-preserving fix named):
@@ -198,6 +199,7 @@ SEVERITY ASSIGNMENT (per conventions/severity.md, impl-code scope):
     - NON_ATOMIC_ORCHESTRATION: avoidable serialization OR half-applied partial-update state
 
   COULD (iterations 1-2) - COSMETIC:
+    - TOOLCHAIN_CATCHABLE: errors the compiler/linter would flag
     - DEAD_CODE: unused functions, impossible branches
     - FORMATTER_FIXABLE: style issues"""
 
@@ -359,9 +361,7 @@ def get_decompose_content(phase: str) -> dict:
 
     Raises ValueError on an unknown phase (matches get_phase_config / get_verifier).
     """
-    if phase not in DECOMPOSE_CONTENT:
-        valid = ", ".join(sorted(DECOMPOSE_CONTENT))
-        raise ValueError(f"Unknown QR phase: {phase}. Valid phases: {valid}")
+    get_phase_config(phase)
     return DECOMPOSE_CONTENT[phase]
 
 
@@ -771,7 +771,5 @@ def get_verifier(phase: str) -> VerifyBase:
 
     Raises ValueError on an unknown phase (matches get_phase_config).
     """
-    if phase not in VERIFIERS:
-        valid = ", ".join(sorted(VERIFIERS))
-        raise ValueError(f"Unknown QR phase: {phase}. Valid phases: {valid}")
+    get_phase_config(phase)
     return VERIFIERS[phase]()

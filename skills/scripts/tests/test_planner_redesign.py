@@ -28,12 +28,28 @@ def test_planner_has_six_steps():
     assert PLANNER_GATE_STEPS == frozenset({6})
 
 
-def test_step6_is_terminal_plan_approved(tmp_path):
+def test_step6_is_terminal_plan_approved_with_valid_plan(tmp_path):
     from skills.planner.orchestrator.planner import format_output
 
-    # Step 6 is reached after verify persists qr state; write a passing (empty-items)
-    # qr file so the gate is exercised the way real flow reaches it. Fail-closed now
-    # vetoes a missing qr file. No plan.json needed -- completeness tolerates absence.
+    # Write a minimal completeness-valid plan (code milestone covered by a wave)
+    # and a passing qr file so the gate reaches terminal PLAN APPROVED.
+    (tmp_path / "plan.json").write_text(
+        json.dumps(
+            {
+                "overview": {"problem": "p", "approach": "a"},
+                "milestones": [
+                    {
+                        "id": "M-001",
+                        "number": 1,
+                        "name": "m",
+                        "files": ["a.py"],
+                        "code_intents": [{"id": "CI-1", "file": "a.py", "behavior": "do x"}],
+                    }
+                ],
+                "waves": [{"id": "W-001", "milestones": ["M-001"]}],
+            }
+        )
+    )
     (tmp_path / "qr-plan-design.json").write_text(
         json.dumps({"phase": "plan-design", "iteration": 1, "items": []})
     )
@@ -42,6 +58,38 @@ def test_step6_is_terminal_plan_approved(tmp_path):
     assert result.terminal_pass is True
     assert "PLAN APPROVED" in result.output
     assert "--step 7" not in result.output  # no plan-code phase to route to
+
+
+def test_step6_missing_plan_fails_closed(tmp_path):
+    # C1 fail-closed guard: step 6 with no plan.json must sys.exit (plan is
+    # required for step 2+; validate_state returns plan=None when absent).
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    (tmp_path / "qr-plan-design.json").write_text(
+        json.dumps({"phase": "plan-design", "iteration": 1, "items": []})
+    )
+    scripts_dir = Path(__file__).parent.parent
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "skills.planner.orchestrator.planner",
+            "--step",
+            "6",
+            "--qr-status",
+            "pass",
+            "--state-dir",
+            str(tmp_path),
+        ],
+        capture_output=True,
+        text=True,
+        timeout=30,
+        cwd=scripts_dir,
+    )
+    assert result.returncode != 0
+    assert "plan.json not found" in (result.stdout + result.stderr)
 
 
 # --- Only three QR phases remain --------------------------------------------
@@ -116,7 +164,7 @@ def test_exec_docs_authors_not_transcribes():
 
     all_body = "\n".join("\n".join(get_step_guidance(step)["actions"]) for step in STEPS)
     assert "transcrib" not in all_body.lower()  # no comment-transcription model
-    assert "author" in all_body.lower()  # TW authors docs directly
+    assert "sole author" in all_body.lower()  # TW authors docs directly (not "authority")
     assert "docstring" in all_body.lower()
 
 
@@ -264,6 +312,12 @@ def test_impl_code_qr_excludes_doc_only_milestones():
 
     combined = (STEP_1_ABSORB + STEP_3_ENUMERATION).lower()
     assert "is_documentation_only" in combined
+    # The field must appear alongside an explicit exclusion verb so the QR
+    # agent knows to skip doc-only milestones, not merely recognise the flag.
+    assert any(
+        "is_documentation_only" in seg and any(w in seg for w in ("exclud", "skip", "omit", "out of scope"))
+        for seg in combined.split("\n\n")
+    )
 
 
 # --- code_milestones() is wired structurally into impl-code decompose ----------
@@ -404,11 +458,17 @@ def test_doc_deliverable_unsatisfied_is_must_not_should():
         IMPL_DOCS_STEP_5_GENERATE as STEP_5_GENERATE,
     )
 
-    boundary = STEP_5_GENERATE.index("SHOULD (iterations")
-    must_block = STEP_5_GENERATE[:boundary]
-    should_and_below = STEP_5_GENERATE[boundary:]
-    assert "DOC_DELIVERABLE_UNSATISFIED" in must_block
-    assert "DOC_DELIVERABLE_UNSATISFIED" not in should_and_below
+    deliverable_idx = STEP_5_GENERATE.index("DOC_DELIVERABLE_UNSATISFIED")
+    # Find the nearest tier header that precedes the token (scan backwards).
+    before = STEP_5_GENERATE[:deliverable_idx]
+    must_idx = before.rfind("MUST")
+    should_idx = before.rfind("SHOULD")
+    could_idx = before.rfind("COULD")
+    assert must_idx != -1, "MUST tier header not found before DOC_DELIVERABLE_UNSATISFIED"
+    # MUST header must be the closest tier header (after SHOULD and COULD).
+    assert must_idx > should_idx and must_idx > could_idx, (
+        "DOC_DELIVERABLE_UNSATISFIED is not in the MUST tier"
+    )
 
 
 # --- Terminal gate: user-accept at the iteration ceiling finalizes the plan ---
@@ -660,6 +720,29 @@ def test_set_wave_accepts_valid_multi_milestone_wave(tmp_path):
     plan = ctx.load_plan()
     assert [(w.id, w.milestones) for w in plan.waves] == [("W-001", ["M-001", "M-002"])]
     assert plan.validate_completeness("plan-design") == []  # proves acceptance of a valid wave
+
+
+def test_set_wave_rejects_doc_only_milestone(tmp_path):
+    # D1: doc-only milestones route to exec-docs and must be rejected at write time
+    # on the RPC twin too (not only the CLI / the later executor gate). Regression for
+    # the RPC-bypass whole-class miss.
+    import pytest
+
+    from skills.planner.cli import plan_commands as pc
+    from skills.planner.cli.dispatch import batch, discover_methods
+
+    ctx = pc.PlanContext(state_dir=tmp_path)
+    pc.init(ctx, task="t")
+    pc.set_milestone(ctx, name="docs", documentation_only=True)  # M-001, doc-only
+
+    with pytest.raises(ValueError, match="cannot be added to a wave"):
+        pc.set_wave(ctx, milestones="M-001")
+
+    # The batch/RPC path must reject it too (surfaced as a rolled-back RPC error).
+    methods = discover_methods(pc)
+    results = batch(methods, [{"method": "set-wave", "params": {"milestones": "M-001"}, "id": 1}], ctx)
+    assert "cannot be added to a wave" in results[0]["error"]["message"]
+    assert ctx.load_plan().waves == []  # nothing persisted
 
 
 def test_set_wave_update_unknown_id_raises(tmp_path):

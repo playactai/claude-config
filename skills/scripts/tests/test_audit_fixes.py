@@ -37,7 +37,7 @@ from skills.lib.workflow.ast.dispatch_renderer import (
     _expand_template_targets,
     render_subagent_dispatch,
 )
-from skills.lib.workflow.prompts.step import SKILLS_DIR, pin_cwd
+from skills.lib.workflow.prompts.step import _SKILLS_DIR_Q, SKILLS_DIR, pin_cwd
 from skills.lib.workflow.prompts.subagent import template_dispatch
 from skills.planner.cli import plan as plan_cli
 from skills.planner.cli import plan_commands, qr_commands
@@ -98,6 +98,29 @@ def _gate(tmp_path: Path, qr: QRState, *, phase="impl-code", work_step=2, pass_s
         state_dir=str(tmp_path),
         phase=phase,
     )
+
+
+def test_build_gate_output_empty_phase_no_crash():
+    # B1: the standalone/test path (no state_dir/phase) hits the verdict else-branch
+    # which leaves `phase` empty; the completeness gate must be skipped, not call
+    # get_phase_config("") which raises ValueError("Unknown QR phase").
+    from skills.planner.shared.gates import GateResult
+
+    qr = QRState(iteration=1, state=LoopState.INITIAL, status=QRStatus.PASS)
+    result = build_gate_output(
+        module_path="m",
+        qr_name="QR",
+        qr=qr,
+        step=5,
+        work_step=2,
+        pass_step=None,
+        pass_message="proceed",
+        fix_target=None,
+        state_dir="",
+        phase="",
+    )
+    assert isinstance(result, GateResult)
+    assert result.terminal_pass is True
 
 
 # --- Bug #3: strict severity Literal aborted the whole run -------------------
@@ -563,6 +586,10 @@ class TestBatchTransaction:
         # Second request fails (unknown milestone) -> whole batch reverted.
         assert ctx.plan_path().read_bytes() == before
         assert results[-1]["error"]["rolled_back"] is True
+        # The earlier success was reverted too, so it must be flagged rolled_back
+        # (D2) -- a caller reading results[0] must not believe milestone A persisted.
+        assert "result" in results[0]
+        assert results[0]["rolled_back"] is True
 
 
 # --- Bug #1: concurrent QR writes must not be lost --------------------------
@@ -640,7 +667,7 @@ class TestQrCliUpdatePath:
 class TestCwdPinnedCommands:
     def test_pin_cwd_prefixes_absolute_skills_dir(self):
         out = pin_cwd("uv run python -m skills.foo --step 1")
-        assert out == f"cd {SKILLS_DIR} && uv run python -m skills.foo --step 1"
+        assert out == f"cd {_SKILLS_DIR_Q} && uv run python -m skills.foo --step 1"
         assert out.startswith("cd /")  # absolute, never relative
 
     def test_ast_subagent_dispatch_uses_absolute_cd(self):
@@ -654,7 +681,7 @@ class TestCwdPinnedCommands:
         # proves the dispatch fragment is well-formed (audit #9 sibling).
         invoke = ET.fromstring(out).find(".//invoke")
         assert invoke is not None
-        assert invoke.get("cmd") == f"cd {SKILLS_DIR} && uv run python -m skills.x --step 1"
+        assert invoke.get("cmd") == f"cd {_SKILLS_DIR_Q} && uv run python -m skills.x --step 1"
         assert "cd .claude/skills/scripts" not in out  # the relative form is gone
 
     def test_render_invoke_after_uses_absolute_cd(self):
@@ -666,7 +693,7 @@ class TestCwdPinnedCommands:
         # Parse the XML and assert the *decoded* command carries the absolute cd pin.
         invoke = ET.fromstring(rendered).find("invoke")
         assert invoke is not None
-        assert invoke.get("cmd") == f"cd {SKILLS_DIR} && uv run python -m skills.foo --step 1"
+        assert invoke.get("cmd") == f"cd {_SKILLS_DIR_Q} && uv run python -m skills.foo --step 1"
         assert ".claude/skills/scripts" not in rendered
 
     def test_executor_verify_start_line_is_pinned(self, tmp_path: Path):
@@ -677,7 +704,7 @@ class TestCwdPinnedCommands:
             [{"id": "qa-001", "scope": "*", "check": "c", "status": "TODO", "severity": "MUST"}],
         )
         out = executor_orch.format_output(4, str(tmp_path), None, False)
-        assert f"Start: cd {SKILLS_DIR} && uv run python -m" in out
+        assert f"Start: cd {_SKILLS_DIR_Q} && uv run python -m" in out
 
     def test_planner_verify_start_line_is_pinned(self, tmp_path: Path):
         _write_qr(
@@ -688,11 +715,11 @@ class TestCwdPinnedCommands:
         )
         out = planner_orch.format_output(5, None, str(tmp_path))
         assert isinstance(out, str)  # verify step returns str, not a GateResult
-        assert f"Start: cd {SKILLS_DIR} && uv run python -m" in out
+        assert f"Start: cd {_SKILLS_DIR_Q} && uv run python -m" in out
 
     def test_decompose_grouping_cli_prose_is_pinned(self):
         out = format_assign_cmd("/tmp/sd", "impl-code", "component-")
-        assert f"cd {SKILLS_DIR} && uv run python -m skills.planner.cli.qr" in out
+        assert f"cd {_SKILLS_DIR_Q} && uv run python -m skills.planner.cli.qr" in out
 
     def test_incoherence_dispatch_lines_are_pinned(self):
         # The 3 hand-built AGENT PROMPT invoke lines now route through pin_cwd: the
@@ -702,7 +729,7 @@ class TestCwdPinnedCommands:
         for step in (3, 9, 17):
             actions = incoherence.STEPS[step]["actions"]
             line = next(a for a in actions if a.strip().startswith("Start: <invoke"))
-            assert f'cmd="cd {SKILLS_DIR} && ' in line
+            assert f'cmd="cd {_SKILLS_DIR_Q} && ' in line
             assert 'working-dir=".claude/skills/scripts"' not in line
 
     def test_arxiv_templates_drop_relative_invoke_and_dispatch_is_pinned(self):
@@ -713,7 +740,7 @@ class TestCwdPinnedCommands:
         assert 'working-dir=".claude/skills/scripts"' not in main.MODE1_TEMPLATE
         assert 'working-dir=".claude/skills/scripts"' not in main.MODE2_TEMPLATE
         out = main.build_mode1_dispatch()
-        assert f"cd {SKILLS_DIR} && uv run python -m skills.arxiv_to_md.sub_agent" in out
+        assert f"cd {_SKILLS_DIR_Q} && uv run python -m skills.arxiv_to_md.sub_agent" in out
         assert 'working-dir=".claude/skills/scripts"' not in out
 
 
@@ -1096,6 +1123,25 @@ class TestQrCommonExtraction:
         assert qr_commands.find_item is qr_common.find_item
         assert qr_cli.save_qr_state_atomic is qr_common.save_qr_state_atomic
         assert qr_commands.save_qr_state_atomic is qr_common.save_qr_state_atomic
+
+    def test_load_qr_state_under_lock_rejects_non_dict(self, tmp_path: Path):
+        # B2: the write-side loader must fail closed on a valid-JSON non-object
+        # (e.g. a decompose scratch list), symmetric with load_qr_state's read guard.
+        from skills.planner.cli.qr_common import load_qr_state_under_lock
+
+        bad = tmp_path / "qr-impl-code.json"
+        bad.write_text("[1, 2, 3]")
+        with pytest.raises(ValueError, match="not a JSON object"):
+            load_qr_state_under_lock(bad)
+
+    def test_qr_cli_batch_bad_json_exits_clean(self, tmp_path: Path):
+        # D3: the qr.py batch path must surface malformed input as a clean error_exit
+        # (SystemExit), not leak a raw JSONDecodeError traceback. Mirrors plan.py's
+        # wrapped batch path.
+        with pytest.raises(SystemExit):
+            qr_cli.cli(
+                ["--state-dir", str(tmp_path), "--qr-phase", "impl-code", "batch", "not json"]
+            )
 
     def test_is_valid_group_id(self):
         from skills.planner.cli.qr_common import is_valid_group_id

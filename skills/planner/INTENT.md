@@ -371,8 +371,9 @@ On success, the CLI prints the entity ID and new version:
 | add-diagram-node   | DiagramNode  | architect |
 | add-diagram-edge   | DiagramEdge  | architect |
 | set-diagram-render | DiagramGraph | architect |
+| set-wave           | Wave         | architect |
 
-The legacy add-X and update-X commands have been removed. All mutation uses set-X with CAS versioning.
+The legacy add-X and update-X commands have been removed. set-X commands use CAS versioning for versioned entities (Milestone, CodeIntent, Decision, DiagramGraph); `add-diagram-node` and `add-diagram-edge` remain real commands; `set-wave` mutates without CAS (Wave has no version field).
 
 ## Documentation Model
 
@@ -894,7 +895,7 @@ Handover prompts should be concise. Initial handover (step 2->3) includes full d
 | Sub-agent | CLI commands to surface                                                              |
 | --------- | ------------------------------------------------------------------------------------ |
 | architect | `cli.plan set-milestone`, `set-intent`, `set-decision`, `set-diagram`,               |
-|           | `add-diagram-node`, `add-diagram-edge`, `set-diagram-render`                         |
+|           | `add-diagram-node`, `add-diagram-edge`, `set-diagram-render`, `set-wave`             |
 | qr-verify | `cli.qr update-item`                                                                 |
 
 Example prompt fragment for architect:

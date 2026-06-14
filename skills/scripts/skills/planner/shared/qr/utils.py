@@ -13,10 +13,14 @@ import contextlib
 import fcntl
 import json
 import math
+import threading
 from collections.abc import Callable, Iterator
 from pathlib import Path
 
 from skills.planner.shared.schema import QA_ITEM_DEFAULTS, canonicalize_severity
+
+_HELD: dict[tuple[int, str], list] = {}  # (thread_id, lock_path) -> [depth, file]
+_HELD_LOCK = threading.Lock()
 
 
 @contextlib.contextmanager
@@ -33,12 +37,49 @@ def qr_write_lock(state_dir: str | Path, phase: str) -> Iterator[None]:
     all-or-nothing view.
 
     Hold this lock across the full read -> mutate -> atomic-write cycle.
+    Re-acquire within one process and same thread is re-entrant (so a batch
+    can hold it around per-item writers without self-deadlock). Cross-process
+    exclusion is preserved: each process starts at depth 0 and acquires the
+    real flock. Concurrent threads each acquire the flock independently.
     """
-    lock_path = Path(state_dir) / f"qr-{phase}.lock"
-    with open(lock_path, "a") as lock_f:
-        fcntl.flock(lock_f.fileno(), fcntl.LOCK_EX)
+    lock_path = str((Path(state_dir) / f"qr-{phase}.lock").resolve())
+    key = (threading.get_ident(), lock_path)
+    with _HELD_LOCK:
+        held = _HELD.get(key)
+    if held is not None:
+        # Re-entrant acquire on the same thread: the flock is already held, so
+        # just track nesting depth (this lets a batch wrap per-item writers
+        # without self-deadlock). Only this thread owns this key, so the
+        # unlocked depth bump is race-free.
+        held[0] += 1
+        try:
+            yield
+        finally:
+            held[0] -= 1
+        return
+    # First acquire on this thread: take the real flock BEFORE registering the
+    # entry, so a flock failure (EINTR, NFS error) leaves no poisoned _HELD entry
+    # -- which would make later acquires on this thread skip locking and run with
+    # no exclusion -- and leaks no fd.
+    f = open(lock_path, "a")  # noqa: SIM115
+    try:
+        fcntl.flock(f.fileno(), fcntl.LOCK_EX)
+    except BaseException:
+        f.close()
+        raise
+    held = [1, f]
+    with _HELD_LOCK:
+        _HELD[key] = held
+    try:
         yield
-        # Lock released when lock_f closes on context exit.
+    finally:
+        with _HELD_LOCK:
+            held[0] -= 1
+            done = held[0] == 0
+            if done:
+                del _HELD[key]
+        if done:
+            f.close()
 
 
 def load_qr_state(state_dir: str, phase: str) -> dict | None:
@@ -151,11 +192,7 @@ def _blocking_items(state_dir: str, phase: str, *statuses: str) -> list[dict]:
     (_has_blocking_todo_from_state). Named with a leading underscore because the
     higher-level predicate has_qr_failures is the public entry point.
     """
-    qr_state = load_qr_state(state_dir, phase)
-    if not qr_state:
-        return []
-    iteration = (qr_state.get("iteration") or 1)
-    return query_items(qr_state, by_status(*statuses), by_blocking_severity(iteration))
+    return _blocking_items_from_state(load_qr_state(state_dir, phase), *statuses)
 
 
 def _blocking_items_from_state(qr_state: dict | None, *statuses: str) -> list[dict]:
@@ -425,6 +462,32 @@ def increment_qr_iteration(state_dir: str, phase: str) -> int | None:
     qr_state["iteration"] = iteration
     atomic_write_text(path, json.dumps(qr_state, indent=2))
     return iteration
+
+
+def prepare_verify_items(
+    state_dir: str,
+    phase: str,
+    qr,
+    qr_state: dict | None = None,
+) -> tuple[list[dict] | None, int]:
+    """Load QR state and return (items, iteration) for the verify step.
+
+    When qr_state is provided the disk read is skipped (caller already loaded it).
+    Returns (None, 1) when qr-{phase}.json is missing or malformed so callers
+    can route-to-decompose (executor) or return an error dict (planner).
+    """
+    from skills.planner.shared.qr.types import LoopState
+
+    if qr_state is None:
+        qr_state = load_qr_state(state_dir, phase)
+    if not qr_state or "items" not in qr_state:
+        return None, 1
+    iteration = qr_state.get("iteration") or 1
+    if qr.state == LoopState.RETRY:
+        new_iter = increment_qr_iteration(state_dir, phase)
+        if new_iter is not None:
+            iteration = new_iter
+    return query_items(qr_state, by_status("TODO", "FAIL"), by_blocking_severity(iteration)), iteration
 
 
 def get_pending_qr_items(state_dir: str, phase: str) -> list[str]:

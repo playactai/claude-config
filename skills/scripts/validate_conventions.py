@@ -18,7 +18,7 @@ def extract_convention_calls(script_path: Path) -> tuple[list[tuple[str, int]], 
         silently bypass the registry guard. We surface these as errors (fail loud)
         rather than skip them -- a real access could hide behind a variable.
     """
-    tree = ast.parse(script_path.read_text())
+    tree = ast.parse(script_path.read_text(encoding="utf-8"))
     literal_calls = []
     opaque_linenos = []
     for node in ast.walk(tree):

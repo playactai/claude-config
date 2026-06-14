@@ -363,12 +363,18 @@ def cli(args: list[str] | None = None):
         methods = discover_methods(qr_commands)
         ctx = qr_commands.QRContext(state_dir=Path(state_dir), phase=phase)
 
-        if cmd_args:
-            requests = json.loads(cmd_args[0])
-        else:
-            requests = json.load(sys.stdin)
+        try:
+            if cmd_args:
+                requests = json.loads(cmd_args[0])
+            else:
+                requests = json.load(sys.stdin)
 
-        results = batch_dispatch(methods, requests, ctx)
+            if not isinstance(requests, list) or not all(isinstance(r, dict) for r in requests):
+                error_exit("batch input must be a JSON array of {method, params} objects")
+
+            results = batch_dispatch(methods, requests, ctx)
+        except ValueError as e:
+            error_exit(str(e))
         print(json.dumps(results, indent=2))
         return
 

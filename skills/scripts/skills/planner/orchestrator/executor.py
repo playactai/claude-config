@@ -30,13 +30,13 @@ from typing import TYPE_CHECKING
 
 from skills.lib.workflow.prompts import subagent_dispatch
 from skills.lib.workflow.prompts.step import format_step
-from skills.lib.workflow.types import AgentRole
 from skills.planner.shared.builders import (
     THINKING_EFFICIENCY,
     build_qr_verify_dispatch,
     format_qr_verify_forbidden,
     shell_quote,
 )
+from skills.planner.shared.constants import EXECUTOR_GATE_CONFIG, EXECUTOR_STEP_PHASES
 from skills.planner.shared.constraints import (
     ORCHESTRATOR_CONSTRAINT,
     format_state_banner,
@@ -46,14 +46,11 @@ from skills.planner.shared.qr.cli import add_qr_args
 from skills.planner.shared.qr.phases import get_phase_config
 from skills.planner.shared.qr.types import LoopState, QRState, QRStatus
 from skills.planner.shared.qr.utils import (
-    by_blocking_severity,
-    by_status,
     get_qr_iteration_from_state,
     has_qr_failures_from_state,
-    increment_qr_iteration,
     load_qr_state,
+    prepare_verify_items,
     qr_file_exists,
-    query_items,
 )
 from skills.planner.shared.resources import get_mode_script_path
 
@@ -291,23 +288,14 @@ def format_qr_verify(step: int, phase: str, state_dir: str, qr: QRState) -> str:
     title_map = {4: "Code QR Verify", 8: "Doc QR Verify"}
     title = title_map.get(step, f"QR Verify ({phase})")
 
-    qr_state = load_qr_state(state_dir, phase)
-    if not qr_state or "items" not in qr_state:
+    items, _ = prepare_verify_items(state_dir, phase, qr)
+    if items is None:
         decompose_step = step - 1
         body = f"Error: qr-{phase}.json not found or malformed. Routing back to decompose step."
         retry_cmd = (
             f"uv run python -m {MODULE_PATH} --step {decompose_step} --state-dir {shell_quote(state_dir)}"
         )
         return format_step(body, retry_cmd, title=title)
-
-    iteration = (qr_state.get("iteration") or 1)
-    if qr.state == LoopState.RETRY:
-        new_iter = increment_qr_iteration(state_dir, phase)
-        if new_iter is not None:
-            iteration = new_iter
-
-    # Dispatch only items at blocking severity for current iteration
-    items = query_items(qr_state, by_status("TODO", "FAIL"), by_blocking_severity(iteration))
     if not items:
         next_step = step + 1
         body = "All items already verified. Proceeding with pass."
@@ -365,24 +353,7 @@ def format_qr_gate(
     plan: "Plan | None" = None,
 ) -> str:
     """Route based on QR results: pass → next phase, fail → fix loop."""
-    gate_config = {
-        5: (
-            "Code QR",
-            2,
-            6,
-            "Code quality verified. Proceed to documentation.",
-            AgentRole.DEVELOPER,
-        ),
-        9: (
-            "Doc QR",
-            6,
-            10,
-            "Documentation verified. Proceed to retrospective.",
-            AgentRole.TECHNICAL_WRITER,
-        ),
-    }
-
-    qr_name, work_step, pass_step, pass_message, fix_target = gate_config[step]
+    qr_name, work_step, pass_step, pass_message, fix_target = EXECUTOR_GATE_CONFIG[step]
 
     result = build_gate_output(
         module_path=MODULE_PATH,
@@ -500,17 +471,7 @@ def format_output(
     # iteration bumps in verify only fire when state == RETRY, and the gate
     # renders different prose on retry. Restricting to N/N+1 would leave
     # verify/gate running as INITIAL even mid-fix-loop (Qodo review #4).
-    phase_for_step = {
-        2: "impl-code",
-        3: "impl-code",
-        4: "impl-code",
-        5: "impl-code",
-        6: "impl-docs",
-        7: "impl-docs",
-        8: "impl-docs",
-        9: "impl-docs",
-    }
-    phase = phase_for_step.get(step)
+    phase = EXECUTOR_STEP_PHASES.get(step)
     if qr_states is not None:
         qr_state = qr_states.get(phase) if state_dir and phase else None
     else:
@@ -634,8 +595,7 @@ def main():
         # always expects the real plan, and validate_state returns None for an absent
         # file -- so without this guard the executor would dispatch an empty
         # implementation with no structural check at all.
-        plan_path = Path(state_dir) / "plan.json"
-        if plan is None or not plan_path.exists():
+        if plan is None:
             sys.exit(f"Error: plan.json not found in {state_dir} (required for step {args.step})")
 
         errors = plan.validate_structural_executability()

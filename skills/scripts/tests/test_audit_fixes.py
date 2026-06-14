@@ -868,6 +868,7 @@ class TestVerifyResultRecording:
         assert f"cd {SKILLS_DIR} && uv run python -m" in body
         assert "--result PASS" in body
         assert "--result FAIL --finding" in body
+        assert "backslash-escape" in body  # agent-facing escape hint, not just a code comment (re-review #5)
         assert "update-item" not in body  # the two-tool cli.qr split is gone here
 
 

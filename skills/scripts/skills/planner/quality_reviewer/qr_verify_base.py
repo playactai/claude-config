@@ -318,8 +318,8 @@ class VerifyBase(ABC):
             f"uv run python -m {module_path} --step {current_step}{phase_arg}{state_dir_arg} {item_flags}"
         )
         record_pass = pin_cwd(f"{record_base} --result PASS")
-        # Wrap the explanation in double quotes; if it contains a double quote,
-        # backslash-escape it.
+        # Double-quote the placeholder so apostrophes in findings survive the shell;
+        # the actions line tells the agent how to escape any shell-special chars.
         record_fail = pin_cwd(f'{record_base} --result FAIL --finding "<one-line explanation>"')
 
         return {

@@ -2,7 +2,8 @@
 
 Guards merged_bug_005 from the 2026-04-17 ultrareview:
 - InvokeAfterNode rendering must XML-escape cmd/if_pass/if_fail values
-- working_dir must be shlex-quoted so shell metacharacters can't inject
+- render_invoke_after routes the cmd through pin_cwd (absolute SKILLS_DIR cd) so
+  the emitted command is cwd-independent
 - format_step / sub_agent_invoke must embed the shlex-quoted SKILLS_DIR in
   shell strings they tell the LLM to copy verbatim
 - incoherence.py self-chaining uses --thoughts "<ACCUMULATED_CONTEXT>" which
@@ -80,6 +81,13 @@ class TestInvokeAfterEscaping:
         rendered = render_invoke_after(node)
         cmd = _cmd_attr(rendered)
         assert "a && b" in cmd
+
+    def test_invoke_after_uses_pin_cwd(self):
+        """render_invoke_after routes the cmd through pin_cwd (absolute SKILLS_DIR cd)."""
+        node = InvokeAfterNode(cmd="true")
+        rendered = render_invoke_after(node)
+        cmd = _cmd_attr(rendered)
+        assert cmd.startswith(f"cd {SKILLS_DIR} && ")
 
     def test_branching_form_escapes_both_branches(self):
         node = InvokeAfterNode(

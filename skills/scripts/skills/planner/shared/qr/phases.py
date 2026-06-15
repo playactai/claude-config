@@ -70,6 +70,40 @@ QR_PHASES: dict[str, dict] = {
 }
 
 
+_registries_validated = False
+
+
+def validate_phase_registries() -> None:
+    """Fail fast if the QR content registries don't cover exactly QR_PHASES.
+
+    DECOMPOSE_CONTENT (decompose prompts) and VERIFIERS (verify classes) live in
+    quality_reviewer/prompts/content.py, keyed by the same phase strings as
+    QR_PHASES but defined far away. A phase added here but missing its content/
+    verifier passes argparse (--phase choices come from QR_PHASES) and used to
+    crash only when content.py was first imported mid-dispatch. Running the check
+    on this eager path (get_phase_config -- hit at orchestrator routing and
+    sub-agent content lookup, before the sub-agent is dispatched) surfaces the
+    drift at the first QR phase lookup instead.
+
+    The content import is function-local: phases.py stays import-clean (content.py
+    imports phases.py, so a module-level import here would be circular), and a
+    one-shot flag keeps repeat calls cheap. raise, not assert, so the guard
+    survives `python -O`.
+    """
+    global _registries_validated
+    if _registries_validated:
+        return
+    from skills.planner.quality_reviewer.prompts.content import DECOMPOSE_CONTENT, VERIFIERS
+
+    if not (set(DECOMPOSE_CONTENT) == set(VERIFIERS) == set(QR_PHASES)):
+        raise RuntimeError(
+            "QR phase registries out of sync: "
+            f"DECOMPOSE_CONTENT={sorted(DECOMPOSE_CONTENT)}, "
+            f"VERIFIERS={sorted(VERIFIERS)}, QR_PHASES={sorted(QR_PHASES)}"
+        )
+    _registries_validated = True
+
+
 def get_phase_config(phase: str) -> dict:
     """Single entry point for phase configuration.
 
@@ -85,6 +119,7 @@ def get_phase_config(phase: str) -> dict:
     Raises:
         ValueError: If phase is unknown
     """
+    validate_phase_registries()
     if phase not in QR_PHASES:
         valid = ", ".join(sorted(QR_PHASES.keys()))
         raise ValueError(f"Unknown QR phase: {phase}. Valid phases: {valid}")

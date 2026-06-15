@@ -107,7 +107,10 @@ def batch(methods: dict, requests: list[dict], ctx) -> list[dict]:
     make the batch atomic the target state file is snapshotted up front and
     restored on the first failure, which also stops processing -- the response
     still lists every request's outcome, with the failing entry flagged
-    rolled_back so the caller knows nothing was persisted.
+    rolled_back so the caller knows nothing was persisted. Requests after the
+    failure are not attempted; each still gets an entry flagged skipped +
+    rolled_back, so the response stays positionally aligned with requests
+    (len(responses) == len(requests)).
 
     Scope: all-or-nothing covers exactly ctx.state_file() (plan.json or
     qr-{phase}.json); a command that mutates any other file is not rolled back.
@@ -139,7 +142,7 @@ def batch(methods: dict, requests: list[dict], ctx) -> list[dict]:
         snapshot = _snapshot_state(ctx)
 
         results = []
-        for req in requests:
+        for i, req in enumerate(requests):
             req_id = req.get("id")
             method = req.get("method", "")
             params = req.get("params", {})
@@ -155,6 +158,22 @@ def batch(methods: dict, requests: list[dict], ctx) -> list[dict]:
                 results.append(
                     {"id": req_id, "error": {"code": -32000, "message": str(e), "rolled_back": True}}
                 )
+                # The tail never ran or persisted; still emit an entry per
+                # request so the response lists EVERY outcome (positional
+                # mapping / len invariant the docstring promises). skipped
+                # distinguishes "not attempted" from "lost".
+                for skipped in requests[i + 1:]:
+                    results.append(
+                        {
+                            "id": skipped.get("id"),
+                            "error": {
+                                "code": -32000,
+                                "message": "skipped: batch rolled back due to an earlier failure",
+                                "rolled_back": True,
+                                "skipped": True,
+                            },
+                        }
+                    )
                 break
     return results
 

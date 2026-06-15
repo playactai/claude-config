@@ -5,7 +5,8 @@ Both the live CLI (plan.py, ``Command`` classes) and the batch-RPC library
 over plan.json and apply the same path/toggle guards before persisting. This
 module holds the pieces that were hand-copied across them -- and drifted, so a
 guard fixed on one path stayed broken on the other -- the relative-path guard,
-the validate-then-write core, and the documentation-only toggle. Keeping the one
+the wave doc-only guard, the validate-then-write core, and the
+documentation-only toggle. Keeping the one
 copy here is what stops the two entry points diverging again. Each caller keeps
 its own failure mode (plan.py's error_exit vs plan_commands' raise) by catching
 the ValueError validate_relpath raises, which is why the guard signals via
@@ -63,6 +64,24 @@ def parse_csv(value: str | None) -> list[str]:
     if not value:
         return []
     return [v.strip() for v in value.split(",") if v.strip()]
+
+
+def reject_doc_only_in_wave(plan: Plan, milestone_ids: list[str]) -> None:
+    """Reject adding documentation-only milestones to an execution wave.
+
+    Doc-only milestones route to exec-docs, never the executor's parallel waves.
+    Shared by plan.py's SetWaveCommand and plan_commands' set_wave so the live CLI
+    and the batch/RPC twin enforce it identically (the executor's
+    validate_structural_executability rejects it later, but failing at write time
+    is the point). Pure: raises ValueError so each caller wraps it in its own
+    failure mode (error_exit vs re-raise), matching validate_relpath.
+    """
+    doc_only_ids = {ms.id for ms in plan.milestones if ms.is_documentation_only}
+    bad = [mid for mid in milestone_ids if mid in doc_only_ids]
+    if bad:
+        raise ValueError(
+            f"documentation-only milestone(s) {bad} cannot be added to a wave (they route to exec-docs)"
+        )
 
 
 def write_plan(plan_path: Path, plan: Plan) -> None:

@@ -11,7 +11,13 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal, cast
 
-from .plan_common import apply_documentation_only_toggle, parse_csv, validate_relpath, write_plan
+from .plan_common import (
+    apply_documentation_only_toggle,
+    parse_csv,
+    reject_doc_only_in_wave,
+    validate_relpath,
+    write_plan,
+)
 
 if TYPE_CHECKING:
     from ..shared.schema import Plan
@@ -455,16 +461,10 @@ def set_wave(
 
     milestones_list = parse_csv(milestones)
 
-    # Doc-only milestones route to exec-docs and must never enter a wave. Mirror
-    # SetWaveCommand.run's write-time guard here so the batch/RPC path (the one
-    # the architect drives) cannot persist an invalid wave; the executor's
-    # validate_structural_executability rejects it later, but fail at write time.
-    doc_only_ids = {m.id for m in plan.milestones if m.is_documentation_only}
-    bad = [mid for mid in milestones_list if mid in doc_only_ids]
-    if bad:
-        raise ValueError(
-            f"documentation-only milestone(s) {bad} cannot be added to a wave (they route to exec-docs)"
-        )
+    # Doc-only milestones route to exec-docs and must never enter a wave; the
+    # executor's validate_structural_executability rejects it later, but fail at
+    # write time. Shared with SetWaveCommand.run via plan_common.
+    reject_doc_only_in_wave(plan, milestones_list)
 
     if id:
         # UPDATE: replace the wave's milestone list (upsert).

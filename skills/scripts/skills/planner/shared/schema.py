@@ -10,7 +10,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, ValidationInfo, field_validator
 
 from skills.planner.shared.qr.phases import get_all_phases
 
@@ -486,11 +486,37 @@ if True:
             """
             return canonicalize_severity(v) or "SHOULD"
 
+        @field_validator("id", "scope", mode="after")
+        @classmethod
+        def _reject_control_chars(cls, v: str, info: ValidationInfo) -> str:
+            """Reject C0 control characters in identity/scope fields.
+
+            A decompose-authored newline here forges a line at column 0 of a
+            PLAINTEXT agent prompt. id reaches the parallel QR-verify dispatch
+            (build_qr_verify_dispatch -> item_ids / qr_item_flags), where a forged
+            '--- Agent N ---' line hijacks the verify fan-out; scope reaches the
+            single-agent decompose/fix item listings (e.g. decompose's
+            '{id} [scope={scope}]'), where a newline forges a fake item row. id is
+            also a lookup key (find_item / --qr-item), so it must be rejected, not
+            silently rewritten. validate_state runs this at step>1 entry, before
+            any prompt renders, so a malformed item fails the run closed.
+            """
+            if any(ord(c) < 0x20 or ord(c) == 0x7F for c in v):
+                raise ValueError(
+                    f"{info.field_name} must be single-line plain text "
+                    "(contains a control character)"
+                )
+            return v
+
     class QRFile(BaseModel):
         """qr-{phase}.json file structure."""
 
         phase: str
         iteration: int = 1
+        # Fingerprint of the recorded FAIL set at the last RETRY iteration bump.
+        # Idempotency key so a transient verify re-render doesn't double-count one
+        # fix cycle (see prepare_verify_items / increment_qr_iteration).
+        iteration_sig: str | None = None
         items: list[QRItem] = Field(default_factory=list)
 
 

@@ -11,6 +11,7 @@ Provides centralized access to qr-<phase>.json state files:
 
 import contextlib
 import fcntl
+import hashlib
 import json
 import math
 import threading
@@ -421,7 +422,28 @@ def qr_file_exists(state_dir: str, phase: str) -> bool:
     return path.exists()
 
 
-def increment_qr_iteration(state_dir: str, phase: str) -> int | None:
+def _fail_signature(items: list[dict]) -> str | None:
+    """Stable fingerprint of the recorded FAIL set (id + version), or None if empty.
+
+    The idempotency key for the RETRY iteration bump. update-item bumps an item's
+    `version` on every write (and FAIL->FAIL is a legal re-verify), so a genuine
+    verify->fix->verify cycle always changes the fingerprint, while a transient
+    verify-step re-render with the same on-disk FAILs recomputes the same value and
+    the bump is skipped -- one fix cycle counts once. Returns None when nothing is
+    recorded as FAIL, so the bump never fires without a recorded blocking FAIL
+    (the gate's documented invariant).
+    """
+    fails = sorted(
+        (it.get("id", ""), it.get("version", 1))
+        for it in items
+        if it.get("status") == "FAIL"
+    )
+    if not fails:
+        return None
+    return hashlib.sha256(json.dumps(fails).encode("utf-8")).hexdigest()
+
+
+def increment_qr_iteration(state_dir: str, phase: str, sig: str) -> int | None:
     """Increment iteration counter in qr-{phase}.json.
 
     WHY verify step owns iteration increment:
@@ -447,6 +469,9 @@ def increment_qr_iteration(state_dir: str, phase: str) -> int | None:
     Args:
         state_dir: Path to state directory
         phase: QR phase name
+        sig: Fingerprint of the FAIL set this bump is for (_fail_signature),
+            persisted as iteration_sig so a re-render with the same FAILs is a
+            no-op (the idempotency guard lives in prepare_verify_items).
 
     Returns:
         New iteration value, or None if file doesn't exist
@@ -460,6 +485,7 @@ def increment_qr_iteration(state_dir: str, phase: str) -> int | None:
     qr_state = json.loads(path.read_text(encoding="utf-8"))
     iteration = (qr_state.get("iteration") or 1) + 1
     qr_state["iteration"] = iteration
+    qr_state["iteration_sig"] = sig
     atomic_write_text(path, json.dumps(qr_state, indent=2))
     return iteration
 
@@ -484,9 +510,17 @@ def prepare_verify_items(
         return None, 1
     iteration = qr_state.get("iteration") or 1
     if qr.state == LoopState.RETRY:
-        new_iter = increment_qr_iteration(state_dir, phase)
-        if new_iter is not None:
-            iteration = new_iter
+        # Idempotent bump: advance only when the recorded FAIL set changed since
+        # the last bump (a genuine new fix cycle). A transient verify re-render
+        # with the same FAILs recomputes the same signature and skips -- one fix
+        # cycle counts once. sig is None when nothing is recorded FAIL, so the bump
+        # never fires without one (gate invariant: "iteration advances only on a
+        # recorded blocking FAIL").
+        sig = _fail_signature(qr_state.get("items", []))
+        if sig is not None and qr_state.get("iteration_sig") != sig:
+            new_iter = increment_qr_iteration(state_dir, phase, sig)
+            if new_iter is not None:
+                iteration = new_iter
     return query_items(qr_state, by_status("TODO", "FAIL"), by_blocking_severity(iteration)), iteration
 
 

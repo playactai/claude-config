@@ -82,16 +82,21 @@ class VerifyBase(ABC):
     def _temporal_contamination_guidance(self) -> list[str]:
         """Shared TEMPORAL CONTAMINATION block.
 
-        Keyword set is canonical — keep in sync with conventions/temporal.md
-        and shared/temporal_detection.py (CHANGE_RELATIVE / BASELINE_REFERENCE).
+        Generated from the canonical TEMPORAL_DETECTION_QUESTIONS
+        (shared/temporal_detection.py) so it always lists all five categories and
+        their signals/actions, and cannot drift from the source of truth.
         """
-        return [
+        from skills.planner.shared.temporal_detection import TEMPORAL_DETECTION_QUESTIONS
+
+        lines = [
             "TEMPORAL CONTAMINATION CHECK:",
             "  Scan comments in modified files for:",
-            "  - CHANGE_RELATIVE: 'Added', 'Replaced', 'Changed', 'Now uses'",
-            "  - BASELINE_REFERENCE: 'instead of', 'previously', 'replaces'",
-            "",
         ]
+        for q in TEMPORAL_DETECTION_QUESTIONS:
+            signals = ", ".join(f"'{s}'" for s in q.signals)
+            lines.append(f"  - {q.id}: {signals} -> {q.action}")
+        lines.append("")
+        return lines
 
     def _intent_marker_guidance(self, include_examples: bool = True) -> list[str]:
         """Shared INTENT MARKER VALIDATION block. See conventions/intent-markers.md."""

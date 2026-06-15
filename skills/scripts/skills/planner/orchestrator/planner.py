@@ -37,7 +37,6 @@ from skills.lib.workflow.types import AgentRole
 from skills.planner.shared.builders import (
     THINKING_EFFICIENCY,
     build_qr_verify_dispatch,
-    format_qr_verify_forbidden,
     shell_quote,
 )
 from skills.planner.shared.constraints import (
@@ -418,28 +417,13 @@ def qr_verify_step(title, phase):
         config = get_phase_config(phase)
         verify_script = config["verify_script"]
 
-        # Re-bin items into balanced, capped parallel groups and build the dispatch
-        # (shared with executor.py via build_qr_verify_dispatch -- one owner for the
-        # cap scheme, vg-NNN labels, shell-quoting, and the pinned Start: command).
-        dispatch_text, group_count = build_qr_verify_dispatch(verify_script, phase, state_dir, items)
-
-        action_children = [
-            ORCHESTRATOR_CONSTRAINT_EXTENDED,
-            "",
-            "=== PHASE 1: DISPATCH (delegate to sub-agents) ===",
-            "",
-            f"VERIFY: {len(items)} items",
-            "",
-            dispatch_text,
-            "",
-            "=== PHASE 2: AGGREGATE (your action after all agents return) ===",
-            "",
-            f"After ALL {group_count} agents return, tally results mechanically:",
-            "  ALL agents returned PASS  ->  invoke next step with --qr-status pass",
-            "  ANY agent returned FAIL   ->  invoke next step with --qr-status fail",
-            "",
-            format_qr_verify_forbidden(),
-        ]
+        # Build the full verify action block (dispatch + PHASE 1/PHASE 2 aggregation
+        # prose) -- shared with executor.py via build_qr_verify_dispatch, which owns
+        # the cap scheme, vg-NNN labels, shell-quoting, the pinned Start: command, and
+        # the aggregation prose. Only the constraint differs between orchestrators.
+        action_children = build_qr_verify_dispatch(
+            verify_script, phase, state_dir, items, ORCHESTRATOR_CONSTRAINT_EXTENDED
+        )
 
         next_step = step + 1
         base_cmd = f"uv run python -m {MODULE_PATH} --step {next_step} --state-dir {shell_quote(state_dir)}"

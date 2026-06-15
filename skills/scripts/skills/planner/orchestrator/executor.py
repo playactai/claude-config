@@ -33,7 +33,6 @@ from skills.lib.workflow.prompts.step import format_step
 from skills.planner.shared.builders import (
     THINKING_EFFICIENCY,
     build_qr_verify_dispatch,
-    format_qr_verify_forbidden,
     shell_quote,
 )
 from skills.planner.shared.constants import EXECUTOR_GATE_CONFIG, EXECUTOR_STEP_PHASES
@@ -304,28 +303,13 @@ def format_qr_verify(step: int, phase: str, state_dir: str, qr: QRState) -> str:
         next_cmd = f"uv run python -m {MODULE_PATH} --step {next_step} --state-dir {shell_quote(state_dir)} --qr-status pass"
         return format_step(body, next_cmd=next_cmd, title=title)
 
-    # Re-bin items into balanced, capped parallel groups and build the dispatch
-    # (shared with planner.py via build_qr_verify_dispatch -- one owner for the cap
-    # scheme, vg-NNN labels, shell-quoting, and the pinned Start: command).
-    dispatch_text, group_count = build_qr_verify_dispatch(verify_script, phase, state_dir, items)
-
-    actions = [
-        ORCHESTRATOR_CONSTRAINT,
-        "",
-        "=== PHASE 1: DISPATCH (delegate to sub-agents) ===",
-        "",
-        f"VERIFY: {len(items)} items",
-        "",
-        dispatch_text,
-        "",
-        "=== PHASE 2: AGGREGATE (your action after all agents return) ===",
-        "",
-        f"After ALL {group_count} agents return, tally results mechanically:",
-        "  ALL agents returned PASS  ->  invoke next step with --qr-status pass",
-        "  ANY agent returned FAIL   ->  invoke next step with --qr-status fail",
-        "",
-        format_qr_verify_forbidden(),
-    ]
+    # Build the full verify action block (dispatch + PHASE 1/PHASE 2 aggregation
+    # prose) -- shared with planner.py via build_qr_verify_dispatch, which owns the
+    # cap scheme, vg-NNN labels, shell-quoting, the pinned Start: command, and the
+    # aggregation prose. Only the constraint differs between orchestrators.
+    actions = build_qr_verify_dispatch(
+        verify_script, phase, state_dir, items, ORCHESTRATOR_CONSTRAINT
+    )
 
     body = "\n".join(actions)
     next_step = step + 1

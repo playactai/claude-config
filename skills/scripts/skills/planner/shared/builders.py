@@ -83,20 +83,22 @@ def format_gate_result(passed: bool) -> str:
 
 
 def build_qr_verify_dispatch(
-    verify_script: str, phase: str, state_dir: str, items: list[dict]
-) -> tuple[str, int]:
-    """Build the parallel QR-verify template_dispatch shared by planner + executor.
+    verify_script: str, phase: str, state_dir: str, items: list[dict], constraint: str
+) -> list[str]:
+    """Build the full QR-verify action block shared by planner + executor.
 
-    Single owner of the verify fan-out shape: the balanced-group cap scheme, the
-    display-only vg-NNN labels, the injected --phase, shell-quoting of the
+    Single owner of BOTH the verify fan-out shape (the balanced-group cap scheme,
+    the display-only vg-NNN labels, the injected --phase, shell-quoting of the
     --qr-item flags and the --state-dir, the checks_summary truncation, and the
-    pinned "Start:" command. Returns (dispatch_text, group_count); each
-    orchestrator appends its own PHASE 1/PHASE 2 aggregation prose (which
-    legitimately differ).
+    pinned "Start:" command) AND the PHASE 1/PHASE 2 aggregation prose. Returns the
+    action lines; the only per-orchestrator difference is `constraint`
+    (ORCHESTRATOR_CONSTRAINT vs _EXTENDED), passed in. The caller wraps the list its
+    own way (planner returns it as `actions`; executor "\\n".join()s it).
 
-    Extracted because the two inlined copies had already drifted -- the planner
-    copy interpolated item ids and state_dir unquoted while the executor copy
-    shlex-quoted both, an injection divergence in commands the agent may copy/run.
+    Extracted because the two inlined copies had already drifted -- the planner copy
+    interpolated item ids and state_dir unquoted while the executor copy shlex-quoted
+    both, an injection divergence in commands the agent may copy/run; the PHASE
+    1/PHASE 2 prose was byte-duplicated across the two call sites too.
     """
     from skills.lib.workflow.prompts import pin_cwd, template_dispatch
     from skills.planner.shared.qr.constants import VERIFY_MAX_PARALLEL, VERIFY_TARGET_PER_GROUP
@@ -111,7 +113,14 @@ def build_qr_verify_dispatch(
             "item_ids": ",".join(i["id"] for i in group_items),
             "qr_item_flags": " ".join(f"--qr-item {shlex.quote(i['id'])}" for i in group_items),
             "item_count": str(len(group_items)),
-            "checks_summary": "; ".join(i.get("check", "")[:40] for i in group_items[:3]),
+            # checks_summary is decompose-authored (untrusted) free text rendered
+            # into a PLAINTEXT dispatch prompt; collapse whitespace so a multi-line
+            # check can't forge the "--- Agent N ---" / "Command:" delimiters. It is
+            # a display-only hint (the sub-agent fetches real checks via --qr-item),
+            # so it is NOT XML-escaped -- the dispatch is plaintext, not XML.
+            "checks_summary": "; ".join(
+                " ".join(i.get("check", "").split())[:40] for i in group_items[:3]
+            ),
         }
         for idx, group_items in enumerate(balanced, 1)
     ]
@@ -135,4 +144,21 @@ def build_qr_verify_dispatch(
         command=base_cmd,
         instruction=f"Verify {len(balanced)} groups ({len(items)} items) in parallel.",
     )
-    return dispatch_text, len(balanced)
+    group_count = len(balanced)
+    return [
+        constraint,
+        "",
+        "=== PHASE 1: DISPATCH (delegate to sub-agents) ===",
+        "",
+        f"VERIFY: {len(items)} items",
+        "",
+        dispatch_text,
+        "",
+        "=== PHASE 2: AGGREGATE (your action after all agents return) ===",
+        "",
+        f"After ALL {group_count} agents return, tally results mechanically:",
+        "  ALL agents returned PASS  ->  invoke next step with --qr-status pass",
+        "  ANY agent returned FAIL   ->  invoke next step with --qr-status fail",
+        "",
+        format_qr_verify_forbidden(),
+    ]

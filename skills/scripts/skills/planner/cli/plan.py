@@ -35,7 +35,13 @@ from . import plan_commands
 from .dispatch import batch as batch_dispatch
 from .dispatch import discover_methods, list_methods
 from .output import EntityResult, VersionMismatchError, exit_with_version_error, print_entity_result
-from .plan_common import apply_documentation_only_toggle, parse_csv, validate_relpath, write_plan
+from .plan_common import (
+    apply_documentation_only_toggle,
+    parse_csv,
+    reject_doc_only_in_wave,
+    validate_relpath,
+    write_plan,
+)
 
 PYDANTIC_AVAILABLE = True
 
@@ -735,12 +741,10 @@ class SetWaveCommand(Command):
         # ever touching disk.
         milestones = parse_csv(args.milestones)
 
-        doc_only_ids = {ms.id for ms in plan.milestones if ms.is_documentation_only}
-        bad = [mid for mid in milestones if mid in doc_only_ids]
-        if bad:
-            error_exit(
-                f"documentation-only milestone(s) {bad} cannot be added to a wave (they route to exec-docs)"
-            )
+        try:
+            reject_doc_only_in_wave(plan, milestones)
+        except ValueError as e:
+            error_exit(str(e))
 
         if args.id:
             # UPDATE path: replace the wave's milestone list (upsert).

@@ -16,7 +16,6 @@ from skills.planner.shared.builders import (
     shell_quote,
 )
 from skills.planner.shared.qr.constants import QR_ITERATION_LIMIT
-from skills.planner.shared.qr.phases import get_phase_config
 from skills.planner.shared.qr.types import AgentRole, QRState, QRStatus
 from skills.planner.shared.qr.utils import (
     _blocking_items_from_state,
@@ -90,7 +89,7 @@ def _has_blocking_todo_from_state(qr_state: dict | None) -> bool:
     """True when qr_state still has an unverified item that blocks now.
 
     Delegates to _blocking_items_from_state (the single read/filter pipeline
-    shared with has_qr_failures) with status="TODO", so the iteration-default and
+    shared with has_qr_failures_from_state) with status="TODO", so the iteration-default and
     severity logic lives in one place. Takes the pre-loaded qr_state dict
     build_gate_output already read.
     """
@@ -241,7 +240,7 @@ def build_gate_output(
     # Severity-aware on-disk state is the primary source of truth. The
     # agent-supplied qr.status (--qr-status) is a severity-blind PASS/FAIL
     # tally; past the de-escalation threshold it disagrees with the work step
-    # and router (which read has_qr_failures), so routing on it made the gate
+    # and router (which read the same severity-aware blocking-FAIL state), so routing on it made the gate
     # dispatch a fixer while the work step ran first-time EXECUTE with no fix
     # context. Derive the verdict from the same predicate everyone else uses.
     # qr_state is loaded ONCE per gate by the calling frame (executor.format_output
@@ -266,7 +265,7 @@ def build_gate_output(
         else:
             passed = not has_qr_failures_from_state(qr_state)
             iteration = get_qr_iteration_from_state(qr_state)
-            # has_qr_failures reads False in two distinct situations: failures have
+            # has_qr_failures_from_state reads False in two distinct situations: failures have
             # de-escalated below the blocking threshold (a real pass), OR nothing is
             # recorded yet -- a verifier returned FAIL without persisting its item, or
             # items are still TODO. An explicit --qr-status fail must not be silently
@@ -279,7 +278,7 @@ def build_gate_output(
             ):
                 passed = False
             # A blocking item still at TODO is unverified blocking work, not a pass --
-            # has_qr_failures counts only blocking FAIL, so it misses a blocking MUST whose
+            # has_qr_failures_from_state counts only blocking FAIL, so it misses a blocking MUST whose
             # verifier returned FAIL/crashed before persisting. status-blind so it closes
             # both the --qr-status fail de-escalation veto above and the --qr-status pass
             # LLM tally. The fail routes to the work step, where re-verify re-dispatches the
@@ -319,8 +318,8 @@ def build_gate_output(
     # no wave, a doc-only milestone left in a wave -- routes back to the fixer
     # instead of finalizing an unexecutable plan. Even --accept-findings cannot
     # waive this: the override is about QR finding severity, not structural validity.
-    # Gated on completeness_gate in the phase config so it only runs for plan-design.
-    if passed and phase and get_phase_config(phase).get("completeness_gate", False):
+    # validate_completeness self-gates by phase (single source of truth, no separate flag).
+    if passed and phase:
         from skills.planner.shared.schema import plan_completeness_errors
 
         completeness_errors = plan_completeness_errors(state_dir, phase, plan=plan)

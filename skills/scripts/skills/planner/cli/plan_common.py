@@ -102,8 +102,8 @@ def write_plan(plan_path: Path, plan: Plan) -> None:
 
 def apply_documentation_only_toggle(
     plan: Plan, ms: Milestone, documentation_only: bool
-) -> tuple[int, int, str | None]:
-    """Apply a documentation_only flip to ms; return (cleared_intents, dropped_from_waves, warning).
+) -> tuple[int, int, str | None, list[str]]:
+    """Apply a documentation_only flip to ms; return (cleared_intents, dropped_from_waves, warning, missing).
 
     The complete toggle both CLI mirrors must run identically. The forward flip
     (code -> doc-only) clears the milestone's code_intents and drops it from
@@ -113,6 +113,8 @@ def apply_documentation_only_toggle(
     wave the forward flip stripped -- so it returns a non-fatal warning naming
     what the now-code milestone is still missing (code_intents and/or a wave),
     which validate_completeness will reject until the plan is re-authored.
+    The structured `missing` list holds machine-actionable tokens (\"code_intents\",
+    \"wave\") alongside the human-readable warning.
 
     Callers keep the `documentation_only is not None` guard and own how they
     surface the warning (RPC result dict vs CLI stderr).
@@ -120,6 +122,7 @@ def apply_documentation_only_toggle(
     cleared_intents = 0
     dropped_from_waves = 0
     toggle_off_warning = None
+    missing: list[str] = []
     ms.is_documentation_only = documentation_only
     if documentation_only and ms.code_intents:
         cleared_intents = len(ms.code_intents)
@@ -140,15 +143,17 @@ def apply_documentation_only_toggle(
     # (mirrors set_intent pointing users at --no-documentation-only).
     if documentation_only is False:
         in_wave = any(ms.id in w.milestones for w in plan.waves)
-        missing = []
+        missing_human = []
         if not ms.code_intents:
-            missing.append(f"code_intents (set-intent --milestone {ms.id} ...)")
+            missing.append("code_intents")
+            missing_human.append(f"code_intents (set-intent --milestone {ms.id} ...)")
         if not in_wave:
-            missing.append("a wave assignment")
-        if missing:
+            missing.append("wave")
+            missing_human.append("a wave assignment")
+        if missing_human:
             toggle_off_warning = (
                 f"milestone {ms.id} is now a code milestone but is missing "
-                f"{' and '.join(missing)}; validate_completeness will reject "
+                f"{' and '.join(missing_human)}; validate_completeness will reject "
                 f"the plan until re-authored."
             )
-    return cleared_intents, dropped_from_waves, toggle_off_warning
+    return cleared_intents, dropped_from_waves, toggle_off_warning, missing

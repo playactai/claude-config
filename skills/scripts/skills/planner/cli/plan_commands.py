@@ -215,8 +215,9 @@ def set_milestone(
         cleared_intents = 0
         dropped_from_waves = 0
         toggle_off_warning = None
+        toggle_missing: list[str] = []
         if documentation_only is not None:
-            cleared_intents, dropped_from_waves, toggle_off_warning = (
+            cleared_intents, dropped_from_waves, toggle_off_warning, toggle_missing = (
                 apply_documentation_only_toggle(plan, ms, documentation_only)
             )
 
@@ -229,6 +230,8 @@ def set_milestone(
             result["dropped_from_waves"] = dropped_from_waves
         if toggle_off_warning:
             result["warning"] = toggle_off_warning
+        if toggle_missing:
+            result["missing"] = toggle_missing
         return result
     else:
         # CREATE

@@ -491,7 +491,7 @@ class TestGateSourceOfTruth:
         # Reviewer P1: a recorded but de-escalated SHOULD FAIL is NOT sufficient to
         # upgrade --qr-status fail to a pass while a BLOCKING item is still unverified.
         # iteration 4 blocks only MUST: the SHOULD FAIL de-escalated, yet the MUST item
-        # is TODO (its verifier returned FAIL before persisting). has_qr_failures reads
+        # is TODO (its verifier returned FAIL before persisting). has_qr_failures_from_state reads
         # False (no blocking FAIL) and a FAIL is on disk, so the severity-blind veto
         # wrongly passed -- the blocking TODO must keep the gate failing.
         _write_qr(
@@ -512,7 +512,7 @@ class TestGateSourceOfTruth:
         # Same root cause via the other input: the aggregator is the LLM, which emits
         # --qr-status pass when no agent returned FAIL. A verifier that crashed before
         # persisting leaves its MUST at TODO with no FAIL recorded, so the LLM tallies
-        # pass. has_qr_failures reads False (no blocking FAIL) and the explicit-fail
+        # pass. has_qr_failures_from_state reads False (no blocking FAIL) and the explicit-fail
         # veto never runs (status is PASS) -- the unverified blocking MUST must still
         # fail the gate.
         _write_qr(

@@ -30,8 +30,6 @@ from .resources import (
 from .routing import (
     WORK_PHASES,
     detect_qr_state,
-    get_all_work_phases,
-    get_work_phase_config,
     route_work_phase,
 )
 
@@ -41,11 +39,9 @@ __all__ = [
     # Domain types (planner-specific)
     "GuidanceResult",
     "detect_qr_state",
-    "get_all_work_phases",
     "get_exhaustiveness_prompt",
     "get_mode_script_path",
     # Resources
     "get_resource",
-    "get_work_phase_config",
     "route_work_phase",
 ]

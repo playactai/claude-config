@@ -34,7 +34,7 @@ def qr_write_lock(state_dir: str | Path, phase: str) -> Iterator[None]:
     writer that won the race (roughly half of concurrent writes are lost
     under load). Locking a sentinel file that is never renamed gives true
     exclusion, while the atomic rename of the data file still gives lock-free
-    readers (summary/list/get and the orchestrator's has_qr_failures()) an
+    readers (summary/list/get and the router's detect_qr_state()) an
     all-or-nothing view.
 
     Hold this lock across the full read -> mutate -> atomic-write cycle.
@@ -210,20 +210,13 @@ def _iteration_of(qr_state: dict | None) -> int:
     return _coerce_iteration(qr_state.get("iteration")) if qr_state else 1
 
 
-def _blocking_items(state_dir: str, phase: str, *statuses: str) -> list[dict]:
+def _blocking_items_from_state(qr_state: dict | None, *statuses: str) -> list[dict]:
     """Return items at any of *statuses whose severity blocks at the current iteration.
 
-    Single load/query pipeline behind has_qr_failures (statuses="FAIL"), so a
-    change to iteration default or severity handling applies everywhere it routes.
-    The pre-loaded twin _blocking_items_from_state serves the gate's TODO veto
-    (_has_blocking_todo_from_state). Named with a leading underscore because the
-    higher-level predicate has_qr_failures is the public entry point.
+    Operates on a pre-loaded qr_state dict. Backs has_qr_failures_from_state
+    (statuses="FAIL") and the gate's TODO veto (_has_blocking_todo_from_state), so a
+    change to iteration default or severity handling applies to both.
     """
-    return _blocking_items_from_state(load_qr_state(state_dir, phase), *statuses)
-
-
-def _blocking_items_from_state(qr_state: dict | None, *statuses: str) -> list[dict]:
-    """Same as _blocking_items but accepts a pre-loaded qr_state dict."""
     if not qr_state:
         return []
     iteration = _iteration_of(qr_state)
@@ -378,29 +371,15 @@ def get_qr_iteration_from_state(qr_state: dict | None) -> int:
     return _iteration_of(qr_state)
 
 
-def has_qr_failures(state_dir: str, phase: str) -> bool:
-    """Check if QR state has blocking failures at current iteration.
-
-    Severity-aware via composable predicates: only FAIL items whose
-    severity is in the blocking set for the current iteration count
-    as failures. A phase with only below-threshold FAIL items returns
-    False (no blocking failures), which means:
-    - Work step routers do not enter fix mode
-    - Gate step receives --qr-status pass
-    - Below-threshold items remain FAIL in state (no auto-pass)
-
-    Args:
-        state_dir: Path to state directory
-        phase: QR phase name (plan-design, impl-code, impl-docs)
-
-    Returns:
-        True if qr-{phase}.json has FAIL items at blocking severity
-    """
-    return len(_blocking_items(state_dir, phase, "FAIL")) > 0
-
-
 def has_qr_failures_from_state(qr_state: dict) -> bool:
-    """Same as has_qr_failures but accepts a pre-loaded qr_state dict."""
+    """True if the pre-loaded qr_state has FAIL items at blocking severity for the
+    current iteration.
+
+    Severity-aware: only FAIL items whose severity is in the blocking set for the
+    current iteration count. A phase with only below-threshold FAIL items returns
+    False -- work-step routers do not enter fix mode, the gate receives a pass, and
+    the below-threshold items remain FAIL in state (no auto-pass).
+    """
     return len(_blocking_items_from_state(qr_state, "FAIL")) > 0
 
 
@@ -412,8 +391,8 @@ def qr_file_exists(state_dir: str, phase: str) -> bool:
     verify step validates content for pass/fail status. Conflating these
     checks would couple decomposition to verification state.
 
-    WHY distinct from has_qr_failures():
-    has_qr_failures() checks item status (pass/fail); this checks file
+    WHY distinct from has_qr_failures_from_state():
+    has_qr_failures_from_state() checks item status (pass/fail); this checks file
     existence. Decompose needs existence signal; route needs status signal.
 
     Args:

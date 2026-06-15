@@ -338,7 +338,7 @@ class SetMilestoneCommand(Command):
             removed_from_waves = 0
             toggle_warning = None
             if args.documentation_only is not None:
-                cleared_intents, removed_from_waves, toggle_warning = (
+                cleared_intents, removed_from_waves, toggle_warning, _ = (
                     apply_documentation_only_toggle(plan, ms, args.documentation_only)
                 )
 

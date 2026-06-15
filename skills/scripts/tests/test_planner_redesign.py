@@ -531,8 +531,102 @@ def test_accept_findings_yields_terminal_pass_at_ceiling(tmp_path):
     _write_ceiling_qr(tmp_path)
     result = format_output(6, "pass", str(tmp_path), accept_findings=True)
     assert isinstance(result, GateResult)
-    assert result.terminal_pass is True  # main() now renders plan.md + saves to docs/plans/
+    assert result.terminal_pass is True  # disk write covered by test_main_terminal_pass_saves_to_docs_plans
     assert "PLAN APPROVED" in result.output
+
+
+# --- Terminal-pass FS write: _save_plan_to_docs writes plan.md into docs/plans/ ---
+def _write_terminal_plan_json(state_dir, problem="p", approach="a"):
+    (state_dir / "plan.json").write_text(
+        json.dumps(
+            {
+                "overview": {"problem": problem, "approach": approach},
+                "milestones": [
+                    {"id": "M-001", "number": 1, "name": "m", "files": ["a.py"],
+                     "code_intents": [{"id": "CI-1", "file": "a.py", "behavior": "do x"}]}
+                ],
+                "waves": [{"id": "W-001", "milestones": ["M-001"]}],
+            }
+        )
+    )
+
+
+def test_save_plan_to_docs_writes_dated_slug_file(tmp_path, monkeypatch):
+    from datetime import datetime
+
+    from skills.planner.orchestrator import planner as planner_orch
+    state, repo = tmp_path / "state", tmp_path / "repo"
+    state.mkdir()
+    repo.mkdir()
+    _write_terminal_plan_json(state, problem="Fix the login bug")
+    (state / "plan.md").write_text("# Plan body\n", encoding="utf-8")
+    monkeypatch.setattr(planner_orch, "_find_repo_root", lambda: repo)
+    out = planner_orch._save_plan_to_docs(str(state))
+    expected = repo / "docs" / "plans" / f"{datetime.now().strftime('%Y-%m-%d')}-fix-the-login-bug.md"
+    assert out == expected and expected.exists()
+    assert expected.read_text(encoding="utf-8") == "# Plan body\n"
+
+
+def test_save_plan_to_docs_appends_collision_suffix(tmp_path, monkeypatch):
+    from datetime import datetime
+
+    from skills.planner.orchestrator import planner as planner_orch
+    state, repo = tmp_path / "state", tmp_path / "repo"
+    state.mkdir()
+    repo.mkdir()
+    _write_terminal_plan_json(state, problem="Fix the login bug")
+    (state / "plan.md").write_text("# v2\n", encoding="utf-8")
+    date_prefix = datetime.now().strftime("%Y-%m-%d")
+    docs_plans = repo / "docs" / "plans"
+    docs_plans.mkdir(parents=True)
+    (docs_plans / f"{date_prefix}-fix-the-login-bug.md").write_text("# v1\n", encoding="utf-8")
+    monkeypatch.setattr(planner_orch, "_find_repo_root", lambda: repo)
+    out = planner_orch._save_plan_to_docs(str(state))
+    assert out is not None
+    assert out == docs_plans / f"{date_prefix}-fix-the-login-bug-2.md"
+    assert out.read_text(encoding="utf-8") == "# v2\n"
+    assert (docs_plans / f"{date_prefix}-fix-the-login-bug.md").read_text(encoding="utf-8") == "# v1\n"
+
+
+def test_save_plan_to_docs_returns_none_when_plan_md_absent(tmp_path, monkeypatch, capsys):
+    from skills.planner.orchestrator import planner as planner_orch
+    state, repo = tmp_path / "state", tmp_path / "repo"
+    state.mkdir()
+    repo.mkdir()
+    _write_terminal_plan_json(state)
+    monkeypatch.setattr(planner_orch, "_find_repo_root", lambda: repo)
+    out = planner_orch._save_plan_to_docs(str(state))
+    assert out is None
+    assert "plan.md not found" in capsys.readouterr().err
+    assert not (repo / "docs").exists()
+
+
+def test_translate_plan_renders_markdown_into_state_dir(tmp_path):
+    from skills.planner.orchestrator import planner as planner_orch
+    state = tmp_path / "state"
+    state.mkdir()
+    _write_terminal_plan_json(state)
+    plan_md = planner_orch._translate_plan(str(state))
+    assert plan_md == str(state / "plan.md")
+    assert (state / "plan.md").read_text(encoding="utf-8").strip() != ""
+
+
+def test_main_terminal_pass_saves_to_docs_plans(tmp_path, monkeypatch, capsys):
+    import sys
+
+    from skills.planner.orchestrator import planner as planner_orch
+    state, repo = tmp_path / "state", tmp_path / "repo"
+    state.mkdir()
+    repo.mkdir()
+    _write_terminal_plan_json(state, problem="Add OAuth support")
+    write_qr(state, "plan-design", [])
+    monkeypatch.setattr(planner_orch, "_find_repo_root", lambda: repo)
+    monkeypatch.setattr(sys, "argv",
+        ["planner.py", "--step", "6", "--qr-status", "pass", "--state-dir", str(state)])
+    planner_orch.main()
+    out = capsys.readouterr().out
+    assert "PLAN APPROVED" in out and "Plan rendered to:" in out and "Plan saved to:" in out
+    assert len(list((repo / "docs" / "plans").glob("*-add-oauth-support.md"))) == 1
 
 
 # --- Executor validates the (LLM-authored) plan.json at step 2 ---

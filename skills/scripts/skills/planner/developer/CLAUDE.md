@@ -11,4 +11,4 @@ Developer sub-agent workflows: exec-phase implementation with a router + execute
 | `exec_implement_qr_fix.py`  | Targeted repair for impl-code QR failures              | Changing how post-impl QR fixes are dispatched                 |
 | `__init__.py`               | Package marker                                         | Never (empty module)                                           |
 
-Routers use `has_qr_failures()` from `planner/shared/qr/utils.py` to detect fix mode; no `--qr-fail` flag required.
+Routers call `route_work_phase()` from `planner/shared/routing.py` to detect fix mode from QR state; no `--qr-fail` flag required.

@@ -13,7 +13,7 @@ Selection based on QR state detection:
 - FAIL items present -> qr_fix
 """
 
-from skills.planner.shared.qr.utils import get_qr_iteration, has_qr_failures
+from skills.planner.shared.qr.utils import get_qr_iteration
 from skills.planner.shared.resources import STATE_DIR_ARG_REQUIRED
 from skills.planner.shared.routing import route_work_phase
 
@@ -49,21 +49,7 @@ def get_step_guidance(step: int, module_path: str | None = None, **kwargs) -> di
     if not state_dir:
         return {"error": "--state-dir required"}
 
-    # Check fix mode via file state inspection
-    if has_qr_failures(state_dir, PHASE_KEY):
-        iteration = get_qr_iteration(state_dir, PHASE_KEY)
-        target = "skills.planner.architect.plan_design_qr_fix"
-        return {
-            "title": "Plan Design - Routing to Fix Mode",
-            "actions": [
-                f"QR failures detected (iteration {iteration})",
-                "Dispatching to FIX workflow.",
-            ],
-            "dispatch_to": target,
-            "next": f"uv run python -m {target} --step 1 --state-dir {state_dir}",
-        }
-
-    # Use routing module for state-based detection
+    # Single detection: route_work_phase reads QR state once and decides fix vs execute.
     result = route_work_phase(state_dir, PHASE_KEY)
 
     if result["has_failures"]:

@@ -301,9 +301,9 @@ The script reuses helpers from `shared/qr/utils.py`:
 - `load_qr_state(state_dir, phase)` -- load and parse qr-{phase}.json
 - `get_qr_item(qr_state, item_id)` -- find item by ID
 - `get_qr_iteration(state_dir, phase)` -- get current iteration (1 if file absent)
-- `has_qr_failures(state_dir, phase)` -- check if file exists with FAIL items
+- `has_qr_failures_from_state(qr_state)` -- True if the loaded state has blocking FAIL items
 
-The CLI script adds atomic save with locking (not in utils.py because only the CLI needs it). Router scripts use `has_qr_failures()` to detect fix mode without loading full state.
+The CLI script adds atomic save with locking (not in utils.py because only the CLI needs it). Router scripts use `route_work_phase()` (`shared/routing.py`) to detect fix mode from QR state.
 
 #### Plan State Mutation (cli/plan.py)
 

@@ -1,7 +1,7 @@
 """Centralized routing logic for work phases.
 
 Definition locality: router pattern logic lives in ONE place.
-5 router scripts become thin wrappers that call route_work_phase().
+3 router scripts become thin wrappers that call route_work_phase().
 
 This works by:
 1. WORK_PHASES registry defines all work phase routing
@@ -18,7 +18,13 @@ Invariants:
 
 from __future__ import annotations
 
-from .qr.utils import by_blocking_severity, by_status, load_qr_state, query_items
+from .qr.utils import (
+    by_blocking_severity,
+    by_status,
+    get_qr_iteration_from_state,
+    load_qr_state,
+    query_items,
+)
 
 # Work phase routing registry - ALL work phases in ONE place
 #
@@ -66,7 +72,7 @@ def detect_qr_state(state_dir: str, phase: str) -> tuple[bool, list[dict]]:
     qr_state = load_qr_state(state_dir, phase)
     if not qr_state:
         return (False, [])
-    iteration = (qr_state.get("iteration") or 1)
+    iteration = get_qr_iteration_from_state(qr_state)
     blocking_failures = query_items(qr_state, by_status("FAIL"), by_blocking_severity(iteration))
     return (len(blocking_failures) > 0, blocking_failures)
 
@@ -92,7 +98,6 @@ def route_work_phase(state_dir: str, phase_key: str) -> dict:
         - target_module: Python module path to dispatch to
         - has_failures: Whether QR failures exist
         - failed_count: Number of failed items (0 if none)
-        - qr_phase: QR phase name for reference
 
     Raises:
         ValueError: If phase_key is unknown
@@ -110,28 +115,4 @@ def route_work_phase(state_dir: str, phase_key: str) -> dict:
         "target_module": target,
         "has_failures": has_failures,
         "failed_count": len(failed_items),
-        "qr_phase": config["qr_phase"],
     }
-
-
-def get_work_phase_config(phase_key: str) -> dict:
-    """Get configuration for a work phase.
-
-    Args:
-        phase_key: Work phase key
-
-    Returns:
-        Phase configuration dict
-
-    Raises:
-        ValueError: If phase_key is unknown
-    """
-    if phase_key not in WORK_PHASES:
-        valid = ", ".join(sorted(WORK_PHASES.keys()))
-        raise ValueError(f"Unknown work phase: {phase_key}. Valid phases: {valid}")
-    return WORK_PHASES[phase_key]
-
-
-def get_all_work_phases() -> list[str]:
-    """Return list of all work phase keys."""
-    return list(WORK_PHASES.keys())

@@ -81,19 +81,23 @@ def _snapshot_state(ctx) -> str | None:
     return path.read_text(encoding="utf-8") if path.exists() else None
 
 
-def _restore_state(ctx, snapshot: str | None) -> None:
+def _restore_state(ctx, snapshot: str | None) -> bool:
     """Revert the state file to a pre-batch snapshot (None => remove it).
 
     Restores through atomic_write_text so a reader never sees a torn rollback.
+    Returns True when a revert occurred, False when the ctx exposes no state file
+    (nothing to roll back) -- the caller stamps rolled_back with this so it never
+    reports a rollback that did not happen.
     """
     state_file = getattr(ctx, "state_file", None)
     if state_file is None:
-        return
+        return False
     path = state_file()
     if snapshot is None:
         path.unlink(missing_ok=True)
     else:
         atomic_write_text(path, snapshot)
+    return True
 
 
 def batch(methods: dict, requests: list[dict], ctx) -> list[dict]:
@@ -151,12 +155,12 @@ def batch(methods: dict, requests: list[dict], ctx) -> list[dict]:
                 result = dispatch(methods, method, params, ctx)
                 results.append({"id": req_id, "result": result})
             except Exception as e:
-                _restore_state(ctx, snapshot)
+                reverted = _restore_state(ctx, snapshot)
                 for r in results:
                     if "result" in r:
-                        r["rolled_back"] = True
+                        r["rolled_back"] = reverted
                 results.append(
-                    {"id": req_id, "error": {"code": -32000, "message": str(e), "rolled_back": True}}
+                    {"id": req_id, "error": {"code": -32000, "message": str(e), "rolled_back": reverted}}
                 )
                 # The tail never ran or persisted; still emit an entry per
                 # request so the response lists EVERY outcome (positional
@@ -169,7 +173,7 @@ def batch(methods: dict, requests: list[dict], ctx) -> list[dict]:
                             "error": {
                                 "code": -32000,
                                 "message": "skipped: batch rolled back due to an earlier failure",
-                                "rolled_back": True,
+                                "rolled_back": reverted,
                                 "skipped": True,
                             },
                         }

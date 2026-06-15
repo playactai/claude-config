@@ -83,6 +83,20 @@ def qr_write_lock(state_dir: str | Path, phase: str) -> Iterator[None]:
             f.close()
 
 
+def parse_qr_dict(content: str) -> dict:
+    """Parse qr-file text into a dict; raise ValueError if it is not a JSON object.
+
+    The shared dict-contract core for the two QR loaders. Each layers its own
+    missing-file / parse-error policy on top: load_qr_state swallows everything to
+    None (fail closed); load_qr_state_under_lock propagates. json.JSONDecodeError
+    propagates so each caller decides whether to catch it.
+    """
+    data = json.loads(content)
+    if not isinstance(data, dict):
+        raise ValueError("qr state is not a JSON object")
+    return data
+
+
 def load_qr_state(state_dir: str, phase: str) -> dict | None:
     """Load and parse qr-<phase>.json from state directory.
 
@@ -98,16 +112,14 @@ def load_qr_state(state_dir: str, phase: str) -> dict | None:
     if not path.exists():
         return None
 
-    try:
-        with open(path, encoding="utf-8") as f:
-            data = json.load(f)
-    except (OSError, json.JSONDecodeError):
-        return None
     # A valid-JSON file that isn't an object (e.g. a decompose scratch list)
     # violates the dict contract every caller relies on -- return None so the gate
     # fails closed (and `.get`-based callers don't crash) instead of treating an
-    # unconfirmable QR file as present.
-    return data if isinstance(data, dict) else None
+    # unconfirmable QR file as present. Truncated/unreadable files fail closed too.
+    try:
+        return parse_qr_dict(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError, ValueError):
+        return None
 
 
 def get_qr_item(qr_state: dict, item_id: str) -> dict | None:
@@ -331,25 +343,6 @@ def format_failed_items_for_fix(qr_state: dict) -> str:
     return "\n".join(lines)
 
 
-def format_todo_items_for_decomposition(qr_state: dict) -> str:
-    """Format TODO items remaining to verify.
-
-    Used by QR scripts to show what items still need verification.
-    """
-    todo = get_qr_items_by_status(qr_state, "TODO")
-    if not todo:
-        return "All items verified."
-
-    lines = [
-        f"REMAINING ITEMS TO VERIFY: {len(todo)}",
-        "",
-    ]
-    for item in todo:
-        lines.append(f"  {item.get('id', '?')}: {item.get('check', '')[:60]}...")
-
-    return "\n".join(lines)
-
-
 def get_qr_iteration(state_dir: str, phase: str) -> int:
     """Get current QR iteration from qr-{phase}.json.
 
@@ -366,8 +359,8 @@ def get_qr_iteration(state_dir: str, phase: str) -> int:
     return (qr_state.get("iteration") or 1)
 
 
-def get_qr_iteration_from_state(qr_state: dict) -> int:
-    """Same as get_qr_iteration but accepts a pre-loaded qr_state dict."""
+def get_qr_iteration_from_state(qr_state: dict | None) -> int:
+    """Same as get_qr_iteration but accepts a pre-loaded qr_state dict (or None)."""
     return (qr_state.get("iteration") or 1) if qr_state else 1
 
 
@@ -522,25 +515,3 @@ def prepare_verify_items(
             if new_iter is not None:
                 iteration = new_iter
     return query_items(qr_state, by_status("TODO", "FAIL"), by_blocking_severity(iteration)), iteration
-
-
-def get_pending_qr_items(state_dir: str, phase: str) -> list[str]:
-    """Return item IDs that need processing (status TODO or FAIL).
-
-    Args:
-        state_dir: Path to state directory
-        phase: QR phase name (plan-design, impl-code, impl-docs)
-
-    Returns:
-        List of item IDs with TODO or FAIL status
-    """
-    qr_state = load_qr_state(state_dir, phase)
-    if not qr_state:
-        return []
-
-    pending = []
-    for item in qr_state.get("items", []):
-        status = item.get("status")
-        if status in ("TODO", "FAIL"):
-            pending.append(item.get("id", ""))
-    return [id for id in pending if id]

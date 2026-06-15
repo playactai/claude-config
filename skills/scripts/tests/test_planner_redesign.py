@@ -14,6 +14,7 @@ from __future__ import annotations
 import json
 
 import pytest
+from conftest import write_qr
 
 from skills.planner.shared.gates import GateResult
 
@@ -50,9 +51,7 @@ def test_step6_is_terminal_plan_approved_with_valid_plan(tmp_path):
             }
         )
     )
-    (tmp_path / "qr-plan-design.json").write_text(
-        json.dumps({"phase": "plan-design", "iteration": 1, "items": []})
-    )
+    write_qr(tmp_path, "plan-design", [])
     result = format_output(6, "pass", str(tmp_path))
     assert isinstance(result, GateResult)
     assert result.terminal_pass is True
@@ -67,9 +66,7 @@ def test_step6_missing_plan_fails_closed(tmp_path):
     import sys
     from pathlib import Path
 
-    (tmp_path / "qr-plan-design.json").write_text(
-        json.dumps({"phase": "plan-design", "iteration": 1, "items": []})
-    )
+    write_qr(tmp_path, "plan-design", [])
     scripts_dir = Path(__file__).parent.parent
     result = subprocess.run(
         [
@@ -496,24 +493,21 @@ def _write_ceiling_qr(state_dir, phase="plan-design"):
             }
         )
     )
-    (state_dir / f"qr-{phase}.json").write_text(
-        json.dumps(
+    write_qr(
+        state_dir,
+        phase,
+        [
             {
-                "phase": phase,
-                "iteration": 5,
-                "items": [
-                    {
-                        "id": "q1",
-                        "scope": "*",
-                        "check": "c",
-                        "status": "FAIL",
-                        "version": 1,
-                        "severity": "MUST",
-                        "finding": "unfixable",
-                    }
-                ],
+                "id": "q1",
+                "scope": "*",
+                "check": "c",
+                "status": "FAIL",
+                "version": 1,
+                "severity": "MUST",
+                "finding": "unfixable",
             }
-        )
+        ],
+        iteration=5,
     )
 
 
@@ -924,6 +918,21 @@ def test_wave_overlap_detected_across_path_spellings(tmp_path):
         _plan, _qr_states = validate_state(str(tmp_path))
 
 
+def test_wave_overlap_detected_across_case_variants(tmp_path):
+    # On a case-insensitive checkout (macOS/Windows) 'src/App.py' and 'src/app.py'
+    # resolve to one physical file; the overlap guard case-folds before intersecting
+    # so two milestones differing only by case cannot co-schedule and race-write it.
+    from skills.planner.shared.schema import SchemaValidationError, validate_state
+
+    plan = _plan_with_waves(
+        [("M-001", ["src/App.py"], False), ("M-002", ["src/app.py"], False)],
+        [("W-001", ["M-001", "M-002"])],
+    )
+    (tmp_path / "plan.json").write_text(plan.model_dump_json())
+    with pytest.raises(SchemaValidationError, match="share file"):
+        _plan, _qr_states = validate_state(str(tmp_path))
+
+
 def test_wave_overlap_detected_via_code_intent_files(tmp_path):
     # Reviewer P2: Milestone.files is empty, but two milestones' code_intents target the
     # SAME physical file (differing spellings). A developer agent is dispatched per
@@ -1015,9 +1024,7 @@ def test_plan_gate_blocks_qr_pass_on_incomplete_plan(tmp_path):
 
     plan = _plan_with_waves([("M-001", ["a.py"], False)], [])  # code milestone, no waves
     (tmp_path / "plan.json").write_text(plan.model_dump_json())
-    (tmp_path / "qr-plan-design.json").write_text(
-        json.dumps({"phase": "plan-design", "iteration": 1, "items": []})
-    )
+    write_qr(tmp_path, "plan-design", [])
     result = format_output(6, "pass", str(tmp_path))
     assert isinstance(result, GateResult)
     assert result.terminal_pass is False
@@ -1032,9 +1039,7 @@ def test_plan_gate_terminal_pass_on_complete_plan(tmp_path):
 
     plan = _plan_with_waves([("M-001", ["a.py"], False)], [("W-001", ["M-001"])])
     (tmp_path / "plan.json").write_text(plan.model_dump_json())
-    (tmp_path / "qr-plan-design.json").write_text(
-        json.dumps({"phase": "plan-design", "iteration": 1, "items": []})
-    )
+    write_qr(tmp_path, "plan-design", [])
     result = format_output(6, "pass", str(tmp_path))
     assert isinstance(result, GateResult)
     assert result.terminal_pass is True

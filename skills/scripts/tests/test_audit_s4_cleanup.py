@@ -18,6 +18,7 @@ from datetime import datetime
 from pathlib import Path
 
 import pytest
+from conftest import write_qr
 
 import validate_conventions as vc
 from skills.lib.workflow.prompts.step import format_step
@@ -43,12 +44,6 @@ _SCRIPTS_DIR = Path(__file__).resolve().parents[1]  # scripts dir: `skills` impo
 _MUST_ITEM = {"id": "qa-001", "scope": "*", "check": "code quality", "status": "TODO", "severity": "MUST"}
 
 
-def _write_qr(state_dir: Path, phase: str, items: list[dict]) -> None:
-    (state_dir / f"qr-{phase}.json").write_text(
-        json.dumps({"phase": phase, "iteration": 1, "items": items})
-    )
-
-
 # --- §4.1: forbidden-list SSOT (planner == executor) -------------------------
 class TestForbiddenListSSOT:
     def test_superset_has_all_six(self):
@@ -66,13 +61,13 @@ class TestForbiddenListSSOT:
 
         planner_dir = tmp_path / "plan"
         planner_dir.mkdir()
-        _write_qr(planner_dir, "plan-design", [_MUST_ITEM])
+        write_qr(planner_dir, "plan-design", [_MUST_ITEM])
         planner_out = planner_orch.format_output(5, None, state_dir=str(planner_dir))
         assert isinstance(planner_out, str)  # verify step renders text, not a GateResult
 
         exec_dir = tmp_path / "exec"
         exec_dir.mkdir()
-        _write_qr(exec_dir, "impl-code", [_MUST_ITEM])
+        write_qr(exec_dir, "impl-code", [_MUST_ITEM])
         executor_out = executor_orch.format_output(4, str(exec_dir), None, False)
 
         assert block in planner_out
@@ -187,7 +182,7 @@ class TestQrRunnerParametrization:
 
     @pytest.mark.parametrize("phase", PHASES)
     def test_verify_threads_phase_into_next_and_record(self, phase: str, tmp_path: Path):
-        _write_qr(tmp_path, phase, [_MUST_ITEM])
+        write_qr(tmp_path, phase, [_MUST_ITEM])
         # plan-design CONTEXT strictly requires context.json (the orchestrator
         # writes it in the plan phase); exec phases degrade gracefully.
         (tmp_path / "context.json").write_text(json.dumps({"task_spec": ["x"]}))

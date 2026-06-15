@@ -35,7 +35,11 @@ from skills.planner.shared.builders import (
     build_qr_verify_dispatch,
     shell_quote,
 )
-from skills.planner.shared.constants import EXECUTOR_GATE_CONFIG, EXECUTOR_STEP_PHASES
+from skills.planner.shared.constants import (
+    EXECUTOR_GATE_CONFIG,
+    EXECUTOR_STEP_PHASES,
+    PHASE_QR_NAME,
+)
 from skills.planner.shared.constraints import (
     ORCHESTRATOR_CONSTRAINT,
     format_state_banner,
@@ -231,8 +235,7 @@ def format_qr_decompose(step: int, phase: str, state_dir: str, qr: QRState) -> s
     config = get_phase_config(phase)
     decompose_script = config["decompose_script"]
 
-    title_map = {3: "Code QR Decompose", 7: "Doc QR Decompose"}
-    title = title_map.get(step, f"QR Decompose ({phase})")
+    title = f"{PHASE_QR_NAME.get(phase, 'QR')} Decompose"
 
     # Skip if already decomposed
     if qr_file_exists(state_dir, phase):
@@ -279,15 +282,16 @@ def format_qr_decompose(step: int, phase: str, state_dir: str, qr: QRState) -> s
 # =============================================================================
 
 
-def format_qr_verify(step: int, phase: str, state_dir: str, qr: QRState) -> str:
+def format_qr_verify(
+    step: int, phase: str, state_dir: str, qr: QRState, qr_state: dict | None = None
+) -> str:
     """Dispatch parallel QR verification agents."""
     config = get_phase_config(phase)
     verify_script = config["verify_script"]
 
-    title_map = {4: "Code QR Verify", 8: "Doc QR Verify"}
-    title = title_map.get(step, f"QR Verify ({phase})")
+    title = f"{PHASE_QR_NAME.get(phase, 'QR')} Verify"
 
-    items, _ = prepare_verify_items(state_dir, phase, qr)
+    items, _ = prepare_verify_items(state_dir, phase, qr, qr_state=qr_state)
     if items is None:
         decompose_step = step - 1
         body = f"Error: qr-{phase}.json not found or malformed. Routing back to decompose step."
@@ -466,32 +470,38 @@ def format_output(
     state = LoopState.RETRY if fix_mode else LoopState.INITIAL
     qr = QRState(iteration=iteration, state=state, status=status)
 
+    # Non-QR steps: 1 and 10 carry no phase; 2 and 6 have one the dispatch ignores.
     if step == 1:
         return format_step_1(state_dir, reconciliation_check)
     elif step == 2:
         return format_step_2(qr, state_dir)
-    elif step == 3:
-        return format_qr_decompose(3, "impl-code", state_dir, qr)
+    elif step == 6:
+        return format_step_6(qr, state_dir)
+    elif step == 10:
+        return format_step_10()
+
+    # Steps 3-5 and 7-9 are QR steps; each has a phase in EXECUTOR_STEP_PHASES.
+    invalid_step = f"Error: invalid step {step} (valid: 1-10)"
+    if phase is None:
+        return invalid_step
+
+    if step == 3:
+        return format_qr_decompose(3, phase, state_dir, qr)
     elif step == 4:
-        return format_qr_verify(4, "impl-code", state_dir, qr)
+        return format_qr_verify(4, phase, state_dir, qr, qr_state)
     elif step == 5:
         if not qr_status:
             return "Error: --qr-status required for step 5 (Code QR Gate)"
-        return format_qr_gate(5, "impl-code", state_dir, qr, qr_state, plan)
-    elif step == 6:
-        return format_step_6(qr, state_dir)
+        return format_qr_gate(5, phase, state_dir, qr, qr_state, plan)
     elif step == 7:
-        return format_qr_decompose(7, "impl-docs", state_dir, qr)
+        return format_qr_decompose(7, phase, state_dir, qr)
     elif step == 8:
-        return format_qr_verify(8, "impl-docs", state_dir, qr)
+        return format_qr_verify(8, phase, state_dir, qr, qr_state)
     elif step == 9:
         if not qr_status:
             return "Error: --qr-status required for step 9 (Doc QR Gate)"
-        return format_qr_gate(9, "impl-docs", state_dir, qr, qr_state, plan)
-    elif step == 10:
-        return format_step_10()
-    else:
-        return f"Error: invalid step {step} (valid: 1-10)"
+        return format_qr_gate(9, phase, state_dir, qr, qr_state, plan)
+    return invalid_step
 
 
 def main():

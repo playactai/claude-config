@@ -1,9 +1,10 @@
-"""Regression tests for validate_conventions.infer_role_from_path.
+"""Regression tests for the convention registry: role inference and the parser.
 
 The convention-registry CI check infers a script's role from its path. These
 tests pin that behavior, including the fix for role-named directories that
 appear in the *checkout* path above the package root (which previously caused
-false registry violations).
+false registry violations). They also pin the strict-parse behavior of
+``_parse_registry`` (a stray-indented line is a hard error, not a silent skip).
 """
 
 from pathlib import Path
@@ -11,6 +12,7 @@ from pathlib import Path
 import pytest
 
 import validate_conventions as vc
+from skills.lib import conventions
 
 # Representative package root -- the skills_dir the CI passes in.
 ROOT = Path("/repo/skills/scripts/skills")
@@ -51,3 +53,19 @@ def test_path_outside_package_root_is_unknown():
     """A script outside package_root is 'unknown' -- fail closed, never classified by ancestors."""
     script = Path("/elsewhere/developer/x.py")
     assert vc.infer_role_from_path(script, ROOT) == "unknown"
+
+
+def test_parse_registry_raises_on_unrecognized_indent():
+    """A stray/odd-indented line is a hard error, not a silent skip (D2)."""
+    # 3-space indent under a role matches no 0/2/4/6 branch -> else -> raise.
+    bad = "developer:\n   stray: value\n"
+    with pytest.raises(ValueError, match="Unparseable REGISTRY"):
+        conventions._parse_registry(bad)
+
+
+def test_committed_registry_parses_under_strict_parser():
+    """The real REGISTRY.yaml stays parseable -- the strict parser isn't over-strict
+    and no committed line is silently dropped."""
+    conventions._registry_cache = None  # force a fresh parse of the on-disk file
+    reg = conventions.get_registry()
+    assert "developer" in reg

@@ -3,7 +3,6 @@
 Handles loading of resource files and path resolution.
 """
 
-import json
 from pathlib import Path
 
 from skills.lib.io import read_text_or_exit
@@ -81,7 +80,6 @@ __all__ = [
     "get_mode_script_path",
     "get_qa_schema",
     "get_resource",
-    "load_context_block",
     "render_context_file",
     "validate_state_dir_requirement",
 ]
@@ -196,45 +194,6 @@ def get_qa_schema() -> str:
         Full content of qa-schema.md resource
     """
     return get_resource("qa-schema.md")
-
-
-def load_context_block(context_file: str | None) -> list[str]:
-    """Load planning context from JSON file and return as action lines.
-
-    Returns list[str] instead of structured type because sub-agent consumes
-    context as prompt text (action lines), not as data structure for branching.
-    Simpler contract: helpers produce action blocks, workflow engine assembles.
-
-    Silently swallows errors (graceful fallback rationale): missing context.json
-    means orchestrator skipped step 2 or user invoked sub-agent standalone for
-    testing. Sub-agent should function without context (degraded mode) rather
-    than crash. Empty context block = no additional context, proceed with task.
-
-    Args:
-        context_file: Path to context.json, or None
-
-    Returns:
-        List of action lines with context wrapped in XML, or empty list
-    """
-    if not context_file:
-        return []
-    try:
-        context = json.loads(Path(context_file).read_text(encoding="utf-8"))
-        # Context prepended to actions (not separate block) to ensure LLM reads
-        # context BEFORE task instructions. Prompt order = attention priority.
-        # XML tags allow sub-agent to distinguish context from instructions.
-        return [
-            "<planning_context>",
-            # indent=2 balances human readability (debuggability) with token
-            # efficiency. Single-line JSON would save ~50 tokens but makes
-            # step-through debugging painful. Indent=4 wastes tokens for
-            # marginal readability gain. indent=2 is the Goldilocks zone.
-            json.dumps(context, indent=2),
-            "</planning_context>",
-            "",
-        ]
-    except (FileNotFoundError, json.JSONDecodeError):
-        return []  # Graceful fallback
 
 
 def render_context_file(context_file: str | Path, *, missing_ok: bool = False) -> str:

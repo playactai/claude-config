@@ -852,11 +852,11 @@ Orchestrator parses this via LLM comprehension, not programmatically. Malformed 
 
 **Route step (orchestrator only):**
 
-The orchestrator script (not the LLM) reads qr-{phase}.json after all verify agents complete, using helper functions to check for remaining failures:
+The orchestrator script (not the LLM) reads qr-{phase}.json after all verify agents complete and checks the loaded state for remaining blocking failures:
 
 ```python
-def get_pending_qr_items(state_dir: str, phase: str) -> list[str]:
-    """Return item IDs that need processing (status TODO or FAIL)."""
+def has_qr_failures_from_state(qr_state: dict) -> bool:
+    """True if the loaded qr_state still has blocking FAIL items."""
 ```
 
 The script determines the routing and generates the appropriate prompt for the LLM. The LLM sees only the routing decision, not the file contents.

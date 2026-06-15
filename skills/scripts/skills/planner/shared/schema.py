@@ -27,11 +27,6 @@ QA_ITEM_DEFAULTS = {
     "severity": "SHOULD",  # Default for backwards compat with existing qr-{phase}.json files
 }
 
-# Canonical field names for QR items
-QA_ITEM_REQUIRED_FIELDS = frozenset({"id", "scope", "check", "status", "version"})
-QA_ITEM_OPTIONAL_FIELDS = frozenset({"finding", "parent_id", "group_id", "severity"})
-QA_ITEM_ALL_FIELDS = QA_ITEM_REQUIRED_FIELDS | QA_ITEM_OPTIONAL_FIELDS
-
 # Valid severity values (per conventions/severity.md)
 VALID_SEVERITIES = frozenset({"MUST", "SHOULD", "COULD"})
 
@@ -302,15 +297,17 @@ if True:
             # Per-wave invariants in a single pass (id uniqueness, milestone refs,
             # intra-wave file overlap). Each milestone's file set is the union of its
             # declared files AND its code intents' target files, lexically normalized
-            # once so the overlap check compares physical files, not spellings. Intents
-            # are folded in because the executor dispatches one developer per milestone,
-            # and that developer writes every file across the milestone's code_intents[]:
-            # a missing or stale Milestone.files must not let two milestones whose intent
-            # targets collide co-schedule in one wave (their two developers would then
-            # race on the shared file mid-write).
+            # AND case-folded once so the overlap check compares physical files, not
+            # spellings -- a case-insensitive checkout (macOS/Windows) resolves
+            # 'src/App.py' and 'src/app.py' to one file, so they must collide here too.
+            # Intents are folded in because the executor dispatches one developer per
+            # milestone, and that developer writes every file across the milestone's
+            # code_intents[]: a missing or stale Milestone.files must not let two
+            # milestones whose intent targets collide co-schedule in one wave (their two
+            # developers would then race on the shared file mid-write).
             milestone_files = {
                 ms.id: {
-                    os.path.normpath(f)
+                    os.path.normpath(f).casefold()
                     for f in (*ms.files, *(ci.file for ci in ms.code_intents))
                     if f
                 }
@@ -521,30 +518,6 @@ if True:
 
 
 # =============================================================================
-# QR Schema Helpers (moved from shared/qr/schema.py)
-# =============================================================================
-
-QA_ITEM_SCHEMA_TEMPLATE = """{
-  "id": "{id_example}",
-  "scope": "*" or "file:path:lines",
-  "check": "Description of what was checked",
-  "status": "TODO",
-  "version": 1,
-  "finding": null
-}"""
-
-
-def get_qa_state_schema_example(phase: str, id_prefix: str = "qa") -> str:
-    """Generate schema example for prompts."""
-    return f'''{{
-  "phase": "{phase}",
-  "items": [
-    {QA_ITEM_SCHEMA_TEMPLATE.format(id_example=f"{id_prefix}-001")}
-  ]
-}}'''
-
-
-# =============================================================================
 # Validation Functions
 # =============================================================================
 
@@ -616,6 +589,15 @@ def validate_state(state_dir: str) -> tuple[Plan | None, dict[str, dict]]:
             data = json.loads(path.read_text(encoding="utf-8"))
             qr_file = QRFile.model_validate(data)
             qr_states[phase] = qr_file.model_dump(mode="json")
+        except json.JSONDecodeError:
+            # Truncated/partial canonical file from a non-atomic decompose Write, or
+            # raw control chars (json rejects both). Skip rather than abort: the verify
+            # step routes back to decompose on a missing/None qr_state and the gate
+            # fails closed the same way, so the run self-heals. A *parseable* but
+            # schema-invalid file (e.g. a forged item) is instead rejected below by
+            # model_validate -> SchemaValidationError -- the security boundary before
+            # the verify fan-out renders it.
+            continue
         except Exception as e:
             raise SchemaValidationError(f"{path.name}: {e}") from e
 
@@ -669,12 +651,8 @@ def plan_completeness_errors(
 
 __all__ = [
     "PYDANTIC_AVAILABLE",
-    "QA_ITEM_ALL_FIELDS",
     # QR constants
     "QA_ITEM_DEFAULTS",
-    "QA_ITEM_OPTIONAL_FIELDS",
-    "QA_ITEM_REQUIRED_FIELDS",
-    "QA_ITEM_SCHEMA_TEMPLATE",
     "CodeIntent",
     # Models
     "Context",
@@ -694,7 +672,6 @@ __all__ = [
     "SchemaValidationError",
     "Wave",
     "canonicalize_severity",
-    "get_qa_state_schema_example",
     "plan_completeness_errors",
     "validate_state",
 ]

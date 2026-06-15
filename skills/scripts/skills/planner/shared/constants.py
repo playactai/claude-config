@@ -15,15 +15,6 @@ from skills.lib.workflow.types import AgentRole
 PLANNER_TOTAL_STEPS = 6
 PLANNER_GATE_STEPS = frozenset({6})  # QR route step (gate)
 
-# Executor orchestrator workflow (10 steps with parallel QR)
-EXECUTOR_TOTAL_STEPS = 10
-EXECUTOR_GATE_STEPS = frozenset({5, 9})
-
-# Sub-workflow step counts
-PLAN_DESIGN_TOTAL_STEPS = 6
-EXEC_IMPLEMENT_TOTAL_STEPS = 4
-EXEC_DOCS_TOTAL_STEPS = 6
-
 # Executor: QR phase for each step (steps 1, 10 have no QR phase)
 EXECUTOR_STEP_PHASES: dict[int, str] = {
     2: "impl-code",
@@ -36,17 +27,22 @@ EXECUTOR_STEP_PHASES: dict[int, str] = {
     9: "impl-docs",
 }
 
+# Executor: human-facing QR name stem per phase. Single source for both the gate
+# titles (EXECUTOR_GATE_CONFIG below) and the decompose/verify step titles in
+# executor.py, so the "Code QR"/"Doc QR" strings live in exactly one place.
+PHASE_QR_NAME: dict[str, str] = {"impl-code": "Code QR", "impl-docs": "Doc QR"}
+
 # Executor: gate step -> (qr_name, work_step, pass_step, pass_message, fix_target)
 EXECUTOR_GATE_CONFIG: dict[int, tuple] = {
     5: (
-        "Code QR",
+        PHASE_QR_NAME["impl-code"],
         2,
         6,
         "Code quality verified. Proceed to documentation.",
         AgentRole.DEVELOPER,
     ),
     9: (
-        "Doc QR",
+        PHASE_QR_NAME["impl-docs"],
         6,
         10,
         "Documentation verified. Proceed to retrospective.",

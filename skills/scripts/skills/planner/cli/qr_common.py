@@ -17,6 +17,7 @@ from pathlib import Path
 
 from skills.lib.io import atomic_write_text
 from skills.planner.shared.qr.utils import find_item as find_item
+from skills.planner.shared.qr.utils import parse_qr_dict
 
 # Valid status values (match QAItemStatus enum)
 VALID_STATUSES = frozenset({"PASS", "FAIL"})
@@ -45,10 +46,14 @@ def load_qr_state_under_lock(qr_path: Path) -> dict:
     content = qr_path.read_text(encoding="utf-8") if qr_path.exists() else ""
     if not content:
         return {"phase": "", "items": []}
-    data = json.loads(content)
-    if not isinstance(data, dict):
-        raise ValueError(f"{qr_path.name} is not a JSON object")
-    return data
+    try:
+        return parse_qr_dict(content)
+    except json.JSONDecodeError:
+        # Corrupt/truncated JSON: propagate verbatim (with parse location) per
+        # parse_qr_dict's contract; do not mislabel it as a non-dict.
+        raise
+    except ValueError as e:
+        raise ValueError(f"{qr_path.name} is not a JSON object") from e
 
 
 def save_qr_state_atomic(qr_path: Path, qr_state: dict) -> None:

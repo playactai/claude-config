@@ -14,7 +14,7 @@ Router (exec_implement.py) dispatches to appropriate script.
 from skills.planner.shared.constraints import format_state_banner
 from skills.planner.shared.qr.utils import (
     format_failed_items_for_fix,
-    get_qr_iteration,
+    get_qr_iteration_from_state,
     load_qr_state,
 )
 from skills.planner.shared.resources import validate_state_dir_requirement
@@ -35,10 +35,9 @@ def get_step_guidance(step: int, module_path: str | None = None, **kwargs) -> di
     if step == 1:
         validate_state_dir_requirement(step, state_dir)
 
-        qr_iteration = get_qr_iteration(state_dir, PHASE)
-
-        # Load failed items from qr-{phase}.json
+        # Load failed items from qr-{phase}.json (one read; iteration derives from it)
         qr_state = load_qr_state(state_dir, PHASE)
+        qr_iteration = get_qr_iteration_from_state(qr_state)
         failed_items_block = format_failed_items_for_fix(qr_state) if qr_state else ""
 
         banner = format_state_banner("IMPLEMENTATION-FIX", qr_iteration, "fix")

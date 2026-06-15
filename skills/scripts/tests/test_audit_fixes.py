@@ -29,6 +29,7 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 
 import pytest
+from conftest import write_qr
 from hypothesis import given, settings
 from hypothesis import strategies as st
 from pydantic import ValidationError
@@ -81,9 +82,9 @@ def _sentinel_is_free(lock_path: Path) -> bool:
 
 
 def _write_qr(tmp_path: Path, phase: str, iteration: int, items: list[dict]) -> None:
-    (tmp_path / f"qr-{phase}.json").write_text(
-        json.dumps({"phase": phase, "iteration": iteration, "items": items})
-    )
+    # Adapter to the shared conftest.write_qr (this module passes iteration
+    # positionally); the qr-{phase}.json shape lives only in write_qr now.
+    write_qr(tmp_path, phase, items, iteration=iteration)
 
 
 def _gate(tmp_path: Path, qr: QRState, *, phase="impl-code", work_step=2, pass_step: int | None = 6):
@@ -228,6 +229,15 @@ class TestSeverityCoercion:
         with pytest.raises(SchemaValidationError):
             _plan, _qr_states = validate_state(str(tmp_path))
 
+    def test_validate_state_recovers_from_truncated_canonical_file(self, tmp_path: Path):
+        # A non-atomic decompose Write can leave a truncated (unparseable) canonical
+        # qr-{phase}.json. validate_state must NOT abort the run on bad JSON: it skips
+        # the file so the verify/gate step re-decomposes. A *parseable* but malformed
+        # file (list/schema/control-char) still hard-fails -- see the tests around it.
+        (tmp_path / "qr-impl-code.json").write_text('{"phase": "impl-code", "items": [')
+        _plan, qr_states = validate_state(str(tmp_path))  # must not raise
+        assert "impl-code" not in qr_states
+
     def test_qr_commands_update_item_canonicalizes_severity(self, tmp_path: Path):
         # The batch-RPC twin of cmd_update_item must canonicalize like the CLI:
         # BLOCKER is a high-severity synonym that maps to MUST (audit follow-up).
@@ -327,6 +337,51 @@ class TestSeverityCoercion:
         )
         assert results[0]["error"]["rolled_back"] is True
         assert (tmp_path / "qr-impl-code.json").read_bytes() == before  # unchanged
+
+    def test_batch_stateless_ctx_not_flagged_rolled_back(self):
+        # A ctx exposing no state_file() cannot roll back: _restore_state is a no-op,
+        # so a failed batch must report rolled_back=False -- never a misleading True
+        # that claims a revert which never happened (prior successes still persist).
+        def ok(ctx):
+            return {"ok": True}
+
+        def boom(ctx):
+            raise ValueError("boom")
+
+        results = batch(
+            {"ok": ok, "boom": boom},
+            [
+                {"method": "ok", "params": {}, "id": 1},
+                {"method": "boom", "params": {}, "id": 2},
+            ],
+            object(),  # no state_file()/batch_lock() -> nothing to revert
+        )
+        assert results[0]["rolled_back"] is False
+        assert results[1]["error"]["rolled_back"] is False
+
+    def test_qr_commands_reject_non_dict_file(self, tmp_path: Path):
+        # A non-object qr file (a JSON list -- a legit decompose scratch shape) must
+        # surface a clean ValueError from the read-only commands, not an AttributeError
+        # from calling .get on a list.
+        (tmp_path / "qr-impl-code.json").write_text(json.dumps([{"id": "x"}]))
+        ctx = qr_commands.QRContext(state_dir=tmp_path, phase="impl-code")
+        with pytest.raises(ValueError, match="not a valid QR state object"):
+            qr_commands.summary(ctx)
+        with pytest.raises(ValueError, match="not a valid QR state object"):
+            qr_commands.list_items(ctx)
+        with pytest.raises(ValueError, match="not a valid QR state object"):
+            qr_commands.get_item(ctx, "x")
+
+    def test_qr_cli_reject_non_dict_file(self, tmp_path: Path):
+        # The qr.py CLI twins error_exit (SystemExit) on the same non-object file
+        # rather than crashing with AttributeError.
+        (tmp_path / "qr-impl-code.json").write_text(json.dumps([{"id": "x"}]))
+        with pytest.raises(SystemExit):
+            qr_cli.cmd_summary(str(tmp_path), "impl-code", [])
+        with pytest.raises(SystemExit):
+            qr_cli.cmd_get_item(str(tmp_path), "impl-code", ["x"])
+        with pytest.raises(SystemExit):
+            qr_cli.cmd_list_items(str(tmp_path), "impl-code", [])
 
 
 # --- Bug #6: literal "$" in template crashed dispatch ------------------------
@@ -1246,6 +1301,19 @@ class TestQrCommonExtraction:
         bad.write_text("[1, 2, 3]")
         with pytest.raises(ValueError, match="not a JSON object"):
             load_qr_state_under_lock(bad)
+
+    def test_load_qr_state_under_lock_propagates_decode_error(self, tmp_path: Path):
+        # F3: a truncated/corrupt canonical qr file must surface the real
+        # json.JSONDecodeError (with parse location), not be mislabeled "not a JSON
+        # object" -- parse_qr_dict's contract says this loader propagates decode errors.
+        from skills.planner.cli.qr_common import load_qr_state_under_lock
+
+        bad = tmp_path / "qr-impl-code.json"
+        bad.write_text('{"phase": "impl-code", "items": [')  # truncated
+        with pytest.raises(json.JSONDecodeError) as exc_info:
+            load_qr_state_under_lock(bad)
+        # Must be the real decode error, not the non-dict mislabel.
+        assert "is not a JSON object" not in str(exc_info.value)
 
     def test_qr_cli_batch_bad_json_exits_clean(self, tmp_path: Path):
         # D3: the qr.py batch path must surface malformed input as a clean error_exit

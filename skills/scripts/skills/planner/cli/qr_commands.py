@@ -5,11 +5,10 @@ Each public function with 'ctx' as first param is auto-discovered as RPC method.
 
 from __future__ import annotations
 
-import json
 from dataclasses import dataclass
 from pathlib import Path
 
-from skills.planner.shared.qr.utils import qr_write_lock
+from skills.planner.shared.qr.utils import load_qr_state, qr_write_lock
 from skills.planner.shared.schema import canonicalize_severity
 
 from .qr_common import (
@@ -111,8 +110,9 @@ def get_item(ctx: QRContext, item_id: str) -> dict:
     if not qr_path.exists():
         raise FileNotFoundError(f"QR state file not found: {qr_path}")
 
-    with open(qr_path, encoding="utf-8") as f:
-        qr_state = json.load(f)
+    qr_state = load_qr_state(str(ctx.state_dir), ctx.phase)
+    if qr_state is None:
+        raise ValueError(f"{qr_path.name} is not a valid QR state object")
 
     _, item = find_item(qr_state, item_id)
     if item is None:
@@ -127,8 +127,9 @@ def list_items(ctx: QRContext, status: str | None = None) -> list[dict]:
     if not qr_path.exists():
         raise FileNotFoundError(f"QR state file not found: {qr_path}")
 
-    with open(qr_path, encoding="utf-8") as f:
-        qr_state = json.load(f)
+    qr_state = load_qr_state(str(ctx.state_dir), ctx.phase)
+    if qr_state is None:
+        raise ValueError(f"{qr_path.name} is not a valid QR state object")
 
     items = []
     for item in qr_state.get("items", []):
@@ -152,8 +153,9 @@ def summary(ctx: QRContext) -> dict:
     if not qr_path.exists():
         raise FileNotFoundError(f"QR state file not found: {qr_path}")
 
-    with open(qr_path, encoding="utf-8") as f:
-        qr_state = json.load(f)
+    qr_state = load_qr_state(str(ctx.state_dir), ctx.phase)
+    if qr_state is None:
+        raise ValueError(f"{qr_path.name} is not a valid QR state object")
 
     counts = {"TODO": 0, "PASS": 0, "FAIL": 0}
     for item in qr_state.get("items", []):

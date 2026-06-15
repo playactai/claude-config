@@ -1,24 +1,15 @@
 """Domain types for the planner skill.
 
-Planner-specific types that extend the shared workflow types.
-Command routing types (FlatCommand, BranchCommand, NextCommand) are
-re-exported from skills.lib.workflow.types for backwards compatibility.
+Planner-specific types that extend the shared workflow types. NextCommand is
+imported from skills.lib.workflow.types as the type of GuidanceResult.next_command.
 """
 
 from dataclasses import dataclass
 
-# Re-export command routing types from lib (backwards compatibility)
-from skills.lib.workflow.types import (
-    BranchCommand,
-    FlatCommand,
-    NextCommand,
-)
+from skills.lib.workflow.types import NextCommand
 
 __all__ = [
-    "BranchCommand",
-    "FlatCommand",
     "GuidanceResult",
-    "NextCommand",
 ]
 
 # =============================================================================

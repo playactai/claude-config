@@ -12,6 +12,7 @@ Available conventions:
 """
 
 from fnmatch import fnmatch
+from functools import cache
 from pathlib import Path
 
 from skills.lib.io import read_text_or_exit
@@ -19,6 +20,7 @@ from skills.lib.io import read_text_or_exit
 _registry_cache: dict | None = None
 
 
+@cache
 def get_convention(name: str) -> str:
     """Load convention from centralized store.
 
@@ -193,6 +195,11 @@ def _parse_registry(text: str) -> dict:
                 current_phase = phase_update
         elif indent == 6 and current_role and current_key:
             _parse_indent_6_phase_items(content, current_role, current_key, current_phase, result)
+        else:
+            # No recognized indent/context matched. Raising (not skipping) keeps the
+            # CI drift-guard fail-closed: a stray-indented or orphaned line that would
+            # otherwise silently drop a role's convention grant is a hard error.
+            raise ValueError(f"Unparseable REGISTRY.yaml line (indent {indent}): {content!r}")
 
     _validate_parsed_structure(result)
     return result

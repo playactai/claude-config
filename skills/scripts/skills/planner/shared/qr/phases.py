@@ -131,18 +131,6 @@ def get_all_phases() -> list[str]:
     return list(QR_PHASES.keys())
 
 
-def get_phases_for_workflow(workflow: str) -> list[str]:
-    """Return phases belonging to a specific workflow.
-
-    Args:
-        workflow: "planner" or "executor"
-
-    Returns:
-        List of phase names for that workflow
-    """
-    return [phase for phase, config in QR_PHASES.items() if config["workflow"] == workflow]
-
-
 def is_execution_phase(phase: str) -> bool:
     """True for executor-workflow phases (impl-code, impl-docs).
 
@@ -156,17 +144,3 @@ def is_execution_phase(phase: str) -> bool:
     """
     cfg = QR_PHASES.get(phase)
     return bool(cfg and cfg.get("workflow") == "executor")
-
-
-def get_orchestrator_module(phase: str) -> str:
-    """Get orchestrator module path for a phase.
-
-    Args:
-        phase: Phase name
-
-    Returns:
-        Python module path for the orchestrator
-    """
-    config = get_phase_config(phase)
-    workflow = config["workflow"]
-    return f"skills.planner.orchestrator.{workflow}"

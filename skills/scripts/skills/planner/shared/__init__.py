@@ -19,12 +19,7 @@ This pattern is applied consistently across:
 
 # Re-export from resources
 # Re-export from domain (planner-specific guidance types)
-from .domain import (
-    BranchCommand,
-    FlatCommand,
-    GuidanceResult,
-    NextCommand,
-)
+from .domain import GuidanceResult
 from .resources import (
     get_exhaustiveness_prompt,
     get_mode_script_path,
@@ -43,11 +38,8 @@ from .routing import (
 __all__ = [
     # Routing
     "WORK_PHASES",
-    "BranchCommand",
-    "FlatCommand",
     # Domain types (planner-specific)
     "GuidanceResult",
-    "NextCommand",
     "detect_qr_state",
     "get_all_work_phases",
     "get_exhaustiveness_prompt",

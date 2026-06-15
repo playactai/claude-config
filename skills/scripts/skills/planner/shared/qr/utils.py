@@ -196,6 +196,20 @@ def by_blocking_severity(iteration: int) -> ItemPredicate:
     return lambda item: _coerce(item.get("severity")) in blocking
 
 
+def _coerce_iteration(raw: object) -> int:
+    """qr-{phase}.json is external; a string/float/garbled iteration must not crash
+    the gate's `iteration >= 4` severity math. Tolerant: non-int -> 1."""
+    try:
+        n = int(raw)  # pyright: ignore[reportArgumentType]
+    except (TypeError, ValueError):
+        return 1
+    return n if n >= 1 else 1
+
+
+def _iteration_of(qr_state: dict | None) -> int:
+    return _coerce_iteration(qr_state.get("iteration")) if qr_state else 1
+
+
 def _blocking_items(state_dir: str, phase: str, *statuses: str) -> list[dict]:
     """Return items at any of *statuses whose severity blocks at the current iteration.
 
@@ -212,7 +226,7 @@ def _blocking_items_from_state(qr_state: dict | None, *statuses: str) -> list[di
     """Same as _blocking_items but accepts a pre-loaded qr_state dict."""
     if not qr_state:
         return []
-    iteration = (qr_state.get("iteration") or 1)
+    iteration = _iteration_of(qr_state)
     return query_items(qr_state, by_status(*statuses), by_blocking_severity(iteration))
 
 
@@ -356,12 +370,12 @@ def get_qr_iteration(state_dir: str, phase: str) -> int:
     qr_state = load_qr_state(state_dir, phase)
     if not qr_state:
         return 1
-    return (qr_state.get("iteration") or 1)
+    return _iteration_of(qr_state)
 
 
 def get_qr_iteration_from_state(qr_state: dict | None) -> int:
     """Same as get_qr_iteration but accepts a pre-loaded qr_state dict (or None)."""
-    return (qr_state.get("iteration") or 1) if qr_state else 1
+    return _iteration_of(qr_state)
 
 
 def has_qr_failures(state_dir: str, phase: str) -> bool:
@@ -476,7 +490,7 @@ def increment_qr_iteration(state_dir: str, phase: str, sig: str) -> int | None:
         return None
 
     qr_state = json.loads(path.read_text(encoding="utf-8"))
-    iteration = (qr_state.get("iteration") or 1) + 1
+    iteration = _iteration_of(qr_state) + 1
     qr_state["iteration"] = iteration
     qr_state["iteration_sig"] = sig
     atomic_write_text(path, json.dumps(qr_state, indent=2))
@@ -501,7 +515,7 @@ def prepare_verify_items(
         qr_state = load_qr_state(state_dir, phase)
     if not qr_state or "items" not in qr_state:
         return None, 1
-    iteration = qr_state.get("iteration") or 1
+    iteration = _iteration_of(qr_state)
     if qr.state == LoopState.RETRY:
         # Idempotent bump: advance only when the recorded FAIL set changed since
         # the last bump (a genuine new fix cycle). A transient verify re-render

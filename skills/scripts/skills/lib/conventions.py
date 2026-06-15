@@ -85,14 +85,25 @@ def _parse_indent_2_keys(content: str, current_role: str, result: dict) -> tuple
         (current_key, current_phase=None)
     """
     key = content.split(":")[0].strip()
+    if key not in ("receives", "phase_specific", "mode_specific", "rationale"):
+        raise ValueError(
+            f"Unrecognized REGISTRY.yaml key {key!r} under role {current_role!r}"
+        )
+    if key == "rationale":
+        result[current_role][key] = content.split(":", 1)[1].strip().strip("\"'")
+        return key, None
 
-    if content.endswith("[]") or key in ("receives",):
-        result[current_role][key] = []
-    elif key in ("phase_specific", "mode_specific"):
-        result[current_role][key] = {}
-    elif key == "rationale":
-        value = content.split(":", 1)[1].strip().strip("\"'")
-        result[current_role][key] = value
+    # receives / phase_specific / mode_specific are block-style containers: their
+    # items live on indented lines below. Any non-empty inline value (a flow-style
+    # list "[a, b]" or map "{x: y}") cannot be represented by this subset parser
+    # and would be silently dropped -- fail closed instead of losing a grant.
+    inline = content.split(":", 1)[1].strip()
+    if inline and inline not in ("[]", "{}"):
+        raise ValueError(
+            f"Flow-style value not supported for {key!r} under role {current_role!r}: "
+            f"use block-style indented lines (got {inline!r})"
+        )
+    result[current_role][key] = [] if key == "receives" else {}
 
     return key, None
 
@@ -179,11 +190,12 @@ def _parse_registry(text: str) -> dict:
     current_phase = None
 
     for line in text.split("\n"):
-        if not line.strip() or line.strip().startswith("#"):
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#") or stripped in ("---", "..."):
             continue
 
         indent = len(line) - len(line.lstrip())
-        content = line.strip()
+        content = stripped
 
         if indent == 0 and ":" in content and not content.startswith("-"):
             current_role, current_key, current_phase = _parse_indent_0_role(content, result)

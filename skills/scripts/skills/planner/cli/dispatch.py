@@ -21,6 +21,8 @@ def discover_methods(module) -> dict[str, Callable[..., Any]]:
     for name, func in inspect.getmembers(module, inspect.isfunction):
         if name.startswith("_"):
             continue
+        if func.__module__ != module.__name__:
+            continue
         sig = inspect.signature(func)
         params = list(sig.parameters.keys())
         if params and params[0] == "ctx":
@@ -101,31 +103,29 @@ def _restore_state(ctx, snapshot: str | None) -> bool:
 
 
 def batch(methods: dict, requests: list[dict], ctx) -> list[dict]:
-    """Execute a batch of RPC requests as an all-or-nothing transaction.
+    """Execute a batch of RPC requests, persisting state once at flush.
 
     Each request: {"method": str, "params": dict, "id": any}
     Each response: {"id": any, "result": any} or {"id": any, "error": {...}}
 
-    Commands persist incrementally (each save_plan/save_qr renames into place),
-    so a mid-batch failure would otherwise leave earlier requests applied. To
-    make the batch atomic the target state file is snapshotted up front and
-    restored on the first failure, which also stops processing -- the response
-    still lists every request's outcome, with the failing entry flagged
-    rolled_back so the caller knows nothing was persisted. Requests after the
-    failure are not attempted; each still gets an entry flagged skipped +
-    rolled_back, so the response stays positionally aligned with requests
-    (len(responses) == len(requests)).
+    Commands validate-per-save but cache writes in the context; flush_batch()
+    writes once after the loop. A failure in any command or during flush
+    restores the pre-batch snapshot. When ctx exposes batch_lock(), the lock
+    is held across snapshot+loop+flush+restore.
 
-    Scope: all-or-nothing covers exactly ctx.state_file() (plan.json or
-    qr-{phase}.json); a command that mutates any other file is not rolled back.
-    When ctx exposes batch_lock(), the lock is held across the entire
-    snapshot+loop+restore so concurrent per-item update-item writers block
-    until the batch's restore completes. Per-item writers that re-acquire the
-    same lock within this process proceed re-entrantly (no self-deadlock).
+    Scope: commands must use ctx.load_*/save_* (not direct I/O) for caching to
+    take effect. Single-call paths never call begin_batch, so save_* writes
+    immediately as before.
+
+    Response length: when a COMMAND fails, len(responses) == len(requests) --
+    the failing request gets an error entry and every later request a skipped
+    entry, so responses stay positionally aligned with requests. A FLUSH failure
+    (every command succeeded but the single write failed) is not attributable to
+    one request: all command results are flagged rolled_back and ONE extra entry
+    with id=None reports the flush error, so len(responses) == len(requests) + 1.
 
     Raises:
-        ValueError: if two requests share the same non-null id (ambiguous
-            results / accidental duplicate replays).
+        ValueError: if two requests share the same non-null id.
     """
     seen_ids: set = set()
     duplicate_ids: list = []
@@ -142,31 +142,46 @@ def batch(methods: dict, requests: list[dict], ctx) -> list[dict]:
         raise ValueError(f"Duplicate request id(s) in batch: {duplicate_ids}")
 
     lock_factory = getattr(ctx, "batch_lock", None)
+    # QRContext exposes batch_lock (qr_write_lock) because QR verify fans out
+    # concurrent per-item writers across processes, so the batch must hold the
+    # lock across snapshot+loop+flush+restore. PlanContext deliberately omits
+    # batch_lock: plan design is single-author (no concurrent writers), so
+    # nullcontext() is correct, not an oversight. The batch-cache hooks
+    # (begin_batch / flush_batch / end_batch) are a separate concern from the
+    # cross-process lock.
     with (lock_factory() if lock_factory else nullcontext()):
         snapshot = _snapshot_state(ctx)
-
         results = []
-        for i, req in enumerate(requests):
-            req_id = req.get("id")
-            method = req.get("method", "")
-            params = req.get("params", {})
-
-            try:
+        try:
+            # begin_batch loads the state once; keep it inside the try so a
+            # missing/unreadable state file (FileNotFoundError) is rolled back and
+            # reported as a structured error like any command failure, not raised
+            # past the CLI entrypoint (which only maps ValueError).
+            if hasattr(ctx, "begin_batch"):
+                ctx.begin_batch()
+            for req in requests:
+                req_id = req.get("id")
+                method = req.get("method", "")
+                params = req.get("params", {})
                 result = dispatch(methods, method, params, ctx)
                 results.append({"id": req_id, "result": result})
-            except Exception as e:
-                reverted = _restore_state(ctx, snapshot)
-                for r in results:
-                    if "result" in r:
-                        r["rolled_back"] = reverted
+            if hasattr(ctx, "flush_batch"):
+                ctx.flush_batch()
+        except Exception as e:
+            reverted = _restore_state(ctx, snapshot)
+            for r in results:
+                if "result" in r:
+                    r["rolled_back"] = reverted
+            failing_index = len(results)
+            if failing_index < len(requests):
+                failed_req = requests[failing_index]
                 results.append(
-                    {"id": req_id, "error": {"code": -32000, "message": str(e), "rolled_back": reverted}}
+                    {
+                        "id": failed_req.get("id"),
+                        "error": {"code": -32000, "message": str(e), "rolled_back": reverted},
+                    }
                 )
-                # The tail never ran or persisted; still emit an entry per
-                # request so the response lists EVERY outcome (positional
-                # mapping / len invariant the docstring promises). skipped
-                # distinguishes "not attempted" from "lost".
-                for skipped in requests[i + 1:]:
+                for skipped in requests[failing_index + 1:]:
                     results.append(
                         {
                             "id": skipped.get("id"),
@@ -178,7 +193,21 @@ def batch(methods: dict, requests: list[dict], ctx) -> list[dict]:
                             },
                         }
                     )
-                break
+            else:
+                # flush itself failed; all command results were already appended
+                results.append(
+                    {
+                        "id": None,
+                        "error": {
+                            "code": -32000,
+                            "message": f"batch flush failed: {e}",
+                            "rolled_back": reverted,
+                        },
+                    }
+                )
+        finally:
+            if hasattr(ctx, "end_batch"):
+                ctx.end_batch()
     return results
 
 

@@ -277,14 +277,14 @@ def cmd_assign_group(state_dir: str, phase: str, args: list[str]):
     if not group_id:
         error_exit("--group-id required")
 
-    qr_path = get_qr_path(state_dir, phase)
-    if not qr_path.exists():
-        error_exit(f"QR state file not found: {qr_path}")
-
     if not is_valid_group_id(group_id):
         error_exit(
             f"Invalid group_id '{group_id}'. Must be 'umbrella' or start with: parent-, component-, concern-, affinity-"
         )
+
+    qr_path = get_qr_path(state_dir, phase)
+    if not qr_path.exists():
+        error_exit(f"QR state file not found: {qr_path}")
 
     with qr_write_lock(state_dir, phase):
         qr_state = load_qr_state_under_lock(qr_path)

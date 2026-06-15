@@ -365,13 +365,13 @@ class SetMilestoneCommand(Command):
             if not args.name:
                 error_exit("--name required for create")
 
-            num = len(plan.milestones) + 1
-            mid = f"M-{num:03d}"
+            mid = plan.next_milestone_id()
+            number = int(mid.rsplit("-", 1)[1])
 
             ms = Milestone(
                 id=mid,
                 version=1,
-                number=num,
+                number=number,
                 name=args.name,
                 files=files,
                 flags=flags,
@@ -481,8 +481,7 @@ class SetIntentCommand(Command):
             if not args.file or not args.behavior:
                 error_exit("--file and --behavior required for create")
 
-            num = len(ms.code_intents) + 1
-            cid = f"CI-{ms.id}-{num:03d}"
+            cid = plan.next_intent_id(ms)
 
             ci = CodeIntent(
                 id=cid,
@@ -550,8 +549,7 @@ class SetDecisionCommand(Command):
             if not args.decision or not args.reasoning:
                 error_exit("--decision and --reasoning required for create")
 
-            num = len(plan.planning_context.decisions) + 1
-            did = f"DL-{num:03d}"
+            did = plan.next_decision_id()
 
             dl = Decision(
                 id=did,
@@ -596,8 +594,7 @@ class SetDiagramCommand(Command):
             dg.title = args.title
             operation = "updated"
         else:
-            next_num = len(plan.diagram_graphs) + 1
-            new_id = f"DIAG-{next_num:03d}"
+            new_id = plan.next_diagram_id()
             dg = DiagramGraph(id=new_id, type=args.type, scope=args.scope, title=args.title)
             plan.diagram_graphs.append(dg)
             operation = "created"
@@ -764,6 +761,8 @@ class SetWaveCommand(Command):
             success(f"Updated wave {wave.id}: {', '.join(milestones) or '(empty)'}")
         else:
             # CREATE path
+            if not milestones:
+                error_exit("--milestones required for create (empty allowed only on update)")
             wid = plan.next_wave_id()
             plan.waves.append(Wave(id=wid, milestones=milestones))
             save_plan(state_dir, plan)

@@ -52,9 +52,17 @@ def _get_schema():
 
 @dataclass
 class PlanContext:
-    """Context passed to all plan commands."""
+    """Context passed to all plan commands.
+
+    No batch_lock: plan design is single-author (no concurrent writers), so the
+    dispatcher's nullcontext() default is correct. The batch-cache hooks
+    (begin_batch / flush_batch / end_batch) are independent of cross-process
+    locking, which QRContext provides via qr_write_lock.
+    """
 
     state_dir: Path
+    _batch: Plan | None = None
+    _batch_dirty: bool = False
 
     def plan_path(self) -> Path:
         return self.state_dir / "plan.json"
@@ -63,7 +71,17 @@ class PlanContext:
         """Single mutable state file (used by batch snapshot/rollback)."""
         return self.plan_path()
 
+    def begin_batch(self) -> None:
+        self._batch = self.load_plan()
+        self._batch_dirty = False
+
+    def end_batch(self) -> None:
+        self._batch = None
+        self._batch_dirty = False
+
     def load_plan(self) -> Plan:
+        if self._batch is not None:
+            return self._batch
         schema = _get_schema()
         path = self.plan_path()
         if not path.exists():
@@ -74,12 +92,33 @@ class PlanContext:
     def save_plan(self, plan: Plan) -> None:
         """Validate the in-memory plan, then atomically persist it.
 
-        Delegates to plan_common.write_plan (shared with cli.plan.save_plan): the
-        validate-refs-before-write core lives there so the two CLI mirrors cannot
-        drift. The batch path layers its own transaction snapshot on top for
-        all-or-nothing across multiple commands.
+        Single-call path: delegate to plan_common.write_plan (shared with
+        cli.plan.save_plan) so the validate-refs-before-write core lives in one
+        place and the two CLI mirrors cannot drift -- validation happens once,
+        there.
+
+        Batch path: validate here (per save) so a bad mutation is attributed to
+        its own request, then cache it; flush_batch() performs the single disk
+        write. Validating only in this branch avoids double-validating every
+        single-call save (write_plan would validate again).
         """
+        if self._batch is not None:
+            errors = plan.validate_refs()
+            if errors:
+                from ..shared.schema import SchemaValidationError
+                raise SchemaValidationError(f"plan.json: {errors}")
+            self._batch = plan
+            self._batch_dirty = True
+            return
         write_plan(self.plan_path(), plan)
+
+    def flush_batch(self) -> None:
+        # Persist once, and only if a command actually mutated the cache -- a
+        # read-only batch must not rewrite (and normalize) the state file.
+        if self._batch is not None and self._batch_dirty:
+            write_plan(self.plan_path(), self._batch)
+        self._batch = None
+        self._batch_dirty = False
 
 
 def _check_version(entity, provided: int | None, entity_id: str) -> None:
@@ -198,13 +237,13 @@ def set_milestone(
         if not name:
             raise ValueError("--name required for create")
 
-        num = len(plan.milestones) + 1
-        mid = f"M-{num:03d}"
+        mid = plan.next_milestone_id()
+        number = int(mid.rsplit("-", 1)[1])
 
         ms = schema["Milestone"](
             id=mid,
             version=1,
-            number=num,
+            number=number,
             name=name,
             files=files_list,
             flags=flags_list,
@@ -281,8 +320,7 @@ def set_intent(
         if not file or not behavior:
             raise ValueError("--file and --behavior required for create")
 
-        num = len(ms.code_intents) + 1
-        cid = f"CI-{ms.id}-{num:03d}"
+        cid = plan.next_intent_id(ms)
 
         ci = schema["CodeIntent"](
             id=cid,
@@ -332,8 +370,7 @@ def set_decision(
         if not decision or not reasoning:
             raise ValueError("--decision and --reasoning required for create")
 
-        num = len(plan.planning_context.decisions) + 1
-        did = f"DL-{num:03d}"
+        did = plan.next_decision_id()
 
         dl = schema["Decision"](id=did, version=1, decision=decision, reasoning=reasoning)
         plan.planning_context.decisions.append(dl)
@@ -358,8 +395,7 @@ def set_diagram(ctx: PlanContext, type: str, scope: str, title: str, id: str | N
         dg.title = title
         operation = "updated"
     else:
-        next_num = len(plan.diagram_graphs) + 1
-        new_id = f"DIAG-{next_num:03d}"
+        new_id = plan.next_diagram_id()
         dg = schema["DiagramGraph"](id=new_id, type=type, scope=scope, title=title)
         plan.diagram_graphs.append(dg)
         id = new_id
@@ -476,6 +512,8 @@ def set_wave(
         ctx.save_plan(plan)
         return {"id": wave.id, "operation": "updated"}
 
+    if not milestones_list:
+        raise ValueError("--milestones required for create (empty allowed only on update)")
     wid = plan.next_wave_id()
     plan.waves.append(schema["Wave"](id=wid, milestones=milestones_list))
     ctx.save_plan(plan)

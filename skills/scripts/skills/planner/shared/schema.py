@@ -251,6 +251,19 @@ if True:
             """
             return [ms for ms in self.milestones if not ms.is_documentation_only]
 
+        @staticmethod
+        def _next_numeric_id(existing_ids, prefix: str) -> str:
+            """Max-based 'PREFIX-NNN', skipping non-canonical/non-ASCII-digit suffixes.
+
+            Collision-safe after a pruned/hand-authored gap (see next_wave_id docstring).
+            """
+            nums = []
+            for eid in existing_ids:
+                head, _, suffix = eid.partition("-")
+                if head == prefix and suffix.isascii() and suffix.isdigit():
+                    nums.append(int(suffix))
+            return f"{prefix}-{max(nums, default=0) + 1:03d}"
+
         def next_wave_id(self) -> str:
             """Next contiguous W-NNN id, skipping non-canonical existing ids.
 
@@ -263,12 +276,26 @@ if True:
             ValueError; restricting to ASCII keeps such a suffix skipped, not
             crashing.
             """
+            return self._next_numeric_id((w.id for w in self.waves), "W")
+
+        def next_milestone_id(self) -> str:
+            return self._next_numeric_id((m.id for m in self.milestones), "M")
+
+        def next_decision_id(self) -> str:
+            return self._next_numeric_id((d.id for d in self.planning_context.decisions), "DL")
+
+        def next_diagram_id(self) -> str:
+            return self._next_numeric_id((g.id for g in self.diagram_graphs), "DIAG")
+
+        def next_intent_id(self, ms) -> str:
+            prefix = f"CI-{ms.id}"
             nums = []
-            for w in self.waves:
-                prefix, _, suffix = w.id.partition("-")
-                if prefix == "W" and suffix.isascii() and suffix.isdigit():
-                    nums.append(int(suffix))
-            return f"W-{max(nums, default=0) + 1:03d}"
+            for ci in ms.code_intents:
+                if ci.id.startswith(prefix + "-"):
+                    suffix = ci.id[len(prefix) + 1 :]
+                    if suffix.isascii() and suffix.isdigit():
+                        nums.append(int(suffix))
+            return f"{prefix}-{max(nums, default=0) + 1:03d}"
 
         def validate_diagram_edges(self, diagram_id: str) -> list[str]:
             """Validate edges for a specific diagram."""
@@ -293,6 +320,28 @@ if True:
             errors = []
             decision_ids = {dl.id for dl in self.planning_context.decisions}
             milestone_ids = {ms.id for ms in self.milestones}
+
+            seen: set[str] = set()
+            for ms in self.milestones:
+                if ms.id in seen:
+                    errors.append(f"duplicate milestone id '{ms.id}'")
+                seen.add(ms.id)
+            seen = set()
+            for dl in self.planning_context.decisions:
+                if dl.id in seen:
+                    errors.append(f"duplicate decision id '{dl.id}'")
+                seen.add(dl.id)
+            seen = set()
+            for ms in self.milestones:
+                for ci in ms.code_intents:
+                    if ci.id in seen:
+                        errors.append(f"duplicate intent id '{ci.id}'")
+                    seen.add(ci.id)
+            seen = set()
+            for dg in self.diagram_graphs:
+                if dg.id in seen:
+                    errors.append(f"duplicate diagram id '{dg.id}'")
+                seen.add(dg.id)
 
             # Per-wave invariants in a single pass (id uniqueness, milestone refs,
             # intra-wave file overlap). Each milestone's file set is the union of its

@@ -32,10 +32,10 @@ def validate_relpath(path: str, context: str) -> str:
     stripping -- closes the two evasions the strip-only guard missed: leading
     whitespace (' src/a.py' never matched 'src/a.py') and an embedded '..'
     ('a/../../shared.py' has no leading '..' yet collapses to the out-of-tree
-    '../shared.py'). The check stays on the normalized form's leading '..' (not
-    the looser '== ".." or startswith("../")') to preserve the prior guard's
-    rejection of every dotdot-prefixed spelling -- no path is newly accepted.
-    A spelling that collapses to the current directory ('.', './', 'a/..', or a
+    '../shared.py'). Path components that equal '..' are rejected regardless of
+    position, so '../x' and 'a/../../b.py' both fail, while a filename that
+    merely contains '..' (like '..config.py') is correctly accepted. A spelling
+    that collapses to the current directory ('.', './', 'a/..', or a
     whitespace-only value -- all normalize to '.') is rejected too: it names no
     file, so storing it would seed a nonsense milestone/intent target.
 
@@ -46,7 +46,7 @@ def validate_relpath(path: str, context: str) -> str:
     normalized = os.path.normpath(path.strip())
     if os.path.isabs(normalized):
         raise ValueError(f"Absolute path not allowed in {context}: {normalized}")
-    if normalized.startswith(".."):
+    if os.pardir in normalized.split(os.sep):
         raise ValueError(f"Parent-relative path not allowed in {context}: {normalized}")
     if normalized == ".":
         raise ValueError(f"Path must name a file, not the current directory, in {context}: {path!r}")

@@ -70,6 +70,8 @@ QR_PHASES: dict[str, dict] = {
 }
 
 
+_VALID_WORKFLOWS = frozenset({"planner", "executor"})
+
 _registries_validated = False
 
 
@@ -101,6 +103,12 @@ def validate_phase_registries() -> None:
             f"DECOMPOSE_CONTENT={sorted(DECOMPOSE_CONTENT)}, "
             f"VERIFIERS={sorted(VERIFIERS)}, QR_PHASES={sorted(QR_PHASES)}"
         )
+    for phase, cfg in QR_PHASES.items():
+        if cfg.get("workflow") not in _VALID_WORKFLOWS:
+            raise RuntimeError(
+                f"QR phase {phase!r} has invalid workflow {cfg.get('workflow')!r}; "
+                f"must be one of {sorted(_VALID_WORKFLOWS)}"
+            )
     _registries_validated = True
 
 

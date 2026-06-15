@@ -431,8 +431,8 @@ def _resolve_target_item(step: int | None, items: list[str]) -> str:
     if not items:
         sys.exit("Error: --qr-item is required to record a result.")
     if step is not None and step >= 2:
-        idx, _ = _item_index_for_step(step)
-        if 0 <= idx < len(items):
+        idx, parity = _item_index_for_step(step)
+        if parity == 1 and 0 <= idx < len(items):
             return items[idx]
     sys.exit(
         "Error: multiple --qr-item values and no CONFIRM --step to disambiguate. "

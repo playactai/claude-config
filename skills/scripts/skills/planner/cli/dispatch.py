@@ -123,9 +123,14 @@ def batch(methods: dict, requests: list[dict], ctx) -> list[dict]:
     (every command succeeded but the single write failed) is not attributable to
     one request: all command results are flagged rolled_back and ONE extra entry
     with id=None reports the flush error, so len(responses) == len(requests) + 1.
+    A SETUP failure (snapshot capture or begin_batch state load, before any
+    command runs) writes nothing and is raised as ValueError; the CLI maps it
+    to a clean error frame, exit 1.
 
     Raises:
         ValueError: if two requests share the same non-null id.
+        ValueError: if snapshot capture or begin_batch state load fails before
+            any command runs (batch-level error, nothing written).
     """
     seen_ids: set = set()
     duplicate_ids: list = []
@@ -150,15 +155,21 @@ def batch(methods: dict, requests: list[dict], ctx) -> list[dict]:
     # (begin_batch / flush_batch / end_batch) are a separate concern from the
     # cross-process lock.
     with (lock_factory() if lock_factory else nullcontext()):
-        snapshot = _snapshot_state(ctx)
-        results = []
+        # Setup (snapshot + begin_batch) runs before any command and writes
+        # nothing, so a failure here is a batch-level error, not a command
+        # failure: convert it to ValueError so the CLI entrypoint's
+        # `except ValueError: error_exit` emits a clean frame and exits 1, rather
+        # than (a) escaping as a raw traceback on a non-ValueError read error or
+        # (b) being misattributed to requests[0] with exit 0. Nothing was written,
+        # so there is nothing to roll back.
         try:
-            # begin_batch loads the state once; keep it inside the try so a
-            # missing/unreadable state file (FileNotFoundError) is rolled back and
-            # reported as a structured error like any command failure, not raised
-            # past the CLI entrypoint (which only maps ValueError).
+            snapshot = _snapshot_state(ctx)
             if hasattr(ctx, "begin_batch"):
                 ctx.begin_batch()
+        except Exception as e:
+            raise ValueError(f"batch could not start: {e}") from e
+        results = []
+        try:
             for req in requests:
                 req_id = req.get("id")
                 method = req.get("method", "")

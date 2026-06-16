@@ -4,7 +4,6 @@ Single implementation eliminates ~150 lines of duplicated gate logic.
 Both planner.py and executor.py call this with their MODULE_PATH.
 """
 
-import sys
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
@@ -300,8 +299,7 @@ def build_gate_output(
         print(
             f"WARNING: --accept-findings ignored: gate is at iteration {iteration}, "
             f"below the ceiling ({QR_ITERATION_LIMIT}); the override only applies "
-            f"at the ceiling.",
-            file=sys.stderr,
+            f"at the ceiling."
         )
 
     # User accepted the findings AT THE CEILING: override to passed so the gate

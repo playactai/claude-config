@@ -16,8 +16,24 @@ The prompt blocks and guidance bodies are relocated VERBATIM from the old files
 Constants are phase-prefixed ([PHASE]_[TYPE]) so the three phases coexist here.
 """
 
+import json
+
 from skills.planner.quality_reviewer.qr_verify_base import VerifyBase
+from skills.planner.shared.builders import shell_quote
 from skills.planner.shared.qr.phases import get_phase_config
+
+
+def _jq_command(state_dir: str, jq_filter: str) -> str:
+    """Shell-safe `cat plan.json | jq <filter>` for the verifier to copy-run."""
+    return f"cat {shell_quote(state_dir)}/plan.json | jq {shell_quote(jq_filter)}"
+
+
+def _jq_select_by_id(state_dir: str, selector: str, item_id: str) -> str:
+    """As _jq_command, selecting an entity by id. json.dumps -> safe jq string
+    literal (blocks jq-program injection); shell_quote of the whole filter blocks
+    shell injection incl. a single-quote in a scope-derived id (json.dumps alone
+    is NOT shell-safe; shell_quote alone is NOT jq-safe — both layers needed)."""
+    return _jq_command(state_dir, f"{selector} | select(.id == {json.dumps(item_id)})")
 
 # ============================================================================
 # DECOMPOSE PROMPTS
@@ -393,7 +409,7 @@ class PlanDesignVerify(VerifyBase):
                     "MACRO CHECK - Verify across entire plan.json:",
                     "",
                     "  Read plan.json:",
-                    f"    cat {state_dir}/plan.json | jq '.'",
+                    f"    {_jq_command(state_dir, '.')}",
                     "",
                 ]
             )
@@ -404,7 +420,7 @@ class PlanDesignVerify(VerifyBase):
                     f"MILESTONE CHECK - Focus on {milestone_id}:",
                     "",
                     "  Read milestone:",
-                    f"    cat {state_dir}/plan.json | jq '.milestones[] | select(.id == \"{milestone_id}\")'",
+                    f"    {_jq_select_by_id(state_dir, '.milestones[]', milestone_id)}",
                     "",
                 ]
             )
@@ -415,7 +431,7 @@ class PlanDesignVerify(VerifyBase):
                     f"CODE INTENT CHECK - Focus on {intent_id}:",
                     "",
                     "  Read intent (find containing milestone first):",
-                    f"    cat {state_dir}/plan.json | jq '.milestones[].code_intents[] | select(.id == \"{intent_id}\")'",
+                    f"    {_jq_select_by_id(state_dir, '.milestones[].code_intents[]', intent_id)}",
                     "",
                 ]
             )
@@ -484,7 +500,7 @@ class ImplCodeVerify(VerifyBase):
                     "  Read plan.json for acceptance criteria (code milestones only --",
                     "  is_documentation_only milestones have no implemented code and are",
                     "  verified in impl-docs):",
-                    f"    cat {state_dir}/plan.json | jq '.milestones[] | select(.is_documentation_only != true) | .acceptance_criteria'",
+                    f"    {_jq_command(state_dir, '.milestones[] | select(.is_documentation_only != true) | .acceptance_criteria')}",
                     "",
                     "  Read modified files from codebase.",
                     "",
@@ -497,7 +513,7 @@ class ImplCodeVerify(VerifyBase):
                     f"MILESTONE CHECK - Focus on {ms_id}:",
                     "",
                     "  Extract milestone:",
-                    f"    cat {state_dir}/plan.json | jq '.milestones[] | select(.id == \"{ms_id}\")'",
+                    f"    {_jq_select_by_id(state_dir, '.milestones[]', ms_id)}",
                     "",
                     "  Read the files associated with this milestone.",
                     "",
@@ -614,10 +630,10 @@ class ImplDocsVerify(VerifyBase):
                     "MACRO CHECK - Verify across all documentation:",
                     "",
                     "  Read plan.json for IK and modified files:",
-                    f"    cat {state_dir}/plan.json | jq '{{ik: .invisible_knowledge, milestones: .milestones[].files}}'",
+                    f"    {_jq_command(state_dir, '{ik: .invisible_knowledge, milestones: .milestones[].files}')}",
                     "",
                     "  Read documentation-only milestone deliverables (files + acceptance criteria):",
-                    f"    cat {state_dir}/plan.json | jq '.milestones[] | select(.is_documentation_only == true) | {{files, acceptance_criteria}}'",
+                    f"    {_jq_command(state_dir, '.milestones[] | select(.is_documentation_only == true) | {files, acceptance_criteria}')}",
                     "",
                     "  Read CLAUDE.md and README.md files in modified directories.",
                     "",
@@ -630,7 +646,7 @@ class ImplDocsVerify(VerifyBase):
                     f"MILESTONE CHECK - Focus on {ms_id}:",
                     "",
                     "  Extract the milestone (files + acceptance criteria):",
-                    f"    cat {state_dir}/plan.json | jq '.milestones[] | select(.id == \"{ms_id}\")'",
+                    f"    {_jq_select_by_id(state_dir, '.milestones[]', ms_id)}",
                     "",
                     "  Read the files this milestone authored and verify its acceptance criteria.",
                     "",
@@ -642,8 +658,8 @@ class ImplDocsVerify(VerifyBase):
                 [
                     f"DIRECTORY CHECK - Focus on {directory}:",
                     "",
-                    f"  Read CLAUDE.md: cat {directory}/CLAUDE.md",
-                    f"  Read README.md: cat {directory}/README.md (if exists)",
+                    f"  Read CLAUDE.md: cat {shell_quote(directory)}/CLAUDE.md",
+                    f"  Read README.md: cat {shell_quote(directory)}/README.md (if exists)",
                     "",
                 ]
             )

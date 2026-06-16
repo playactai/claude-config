@@ -17,8 +17,13 @@ import math
 import threading
 from collections.abc import Callable, Iterator
 from pathlib import Path
+from xml.sax.saxutils import escape
 
-from skills.planner.shared.schema import QA_ITEM_DEFAULTS, canonicalize_severity
+from skills.planner.shared.schema import (
+    LINE_FORGING_ORDS,
+    QA_ITEM_DEFAULTS,
+    canonicalize_severity,
+)
 
 _HELD: dict[tuple[int, str], list] = {}  # (thread_id, lock_path) -> [depth, file]
 _HELD_LOCK = threading.Lock()
@@ -88,8 +93,9 @@ def parse_qr_dict(content: str) -> dict:
 
     The shared dict-contract core for the two QR loaders. Each layers its own
     missing-file / parse-error policy on top: load_qr_state swallows everything to
-    None (fail closed); load_qr_state_under_lock propagates. json.JSONDecodeError
-    propagates so each caller decides whether to catch it.
+    None (fail closed); load_qr_state_under_lock wraps a malformed-JSON
+    json.JSONDecodeError as a self-identifying ValueError so the CLI's top-level
+    handler renders a clean error frame instead of a raw traceback.
     """
     data = json.loads(content)
     if not isinstance(data, dict):
@@ -310,9 +316,9 @@ def format_qr_item_for_verification(item: dict) -> str:
 
     lines = [
         "<qr_item_to_verify>",
-        f"  <id>{item.get('id', QA_ITEM_DEFAULTS['id'])}</id>",
-        f"  <scope>{item.get('scope', QA_ITEM_DEFAULTS['scope'])}</scope>",
-        f"  <check>{item.get('check', QA_ITEM_DEFAULTS['check'])}</check>",
+        f"  <id>{escape(str(item.get('id', QA_ITEM_DEFAULTS['id'])))}</id>",
+        f"  <scope>{escape(str(item.get('scope', QA_ITEM_DEFAULTS['scope'])))}</scope>",
+        f"  <check>{escape(str(item.get('check', QA_ITEM_DEFAULTS['check'])))}</check>",
         "</qr_item_to_verify>",
         "",
         "VERIFY this specific item. Return exactly:",
@@ -320,6 +326,22 @@ def format_qr_item_for_verification(item: dict) -> str:
         "  FAIL - if check fails, with finding explaining why",
     ]
     return "\n".join(lines)
+
+
+def _fix_field_safe(text: object) -> str:
+    """Make an untrusted QR field safe to interpolate into the PLAINTEXT fixer
+    prompt: replace every line-breaking char (LINE_FORGING_ORDS) with a space,
+    except a legitimate newline, which is kept and its continuation indented -- so
+    an embedded line break can't forge a column-0 instruction line.
+
+    check/finding are free-text and are NOT control-char validated (and finding is
+    written by a verify sub-agent), and the fix subprocess re-reads the file without
+    the orchestrator's validate_state gate -- so neutralize at this sink. Multiline
+    content is kept, just visibly nested under its item.
+    """
+    s = str(text).replace("\r\n", "\n").replace("\r", "\n")
+    s = "".join(" " if ord(c) in LINE_FORGING_ORDS and c != "\n" else c for c in s)
+    return s.replace("\n", "\n      ")
 
 
 def format_failed_items_for_fix(qr_state: dict) -> str:
@@ -338,11 +360,11 @@ def format_failed_items_for_fix(qr_state: dict) -> str:
         "",
     ]
     for item in failed:
-        lines.append(f"[{item.get('id', '?')}] {item.get('check', '')}")
+        lines.append(f"[{_fix_field_safe(item.get('id', '?'))}] {_fix_field_safe(item.get('check', ''))}")
         if item.get("scope") and item.get("scope") != "*":
-            lines.append(f"    Scope: {item['scope']}")
+            lines.append(f"    Scope: {_fix_field_safe(item['scope'])}")
         if item.get("finding"):
-            lines.append(f"    Finding: {item['finding']}")
+            lines.append(f"    Finding: {_fix_field_safe(item['finding'])}")
         lines.append("")
 
     lines.append("=" * 60)

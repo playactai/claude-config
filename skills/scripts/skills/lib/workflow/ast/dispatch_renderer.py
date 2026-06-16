@@ -8,7 +8,6 @@ Separate from ast/renderer.py because:
 3. Future separation: Dispatch nodes may gain additional rendering concerns
    (model selection, parallel constraints) that don't belong in core AST.
 """
-from string import Template
 from xml.sax.saxutils import escape, quoteattr
 
 from skills.lib.workflow.ast.dispatch import (
@@ -17,6 +16,7 @@ from skills.lib.workflow.ast.dispatch import (
     TemplateDispatchNode,
 )
 from skills.lib.workflow.prompts.step import pin_cwd
+from skills.lib.workflow.prompts.subagent import expand_template_pairs
 
 
 def _expand_template_targets(
@@ -24,47 +24,12 @@ def _expand_template_targets(
 ) -> list[dict[str, str]]:
     """Expand template+command for each target with substituted values.
 
-    Substitution happens here, not in render_template_dispatch, so
-    render functions only assemble XML from pre-expanded data.
-
-    Args:
-        template: Prompt template with $var placeholders
-        command: Command template with $var placeholders
-        targets: Variable bindings per target
-
-    Returns:
-        List of dicts with "prompt" and "command" keys, values substituted
-
-    Raises:
-        ValueError: If the template/command references a $var that some target
-            provides as a key but THIS target omits -- a per-target inconsistency
-            (e.g. one target missing a flag its siblings carry) that would
-            silently emit a literal "$var". A $name that no target declares is
-            treated as literal text (a "$" baked into a path like /tmp/x$y) and
-            tolerated: the dispatch system validates only the variables it
-            manages (the union of the targets' keys), checked against the
-            template's declared identifiers rather than the substituted output
-            (so a "$" inside a substituted value never trips it).
+    Substitution happens here, not in render_template_dispatch, so render
+    functions only assemble XML from pre-expanded data. Thin wrapper over the
+    shared expand_template_pairs -- see it for the $var contract and the "$$"
+    literal-escape rule (single owner so this and template_dispatch can't drift).
     """
-    managed = set().union(*(set(t) for t in targets)) if targets else set()
-    # Template parsing and identifier extraction are loop-invariant (template and
-    # command never change per target), so build them once instead of 4*N parses.
-    prompt_tmpl = Template(template)
-    cmd_tmpl = Template(command)
-    referenced = set(prompt_tmpl.get_identifiers()) | set(cmd_tmpl.get_identifiers())
-    result = []
-    for i, t in enumerate(targets):
-        prompt = prompt_tmpl.safe_substitute(t)
-        cmd = cmd_tmpl.safe_substitute(t)
-        missing = (referenced & managed) - set(t)
-        if missing:
-            raise ValueError(
-                f"Template variable(s) {sorted('$' + m for m in missing)} not "
-                f"substituted in target {i}: managed by sibling targets but "
-                f"absent here. Provided keys: {sorted(t.keys())}"
-            )
-        result.append({"prompt": prompt, "command": cmd})
-    return result
+    return expand_template_pairs(template, command, targets)
 
 
 def _build_execution_constraint(count: int) -> str:

@@ -367,7 +367,7 @@ def qr_decompose_step(title, phase, script, model=None):
         action_children.append(dispatch_prompt)
         action_children.append("")
 
-        action_children.append("Expected output: qr-{phase}.json written to STATE_DIR")
+        action_children.append(f"Expected output: qr-{phase}.json written to STATE_DIR")
         action_children.append("Orchestrator generates verification dispatch from this file.")
 
         next_step = step + 1

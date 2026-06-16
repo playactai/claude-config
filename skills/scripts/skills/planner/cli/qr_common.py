@@ -48,10 +48,12 @@ def load_qr_state_under_lock(qr_path: Path) -> dict:
         return {"phase": "", "items": []}
     try:
         return parse_qr_dict(content)
-    except json.JSONDecodeError:
-        # Corrupt/truncated JSON: propagate verbatim (with parse location) per
-        # parse_qr_dict's contract; do not mislabel it as a non-dict.
-        raise
+    except json.JSONDecodeError as e:
+        # Corrupt/truncated JSON: re-raise as ValueError carrying the filename
+        # and parse location so the CLI's top-level handler emits a clean
+        # <qr_cli_error> frame (message self-identifies) instead of a raw
+        # traceback, without mislabeling it as a non-dict.
+        raise ValueError(f"{qr_path.name} is not valid JSON: {e}") from e
     except ValueError as e:
         raise ValueError(f"{qr_path.name} is not a JSON object") from e
 

@@ -390,7 +390,10 @@ def cli(args: list[str] | None = None):
     if cmd not in COMMANDS:
         error_exit(f"Unknown command: {cmd}")
 
-    COMMANDS[cmd](state_dir, phase, cmd_args)
+    try:
+        COMMANDS[cmd](state_dir, phase, cmd_args)
+    except ValueError as e:
+        error_exit(str(e))
 
 
 def main():

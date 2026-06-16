@@ -493,8 +493,5 @@ def test_batch_flush_failure_reports_and_clears_cache(tmp_path, monkeypatch):
 def test_plan_batch_missing_file_is_structured_error(tmp_path):
     ctx = pc.PlanContext(state_dir=tmp_path)  # no init -> plan.json absent
     methods = discover_methods(pc)
-    results = batch(
-        methods, [{"method": "list-milestones", "params": {}, "id": 7}], ctx
-    )
-    assert "error" in results[0]  # begin_batch's FileNotFoundError caught, not raised
-    assert results[0]["id"] == 7
+    with pytest.raises(ValueError, match="batch could not start"):
+        batch(methods, [{"method": "list-milestones", "params": {}, "id": 7}], ctx)

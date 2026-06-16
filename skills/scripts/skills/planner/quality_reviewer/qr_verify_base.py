@@ -34,6 +34,8 @@ import sys
 from abc import ABC, abstractmethod
 from typing import ClassVar
 
+from pydantic import ValidationError
+
 from skills.lib.workflow.prompts import pin_cwd
 from skills.planner.shared.builders import shell_quote
 from skills.planner.shared.qr.phases import (
@@ -47,6 +49,7 @@ from skills.planner.shared.qr.utils import (
     load_qr_state,
 )
 from skills.planner.shared.resources import get_context_path, render_context_file
+from skills.planner.shared.schema import QRFile
 
 
 class VerifyBase(ABC):
@@ -198,7 +201,7 @@ class VerifyBase(ABC):
             context_file, missing_ok=is_execution_phase(self.PHASE)
         )
 
-        qr_state = load_qr_state(state_dir, self.PHASE)
+        qr_state = self._load_validated_qr_state(state_dir)
         if not qr_state:
             return {
                 "title": f"QR Verify Step 1/{total_steps}: Context ({self.PHASE})",
@@ -242,6 +245,27 @@ class VerifyBase(ABC):
             "next": f"uv run python -m {module_path} --step 2{phase_arg}{state_dir_arg} {item_flags}",
         }
 
+    def _load_validated_qr_state(self, state_dir: str) -> dict | None:
+        """Load qr state for this verify subprocess, re-running the QRFile/QRItem
+        validation the orchestrator's validate_state gate applies.
+
+        That gate runs only in the orchestrator process; this separate verify
+        process re-reads the file directly (load_qr_state checks dict-ness only),
+        so a control-char-forged id/scope -- which would forge a column-0 line in
+        the rendered plaintext prompt -- must be rejected here too. Fails closed to
+        None (the callers' existing 'could not load' path), rejecting only what the
+        orchestrator already rejects.
+        """
+        assert self.PHASE is not None
+        qr_state = load_qr_state(state_dir, self.PHASE)
+        if qr_state is None:
+            return None
+        try:
+            QRFile.model_validate(qr_state)
+        except ValidationError:
+            return None
+        return qr_state
+
     def _step_analyze(
         self, state_dir: str, module_path: str, item_ids: list[str], item_idx: int, total_steps: int
     ) -> dict:
@@ -251,7 +275,7 @@ class VerifyBase(ABC):
         current_step = 2 + (item_idx * 2)  # ANALYZE is first of the pair
 
         item_id = item_ids[item_idx]
-        qr_state = load_qr_state(state_dir, self.PHASE)
+        qr_state = self._load_validated_qr_state(state_dir)
         if not qr_state:
             return {
                 "title": f"QR Verify Step {current_step}/{total_steps}: Analyze ({self.PHASE})",
@@ -302,7 +326,7 @@ class VerifyBase(ABC):
         current_step = 2 + (item_idx * 2) + 1  # CONFIRM is second of the pair
 
         item_id = item_ids[item_idx]
-        qr_state = load_qr_state(state_dir, self.PHASE)
+        qr_state = self._load_validated_qr_state(state_dir)
         item = get_qr_item(qr_state, item_id) if qr_state else None
         severity = item.get("severity", "SHOULD") if item else "SHOULD"
 

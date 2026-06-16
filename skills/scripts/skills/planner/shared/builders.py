@@ -127,6 +127,13 @@ def build_qr_verify_dispatch(
 
     sd = shell_quote(state_dir)
     base_cmd = f"uv run python -m {verify_script} --step 1 --phase {shell_quote(phase)} --state-dir {sd} $qr_item_flags"
+    # shell_quote wraps paths in single quotes, which stops shell expansion of $ but
+    # does not stop Template's fail-fast from treating a $-in-path as an undeclared
+    # variable.  $$-escape the static prefix (everything before the managed
+    # $qr_item_flags variable) so a literal $ in state_dir or phase survives the
+    # Template layer.  $qr_item_flags is kept intact — it is a managed variable.
+    template_prefix = base_cmd.removesuffix(" $qr_item_flags").replace("$", "$$")
+    template_cmd = f"{template_prefix} $qr_item_flags"
     # pin_cwd: the prose "Start:" line is a command the agent may copy and run
     # directly, so it carries the absolute cd the invoke block already has --
     # otherwise a drifted cwd yields "No module named 'skills'".
@@ -135,13 +142,13 @@ def build_qr_verify_dispatch(
         "Items: $item_ids\n"
         "Checks: $checks_summary\n"
         "\n"
-        "Start: " + pin_cwd(base_cmd)
+        "Start: " + pin_cwd(template_cmd)
     )
     dispatch_text = template_dispatch(
         agent_type="quality-reviewer",
         template=tmpl,
         targets=targets,
-        command=base_cmd,
+        command=template_cmd,
         instruction=f"Verify {len(balanced)} groups ({len(items)} items) in parallel.",
     )
     group_count = len(balanced)

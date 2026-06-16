@@ -1142,7 +1142,7 @@ def cli(args: list[str] | None = None):
                         error_exit(role_err)
 
             results = batch_dispatch(methods, requests, ctx)
-        except ValueError as e:
+        except (ValueError, OSError) as e:
             error_exit(str(e))
         print(json.dumps(results, indent=2))
         return
@@ -1166,7 +1166,7 @@ def cli(args: list[str] | None = None):
     # save_plan before writing; surface it as a clean error, not a traceback.
     try:
         cmd_class.run(parsed)
-    except SchemaValidationError as e:
+    except (SchemaValidationError, OSError) as e:
         error_exit(str(e))
 
 

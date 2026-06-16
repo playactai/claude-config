@@ -318,7 +318,13 @@ def format_qr_item_for_verification(item: dict) -> str:
         "<qr_item_to_verify>",
         f"  <id>{escape(str(item.get('id', QA_ITEM_DEFAULTS['id'])))}</id>",
         f"  <scope>{escape(str(item.get('scope', QA_ITEM_DEFAULTS['scope'])))}</scope>",
-        f"  <check>{escape(str(item.get('check', QA_ITEM_DEFAULTS['check'])))}</check>",
+        # check is free-text (not control-char-validated in schema).  escape()
+        # neutralises <>& but not line-breaking characters — a \n/\r/NEL/LS/PS
+        # in check would forge a column-0 instruction line in the ANALYZE/CONFIRM
+        # verify prompt.  Collapse every LINE_FORGING_ORDS to ⏎ so the XML stays
+        # single-line; the schema's _reject_control_chars covers id/scope (identity
+        # fields), while the remaining plaintext sinks use _fix_field_safe.
+        f"  <check>{escape(''.join('⏎' if ord(c) in LINE_FORGING_ORDS else c for c in str(item.get('check', QA_ITEM_DEFAULTS['check']))))}</check>",
         "</qr_item_to_verify>",
         "",
         "VERIFY this specific item. Return exactly:",

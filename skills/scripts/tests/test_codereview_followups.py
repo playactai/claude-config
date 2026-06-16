@@ -490,7 +490,7 @@ def test_batch_flush_failure_reports_and_clears_cache(tmp_path, monkeypatch):
 # ---------------------------------------------------------------------------
 # F5 / F1 - a batch against a missing state file is a structured error, not a crash
 # ---------------------------------------------------------------------------
-def test_plan_batch_missing_file_is_structured_error(tmp_path):
+def test_plan_batch_missing_file_raises_valueerror(tmp_path):
     ctx = pc.PlanContext(state_dir=tmp_path)  # no init -> plan.json absent
     methods = discover_methods(pc)
     with pytest.raises(ValueError, match="batch could not start"):

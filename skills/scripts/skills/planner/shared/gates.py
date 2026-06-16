@@ -58,14 +58,15 @@ def _unresolved_blocking_findings_from_state(qr_state: dict | None, iteration: i
     """
     if not qr_state:
         return []
+    from skills.planner.shared.qr.utils import _fix_field_safe
     from skills.planner.shared.schema import canonicalize_severity
 
     lines: list[str] = []
     for item in query_items(qr_state, by_status("FAIL"), by_blocking_severity(iteration)):
         sev = canonicalize_severity(item.get("severity")) or "SHOULD"
-        lines.append(f"  [{sev}] {item.get('id', '?')}: {item.get('check', '')}")
+        lines.append(f"  [{sev}] {item.get('id', '?')}: {_fix_field_safe(item.get('check', ''))}")
         if item.get("finding"):
-            lines.append(f"        finding: {item['finding']}")
+            lines.append(f"        finding: {_fix_field_safe(item['finding'])}")
     return lines
 
 
@@ -292,9 +293,10 @@ def build_gate_output(
 
     # --accept-findings only applies at the ceiling (the override just below is
     # gated on iteration >= QR_ITERATION_LIMIT). Passed earlier -- while the gate
-    # still has fix iterations left -- it has no effect; warn to stderr instead of
+    # still has fix iterations left -- it has no effect; warn to stdout instead of
     # silently dropping it, so a mistimed or copied override is visible rather than
-    # appearing to have been honored. stderr keeps the step's stdout output clean.
+    # appearing to have been honored.  The warning prints to stdout because the
+    # orchestrator captures it inline in the step output.
     if accept_findings and iteration < QR_ITERATION_LIMIT:
         print(
             f"WARNING: --accept-findings ignored: gate is at iteration {iteration}, "

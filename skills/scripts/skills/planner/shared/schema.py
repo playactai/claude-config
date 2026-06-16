@@ -503,12 +503,13 @@ if True:
 # QR Schema (qr-{phase}.json)
 # =============================================================================
 
-# Every character that can break a line: the C0 controls + DEL, plus the Unicode
-# line separators NEL/LS/PS. This is exactly the set str.splitlines() breaks on
-# (plus DEL), so any of them in a field rendered into a PLAINTEXT agent prompt can
-# forge a column-0 instruction line. Identity fields reject them outright
-# (QRItem._reject_control_chars); free-text sinks neutralize them while keeping a
-# legitimate newline (qr/utils._fix_field_safe). Single owner so the two can't drift.
+# Every character that can break a line: the C0 controls (0x00-0x1F, a superset of
+# str.splitlines() line breaks), plus DEL (0x7F) and the Unicode line separators
+# NEL (0x85), LS (0x2028), PS (0x2029).  Any of them in a field rendered into a
+# PLAINTEXT agent prompt can forge a column-0 instruction line.  Identity fields
+# reject them outright (QRItem._reject_control_chars); free-text sinks neutralize
+# them while keeping a legitimate newline (qr/utils._fix_field_safe).  Single owner
+# so the validator and neutralizer cannot drift.
 LINE_FORGING_ORDS = frozenset(range(0x20)) | {0x7F, 0x85, 0x2028, 0x2029}
 
 
@@ -548,14 +549,17 @@ if True:
 
             A decompose-authored newline (or any line break -- see
             LINE_FORGING_ORDS, incl. the Unicode separators NEL/LS/PS) here forges a
-            line at column 0 of a PLAINTEXT agent prompt. id reaches the parallel
+            line at column 0 of a PLAINTEXT agent prompt.  id reaches the parallel
             QR-verify dispatch (build_qr_verify_dispatch -> item_ids / qr_item_flags),
             where a forged '--- Agent N ---' line hijacks the verify fan-out; scope
             reaches the single-agent decompose/fix item listings (e.g. decompose's
-            '{id} [scope={scope}]'), where it forges a fake item row. id is also a
+            '{id} [scope={scope}]'), where it forges a fake item row.  id is also a
             lookup key (find_item / --qr-item), so it must be rejected, not silently
-            rewritten. validate_state runs this at step>1 entry, before any prompt
-            renders, so a malformed item fails the run closed.
+            rewritten.  check and finding are free-text fields neutralized at every
+            sink (qr/utils._fix_field_safe and format_qr_item_for_verification);
+            rejecting them here would regress legitimate multi-line content.
+            validate_state runs this at step>1 entry, before any prompt renders, so
+            a malformed item fails the run closed.
             """
             if any(ord(c) in LINE_FORGING_ORDS for c in v):
                 raise ValueError(

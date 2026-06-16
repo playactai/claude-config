@@ -221,10 +221,12 @@ class VerifyBase(ABC):
                 }
             items.append(item)
 
+        from skills.planner.shared.qr.utils import _fix_field_safe
+
         item_summary = []
         for item in items:
             severity = item.get("severity", "SHOULD")
-            item_summary.append(f"  {item['id']} [{severity}]: {item.get('check', '')[:60]}")
+            item_summary.append(f"  {item['id']} [{severity}]: {_fix_field_safe(item.get('check', ''))[:60]}")
 
         return {
             "title": f"QR Verify Step 1/{total_steps}: Context ({self.PHASE})",

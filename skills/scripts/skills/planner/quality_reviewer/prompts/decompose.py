@@ -45,10 +45,12 @@ def render_item_list(items: list[dict], label: str = "ungrouped_items") -> str:
     """
     if not items:
         return f"{label}: 0 items"
+    from skills.planner.shared.qr.utils import _fix_field_safe
+
     lines = [f"{label}: {len(items)} items"]
     for i in items:
         scope = i.get("scope", "*")
-        check = i.get("check", "")[:80]
+        check = _fix_field_safe(i.get("check", ""))[:80]
         lines.append(f"  {i['id']} [scope={scope}]: {check}")
     return "\n".join(lines)
 
@@ -58,9 +60,21 @@ def load_ungrouped_todo_items(state_dir: str, phase: str) -> list[dict]:
 
     WHY filter: Grouping operates only on unassigned TODO items.
     Completed or already-grouped items retain their state.
+
+    Also runs QRFile/QRItem validation (mirroring the verify subprocess's
+    _load_validated_qr_state) so a verify-authored control-char-injected
+    check/finding loaded by the decompose subprocess fails closed here.
     """
+    from pydantic import ValidationError
+
+    from skills.planner.shared.schema import QRFile
+
     qr_state = load_qr_state(state_dir, phase)
     if not qr_state:
+        return []
+    try:
+        QRFile.model_validate(qr_state)
+    except ValidationError:
         return []
     return [
         i

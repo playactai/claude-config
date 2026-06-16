@@ -222,11 +222,13 @@ def cmd_list_items(state_dir: str, phase: str, args: list[str]):
     if qr_state is None:
         error_exit(f"{qr_path.name} is not a valid QR state object")
 
+    from skills.planner.shared.qr.utils import _fix_field_safe
+
     for item in qr_state.get("items", []):
         item_status = item.get("status", "TODO")
         if status_filter and item_status != status_filter:
             continue
-        finding_str = f" | {item.get('finding', '')}" if item.get("finding") else ""
+        finding_str = f" | {_fix_field_safe(item['finding'])}" if item.get("finding") else ""
         print(f"{item.get('id')}\t{item_status}{finding_str}")
 
 
@@ -392,7 +394,7 @@ def cli(args: list[str] | None = None):
 
     try:
         COMMANDS[cmd](state_dir, phase, cmd_args)
-    except ValueError as e:
+    except (ValueError, OSError) as e:
         error_exit(str(e))
 
 

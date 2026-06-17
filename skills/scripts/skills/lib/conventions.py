@@ -57,13 +57,21 @@ def _parse_list_item(content: str) -> str:
     return content[1:].strip().strip("\"'")
 
 
-def _parse_phase_item(content: str) -> tuple[str, list]:
-    """Parse phase_specific phase header.
+def _parse_phase_item(content: str, current_role: str, current_key: str) -> tuple[str, list]:
+    """Parse phase_specific / mode_specific phase header.
 
-    Returns:
-        (phase_name, empty_list)
+    Raises ValueError for unsupported inline flow-style values so a grant
+    isn't silently dropped (matching _parse_indent_2_keys behavior).
     """
-    phase_name = content.split(":")[0].strip()
+    phase_name, _, inline = content.partition(":")
+    phase_name = phase_name.strip()
+    inline = inline.strip()
+    if inline and inline not in ("[]", "{}"):
+        raise ValueError(
+            f"Flow-style value not supported for phase {phase_name!r} "
+            f"under {current_key!r} / role {current_role!r}: "
+            f"use block-style indented lines (got {inline!r})"
+        )
     return phase_name, []
 
 
@@ -125,13 +133,13 @@ def _parse_indent_4_items(
         return None
 
     if current_key == "phase_specific" and ":" in content:
-        phase_name, phase_list = _parse_phase_item(content)
+        phase_name, phase_list = _parse_phase_item(content, current_role, current_key)
         result[current_role][current_key][phase_name] = phase_list
         return phase_name
 
     if current_key == "mode_specific" and ":" in content:
         # mode_specific uses same structure as phase_specific
-        mode_name, mode_list = _parse_phase_item(content)
+        mode_name, mode_list = _parse_phase_item(content, current_role, current_key)
         result[current_role][current_key][mode_name] = mode_list
         return mode_name
 

@@ -96,6 +96,20 @@ def test_parse_registry_raises_on_indent6_under_receives():
         conventions._parse_registry(bad)
 
 
+def test_parse_registry_raises_on_inline_phase_specific_value():
+    """Inline flow-style value under phase_specific is a hard error (was silently dropped)."""
+    bad = "developer:\n  phase_specific:\n    plan_completeness: [structural.md]\n"
+    with pytest.raises(ValueError, match="Flow-style value not supported"):
+        conventions._parse_registry(bad)
+
+
+def test_parse_registry_raises_on_inline_mode_specific_value():
+    """Inline flow-style value under mode_specific is a hard error (was silently dropped)."""
+    bad = "refactor:\n  mode_specific:\n    design: [temporal.md]\n"
+    with pytest.raises(ValueError, match="Flow-style value not supported"):
+        conventions._parse_registry(bad)
+
+
 def test_committed_registry_parses_under_strict_parser():
     """The real REGISTRY.yaml stays parseable -- the strict parser isn't over-strict
     and no committed line is silently dropped."""

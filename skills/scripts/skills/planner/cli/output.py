@@ -11,13 +11,15 @@ from dataclasses import dataclass
 from typing import NoReturn
 from xml.sax.saxutils import escape
 
+from skills.lib.workflow.ast.renderer import cdata_escape
+
 
 def _cdata(text: str) -> str:
     """Wrap text in a CDATA section so embedded XML metacharacters (<, &) in a
     serialized entity (code diffs, generics) can't malform the frame. Splits any
     literal ']]>' so it cannot terminate the section early (cf. render_file_content).
     """
-    escaped = text.replace("]]>", "]]]]><![CDATA[>")
+    escaped = cdata_escape(text)
     return f"<![CDATA[{escaped}]]>"
 
 

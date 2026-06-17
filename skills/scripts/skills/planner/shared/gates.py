@@ -231,7 +231,7 @@ def build_gate_output(
     state_dir: str,
     phase: str,
     accept_findings: bool = False,
-    qr_state: dict | None = _UNSET,
+    qr_state: dict | None | _UnsetType = _UNSET,
     plan: "Plan | None" = None,
 ) -> GateResult:
     """Build complete gate step output for QR gates.
@@ -258,10 +258,15 @@ def build_gate_output(
     # former state_dir-taking twins each re-read the file, yielding 4-5 redundant
     # open()+json.load() per gate. _UNSET means a direct caller (e.g. tests) skipped
     # the pre-load, so we self-load here to preserve standalone usability.
+    resolved_state: dict | None = None
     if state_dir and phase:
         if qr_state is _UNSET:
-            qr_state = load_qr_state(state_dir, phase)
-        if qr_state is None:
+            resolved_state = load_qr_state(state_dir, phase)
+        elif qr_state is None:
+            resolved_state = None
+        else:
+            resolved_state = qr_state  # type: ignore[assignment]
+        if resolved_state is None:
             # Missing/corrupt qr-{phase}.json at gate time. Normal flow never reaches
             # here -- the verify step routes back to decompose on a missing file -- so
             # this is a manual deletion between verify and gate. Fail CLOSED: a gate
@@ -271,8 +276,8 @@ def build_gate_output(
             passed = False
             iteration = qr.iteration
         else:
-            passed = not has_qr_failures_from_state(qr_state)
-            iteration = get_qr_iteration_from_state(qr_state)
+            passed = not has_qr_failures_from_state(resolved_state)
+            iteration = get_qr_iteration_from_state(resolved_state)
             # has_qr_failures_from_state reads False in two distinct situations: failures have
             # de-escalated below the blocking threshold (a real pass), OR nothing is
             # recorded yet -- a verifier returned FAIL without persisting its item, or
@@ -282,20 +287,20 @@ def build_gate_output(
             if (
                 passed
                 and qr.status == QRStatus.FAIL
-                and not _has_recorded_failure_from_state(qr_state)
+                and not _has_recorded_failure_from_state(resolved_state)
             ):
                 passed = False
             # A blocking item still at TODO is unverified blocking work, not a pass --
             # has_qr_failures_from_state counts only blocking FAIL, so it misses a blocking MUST whose
             # verifier returned FAIL/crashed before persisting. status-blind so it closes
             # both the --qr-status fail de-escalation veto above and the --qr-status pass
-            # LLM tally. The fail routes to the work step, where re-verify re-dispatches the
+            # LLM tally. With no recorded blocking FAIL to fix, the fail routes to the
+            # verify step (see the next_cmd selection below), which re-dispatches the
             # still-TODO item, so a transient verifier crash self-heals next pass; the loop is
             # intentionally un-ceilinged (iteration advances only on a recorded blocking FAIL).
-            if passed and _has_blocking_todo_from_state(qr_state):
+            if passed and _has_blocking_todo_from_state(resolved_state):
                 passed = False
     else:
-        qr_state = None
         passed = qr.passed
         iteration = qr.iteration
 
@@ -352,7 +357,7 @@ def build_gate_output(
             iteration=iteration,
             pass_step=pass_step,
             state_dir=state_dir,
-            qr_state=qr_state,
+            qr_state=resolved_state,
         )
 
     parts = []
@@ -403,7 +408,15 @@ def build_gate_output(
         if state_dir:
             next_cmd += f" --state-dir {shell_quote(state_dir)}"
     else:
-        next_cmd = f"uv run python -m {module_path} --step {work_step} --state-dir {shell_quote(state_dir)}"
+        # A recorded blocking FAIL has a finding to fix -> work step (fix mode, which
+        # the router and fix_mode derivation expect). A TODO-veto or status-tally
+        # mismatch (no recorded blocking FAIL) has nothing concrete to fix -> re-verify,
+        # which re-dispatches the still-TODO item so a transient verifier crash
+        # self-heals. verify_step is always gate_step - 1 (work -> decompose -> verify -> gate).
+        # When the file is missing (resolved_state is None), route to work_step so
+        # decompose re-creates the file.
+        fail_step = work_step if resolved_state is None or has_qr_failures_from_state(resolved_state) else step - 1
+        next_cmd = f"uv run python -m {module_path} --step {fail_step} --state-dir {shell_quote(state_dir)}"
 
     return GateResult(
         output=format_step(body, next_cmd, title=title),

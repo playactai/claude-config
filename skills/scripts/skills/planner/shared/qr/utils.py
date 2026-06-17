@@ -272,7 +272,7 @@ def balance_verify_groups(
     max_parallel: int,
     target_per_group: int,
 ) -> list[list[dict]]:
-    """Re-bin verify items into balanced, capped parallel groups (audit §2 leak 2).
+    """Re-bin verify items into balanced, capped parallel groups.
 
     The decompose agent's group_id is an affinity hint, not a correctness
     boundary -- every item carries its own independent check and PASS/FAIL, so

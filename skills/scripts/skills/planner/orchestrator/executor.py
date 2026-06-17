@@ -22,7 +22,6 @@ QR Block Pattern (matching planner's 4-step pattern per phase):
 """
 
 import argparse
-import json
 import sys
 import tempfile
 from pathlib import Path
@@ -44,7 +43,7 @@ from skills.planner.shared.constraints import (
     ORCHESTRATOR_CONSTRAINT,
     format_state_banner,
 )
-from skills.planner.shared.gates import _UNSET, build_gate_output
+from skills.planner.shared.gates import build_gate_output
 from skills.planner.shared.qr.cli import add_qr_args
 from skills.planner.shared.qr.phases import get_phase_config
 from skills.planner.shared.qr.types import LoopState, QRState, QRStatus
@@ -195,7 +194,7 @@ def format_step_2(qr: QRState, state_dir: str) -> str:
             "     - Milestone: [number and name]",
             "     - Files: [exact paths to create/modify]",
             "     - Acceptance criteria: [from plan, milestones[].acceptance_criteria]",
-            # Code Intent is the durable contract (audit §1 redesign): there are no
+            # Code Intent is the durable contract: there are no
             # plan-time diffs. The developer regenerates the implementation JIT
             # against the live file; impl-code QR reviews exactly what ships.
             "     - Code Intent: the milestone's code_intents[] from plan.json",
@@ -337,7 +336,7 @@ def format_qr_gate(
     phase: str,
     state_dir: str,
     qr: QRState,
-    qr_state: dict | None = _UNSET,
+    qr_state: dict | None,
     plan: "Plan | None" = None,
 ) -> str:
     """Route based on QR results: pass → next phase, fail → fix loop."""
@@ -461,7 +460,8 @@ def format_output(
     # verify/gate running as INITIAL even mid-fix-loop (Qodo review #4).
     phase = EXECUTOR_STEP_PHASES.get(step)
     if qr_states is not None:
-        qr_state = qr_states.get(phase) if state_dir and phase else None
+        qr_model = qr_states.get(phase) if state_dir and phase else None
+        qr_state = qr_model.model_dump(mode="json") if qr_model else None
     else:
         qr_state = load_qr_state(state_dir, phase) if state_dir and phase else None
     iteration = get_qr_iteration_from_state(qr_state) if qr_state else 1
@@ -533,27 +533,9 @@ def main():
             )
         plan_path = Path(state_dir) / "plan.json"
         try:
-            plan_path.write_text(
-                json.dumps(
-                    {
-                        "overview": {"problem": "", "approach": ""},
-                        "planning_context": {
-                            "decisions": [],
-                            "rejected_alternatives": [],
-                            "constraints": [],
-                            "risks": [],
-                        },
-                        "invisible_knowledge": {
-                            "system": "",
-                            "invariants": [],
-                            "tradeoffs": [],
-                        },
-                        "milestones": [],
-                        "waves": [],
-                    },
-                    indent=2,
-                )
-            )
+            from skills.planner.shared.schema import Overview, Plan
+
+            plan_path.write_text(Plan(overview=Overview(problem="", approach="")).model_dump_json(indent=2))
         except OSError as e:
             sys.exit(f"Error: failed to write plan skeleton to {plan_path}: {e}")
 

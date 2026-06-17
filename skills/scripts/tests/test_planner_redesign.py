@@ -447,6 +447,39 @@ def test_impl_docs_qr_verifies_doc_only_acceptance_criteria():
     assert "DOCUMENTATION-ONLY DELIVERABLE CHECK" in deliverable
 
 
+def test_impl_docs_why_not_what_verify_guidance():
+    from skills.planner.quality_reviewer.prompts.content import ImplDocsVerify
+
+    guidance = "\n".join(
+        ImplDocsVerify().get_verification_guidance(
+            {"scope": "*", "check": "WHY-not-WHAT violations"}, "/tmp/x"
+        )
+    )
+    assert "WHY-NOT-WHAT VERIFICATION:" in guidance
+
+
+def test_impl_code_convention_verify_guidance():
+    from skills.planner.quality_reviewer.prompts.content import ImplCodeVerify
+
+    guidance = "\n".join(
+        ImplCodeVerify().get_verification_guidance(
+            {"scope": "file:x.py", "check": "CONVENTION_VIOLATION"}, "/tmp/x"
+        )
+    )
+    assert "CONVENTION VERIFICATION:" in guidance
+
+
+def test_impl_code_testing_strategy_verify_guidance():
+    from skills.planner.quality_reviewer.prompts.content import ImplCodeVerify
+
+    guidance = "\n".join(
+        ImplCodeVerify().get_verification_guidance(
+            {"scope": "*", "check": "TESTING_STRATEGY_VIOLATION"}, "/tmp/x"
+        )
+    )
+    assert "TESTING-STRATEGY VERIFICATION:" in guidance
+
+
 def test_doc_deliverable_unsatisfied_is_must_not_should():
     # A doc-only milestone's whole purpose is its deliverable; an unproduced one is
     # knowledge loss. It must block all iterations (escalating to the user at the

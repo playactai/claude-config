@@ -50,14 +50,12 @@ from .dispatch import batch as batch_dispatch
 from .dispatch import discover_methods, list_methods
 from .output import EntityResult, print_entity_result
 from .qr_common import (
-    FORBIDS_FINDING,
-    REQUIRES_FINDING,
-    TERMINAL_STATUSES,
-    VALID_STATUSES,
+    assign_group_in_state,
     find_item,
     is_valid_group_id,
     load_qr_state_under_lock,
     save_qr_state_atomic,
+    update_item_in_state,
 )
 
 
@@ -74,21 +72,6 @@ def get_qr_path(state_dir: str, phase: str) -> Path:
     return Path(state_dir) / f"qr-{phase}.json"
 
 
-def validate_transition(current_status: str, new_status: str, item_id: str):
-    """Validate status transition is allowed.
-
-    State transitions:
-    - TODO -> PASS: verification succeeded
-    - TODO -> FAIL: verification found issue
-    - FAIL -> PASS: fix applied and re-verified
-    - FAIL -> FAIL: re-verification still finds issues (findings update)
-    - PASS -> *: forbidden; if previously passed, can't unpass
-    """
-    if current_status in TERMINAL_STATUSES:
-        error_exit(
-            f"Item {item_id} has terminal status {current_status}. "
-            f"Cannot transition to {new_status}."
-        )
 
 
 def cmd_update_item(state_dir: str, phase: str, args: list[str]):
@@ -132,16 +115,6 @@ def cmd_update_item(state_dir: str, phase: str, args: list[str]):
     if not status:
         error_exit("--status required (PASS or FAIL)")
 
-    if status not in VALID_STATUSES:
-        error_exit(f"Invalid status: {status}. Must be PASS or FAIL.")
-
-    # Validate finding requirements
-    if status in REQUIRES_FINDING and not finding:
-        error_exit(f"Status {status} requires --finding to explain what failed.")
-
-    if status in FORBIDS_FINDING and finding:
-        error_exit(f"Status {status} forbids --finding. PASS means no issues found.")
-
     qr_path = get_qr_path(state_dir, phase)
     if not qr_path.exists():
         error_exit(f"QR state file not found: {qr_path}")
@@ -152,28 +125,11 @@ def cmd_update_item(state_dir: str, phase: str, args: list[str]):
     with qr_write_lock(state_dir, phase):
         qr_state = load_qr_state_under_lock(qr_path)
 
-        idx, item = find_item(qr_state, item_id)
-        if idx < 0:
-            error_exit(f"Item {item_id} not found in qr-{phase}.json")
-        assert item is not None
+        try:
+            item = update_item_in_state(qr_state, item_id, status, finding, severity)
+        except ValueError as e:
+            error_exit(str(e))
 
-        current_status = item.get("status", "TODO")
-        validate_transition(current_status, status, item_id)
-
-        # Version increments on status change
-        item["version"] = item.get("version", 1) + 1
-        item["status"] = status
-        if finding:
-            item["finding"] = finding
-        elif "finding" in item and status == "PASS":
-            # Clear finding on PASS (e.g., FAIL->PASS transition)
-            del item["finding"]
-        if severity:
-            item["severity"] = severity
-
-        qr_state["items"][idx] = item
-
-        # Atomic write under the held lock.
         save_qr_state_atomic(qr_path, qr_state)
 
     # Structured output matching plan.py format
@@ -288,14 +244,10 @@ def cmd_assign_group(state_dir: str, phase: str, args: list[str]):
 
     with qr_write_lock(state_dir, phase):
         qr_state = load_qr_state_under_lock(qr_path)
-
-        idx, item = find_item(qr_state, item_id)
-        if idx < 0:
-            error_exit(f"Item {item_id} not found in qr-{phase}.json")
-        assert item is not None
-
-        item["group_id"] = group_id
-        qr_state["items"][idx] = item
+        try:
+            item = assign_group_in_state(qr_state, item_id, group_id)
+        except ValueError as e:
+            error_exit(str(e))
         save_qr_state_atomic(qr_path, qr_state)
 
     print_entity_result(

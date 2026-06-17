@@ -608,6 +608,28 @@ class ImplCodeVerify(VerifyBase):
                     "",
                 ]
             )
+        elif "convention" in check.lower():
+            guidance.extend(
+                [
+                    "CONVENTION VERIFICATION:",
+                    "  Confirm the change follows the documented project convention.",
+                    "  - Read the relevant CLAUDE.md / conventions doc for the rule.",
+                    "  - FAIL only when the code contradicts a convention that is",
+                    "    actually documented (cite it); style preference is not a FAIL.",
+                    "",
+                ]
+            )
+        elif "testing" in check.lower() and "strategy" in check.lower():
+            guidance.extend(
+                [
+                    "TESTING-STRATEGY VERIFICATION:",
+                    "  Confirm new/changed tests follow the strategy confirmed in the plan.",
+                    "  - Check tests target the agreed level (unit/integration/property).",
+                    "  - FAIL if tests assert only the happy path when the strategy",
+                    "    requires edge/error coverage, or use a banned mocking style.",
+                    "",
+                ]
+            )
 
         return guidance
 
@@ -749,6 +771,16 @@ class ImplDocsVerify(VerifyBase):
                     "  and confirm every acceptance criterion is satisfied by the authored docs.",
                     "  - A milestone with NO acceptance_criteria is vacuously satisfied (PASS).",
                     "  - FAIL a criterion only with concrete evidence it is unmet.",
+                    "",
+                ]
+            )
+        elif "why" in check.lower() and "what" in check.lower():
+            guidance.extend(
+                [
+                    "WHY-NOT-WHAT VERIFICATION:",
+                    "  Comments should explain reasoning, not describe code.",
+                    "  BAD: 'Added a new function' (describes action)",
+                    "  GOOD: 'Mutex serializes cache access' (explains purpose)",
                     "",
                 ]
             )

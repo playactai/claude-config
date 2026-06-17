@@ -70,3 +70,50 @@ def save_qr_state_atomic(qr_path: Path, qr_state: dict) -> None:
 # find_item is re-exported above (explicit ``as`` so pyflakes keeps the re-export
 # rather than pruning it) so both CLIs share the one object via qr_common and
 # cannot drift apart.
+
+
+def update_item_in_state(qr_state: dict, item_id: str, status: str,
+                         finding: str | None, severity: str | None) -> dict:
+    """Validate + apply one status update to qr_state in place; return the item.
+
+    Caller holds the phase write lock and owns severity canonicalization (pre-lock).
+    """
+    if status not in VALID_STATUSES:
+        raise ValueError(f"Invalid status: {status}. Must be PASS or FAIL.")
+    if status in REQUIRES_FINDING and not finding:
+        raise ValueError(f"Status {status} requires a finding to explain what failed.")
+    if status in FORBIDS_FINDING and finding:
+        raise ValueError(f"Status {status} forbids a finding. PASS means no issues found.")
+    idx, item = find_item(qr_state, item_id)
+    if idx < 0:
+        raise ValueError(f"Item {item_id} not found in qr-{qr_state.get('phase', '')}.json")
+    assert item is not None
+    current_status = item.get("status", "TODO")
+    if current_status in TERMINAL_STATUSES:
+        raise ValueError(
+            f"Item {item_id} has terminal status {current_status}. Cannot transition to {status}."
+        )
+    item["version"] = item.get("version", 1) + 1
+    item["status"] = status
+    if finding:
+        item["finding"] = finding
+    elif "finding" in item and status == "PASS":
+        del item["finding"]
+    if severity:
+        item["severity"] = severity
+    qr_state["items"][idx] = item
+    return item
+
+
+def assign_group_in_state(qr_state: dict, item_id: str, group_id: str) -> dict:
+    """Apply a group assignment in place; return the item. No version bump (metadata).
+
+    group_id validity is checked by each caller before the file-exists check.
+    """
+    idx, item = find_item(qr_state, item_id)
+    if idx < 0:
+        raise ValueError(f"Item {item_id} not found in qr-{qr_state.get('phase', '')}.json")
+    assert item is not None
+    item["group_id"] = group_id
+    qr_state["items"][idx] = item
+    return item

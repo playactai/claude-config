@@ -58,7 +58,7 @@ def _invoke_line(cmd: str) -> str:
     pin_cwd prefixes an absolute cd into SKILLS_DIR so a spawned agent whose cwd has
     drifted still resolves the `skills` package; the prior relative
     working-dir=".claude/skills/scripts" failed with "No module named 'skills'"
-    (audit #12; matches refactor._invoke_tag / render_subagent_dispatch). No quoteattr:
+    Matches the same pattern as refactor._invoke_tag / render_subagent_dispatch. No quoteattr:
     render_current_action emits actions verbatim, so the literal `&&` and the
     \\"...\\" / {{var}} placeholders must survive unescaped.
     """

@@ -6,6 +6,7 @@ Function names use underscores, converted to hyphens for method names.
 
 from __future__ import annotations
 
+import functools
 import json
 from dataclasses import dataclass
 from pathlib import Path
@@ -23,6 +24,7 @@ if TYPE_CHECKING:
     from ..shared.schema import Plan
 
 
+@functools.cache
 def _get_schema():
     """Lazy import to avoid circular deps."""
     from ..shared.schema import (

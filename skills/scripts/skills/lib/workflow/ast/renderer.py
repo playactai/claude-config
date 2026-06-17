@@ -21,6 +21,11 @@ from skills.lib.workflow.ast.nodes import (
 from skills.lib.workflow.prompts.step import pin_cwd
 
 
+def cdata_escape(text: str) -> str:
+    """Split any literal ']]>' so it cannot terminate a CDATA section early."""
+    return text.replace("]]>", "]]]]><![CDATA[>")
+
+
 class Renderer(Protocol):
     """Abstract renderer interface."""
 
@@ -82,7 +87,7 @@ class XMLRenderer:
         into multiple CDATA sections: "foo]]>bar" -> "foo]]]]><![CDATA[>bar"
         """
         # Escape "]]>" sequences to prevent premature CDATA termination
-        escaped = node.content.replace("]]>", "]]]]><![CDATA[>")
+        escaped = cdata_escape(node.content)
         return f"<file path={quoteattr(node.path)}><![CDATA[\n{escaped}\n]]></file>"
 
     def render_step_header(self, node: StepHeaderNode) -> str:

@@ -62,14 +62,11 @@ def _invoke_tag(cmd: str) -> str:
     """Render a well-formed <invoke> directive for the refactor workflow.
 
     pin_cwd prefixes an absolute ``cd`` into SKILLS_DIR so a sub-agent whose cwd
-    has drifted still resolves the ``skills`` package (matches
-    dispatch_renderer.py; the prior relative working-dir attr failed with "No
-    module named 'skills'" once the planner subsystem moved to absolute cd).
-    quoteattr then escapes the whole command so a --scope path containing XML
-    metacharacters (&, <, ") cannot break out of the attribute and malform the
-    directive (audit #9 whole-class: scope reached these hand-built invokes
-    unescaped). Matches the escaping render_invoke_after already applies to
-    InvokeAfterNode commands.
+    has drifted still resolves the ``skills`` package (matches dispatch_renderer.py;
+    a relative working-dir attr fails with "No module named 'skills'"). quoteattr
+    then escapes the whole command so a --scope path containing XML metacharacters
+    (&, <, ") cannot break out of the attribute and malform the directive. Matches
+    the escaping render_invoke_after already applies to InvokeAfterNode commands.
     """
     return f"<invoke cmd={quoteattr(pin_cwd(cmd))} />"
 
@@ -253,7 +250,7 @@ def build_explore_dispatch(
     # Scope propagation to explore agents. Double every $ so the safe_substitute
     # that render_template_dispatch runs over `command` below treats a $-bearing
     # scope token (e.g. "src/$mode") as a literal instead of interpolating it as
-    # a $ref/$mode template var (audit #2). The real placeholders are the bare
+    # a $ref/$mode template var. The real placeholders are the bare
     # $ref/$mode concatenated separately into `command`; safe_substitute turns
     # $$ back into a single $, and shlex's single-quotes still shield it at the
     # shell layer when the agent runs the invoke.
@@ -262,7 +259,7 @@ def build_explore_dispatch(
     # Template prompt with $var placeholders. The command lives in `command`
     # below (rendered once as an escaped <invoke> by render_template_dispatch),
     # not inline here -- a hand-built <invoke> in the prose double-wrapped and
-    # interpolated $scope unescaped (audit #9 whole-class).
+    # interpolated $scope unescaped.
     template = (
         "Explore the codebase for this code smell.\n"
         "\n"

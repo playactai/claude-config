@@ -215,28 +215,12 @@ def init_step(title, actions):
     """Step 1: creates state_dir, writes plan.json skeleton."""
 
     def handler(ctx):
-        import json
-
         state_dir = tempfile.mkdtemp(prefix="planner-")
 
-        plan_skeleton = {
-            "overview": {"problem": "", "approach": ""},
-            "planning_context": {
-                "decisions": [],
-                "rejected_alternatives": [],
-                "constraints": [],
-                "risks": [],
-            },
-            "invisible_knowledge": {
-                "system": "",
-                "invariants": [],
-                "tradeoffs": [],
-            },
-            "milestones": [],
-            "waves": [],
-        }
+        from skills.planner.shared.schema import Overview, Plan
+
         plan_path = Path(state_dir) / "plan.json"
-        plan_path.write_text(json.dumps(plan_skeleton, indent=2))
+        plan_path.write_text(Plan(overview=Overview(problem="", approach="")).model_dump_json(indent=2))
 
         print(f"STATE_DIR={state_dir}")
 
@@ -589,7 +573,8 @@ def get_step_guidance(
     # None for non-QR steps (1, 2).
     phase = getattr(handler, "phase", None)
     if qr_states is not None:
-        qr_state = qr_states.get(phase) if state_dir and phase else None
+        qr_model = qr_states.get(phase) if state_dir and phase else None
+        qr_state = qr_model.model_dump(mode="json") if qr_model else None
     else:
         qr_state = load_qr_state(state_dir, phase) if state_dir and phase else None
     iteration = get_qr_iteration_from_state(qr_state) if qr_state else 1

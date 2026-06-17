@@ -12,14 +12,12 @@ from skills.planner.shared.qr.utils import load_qr_state, qr_write_lock
 from skills.planner.shared.schema import canonicalize_severity
 
 from .qr_common import (
-    FORBIDS_FINDING,
-    REQUIRES_FINDING,
-    TERMINAL_STATUSES,
-    VALID_STATUSES,
+    assign_group_in_state,
     find_item,
     is_valid_group_id,
     load_qr_state_under_lock,
     save_qr_state_atomic,
+    update_item_in_state,
 )
 
 
@@ -96,15 +94,6 @@ def update_item(
     """Update QR item status with file locking."""
     status = status.upper()
 
-    if status not in VALID_STATUSES:
-        raise ValueError(f"Invalid status: {status}. Must be PASS or FAIL.")
-
-    if status in REQUIRES_FINDING and not finding:
-        raise ValueError(f"Status {status} requires finding to explain what failed.")
-
-    if status in FORBIDS_FINDING and finding:
-        raise ValueError(f"Status {status} forbids finding. PASS means no issues found.")
-
     if severity is not None:
         canonical = canonicalize_severity(severity)
         if canonical is None:
@@ -120,29 +109,7 @@ def update_item(
 
     with qr_write_lock(ctx.state_dir, ctx.phase):
         qr_state = ctx.load_qr_state()
-
-        idx, item = find_item(qr_state, item_id)
-        if idx < 0:
-            raise ValueError(f"Item {item_id} not found in qr-{ctx.phase}.json")
-        assert item is not None
-
-        current_status = item.get("status", "TODO")
-        if current_status in TERMINAL_STATUSES:
-            raise ValueError(
-                f"Item {item_id} has terminal status {current_status}. "
-                f"Cannot transition to {status}."
-            )
-
-        item["version"] = item.get("version", 1) + 1
-        item["status"] = status
-        if finding:
-            item["finding"] = finding
-        elif "finding" in item and status == "PASS":
-            del item["finding"]
-        if severity:
-            item["severity"] = severity
-
-        qr_state["items"][idx] = item
+        item = update_item_in_state(qr_state, item_id, status, finding, severity)
         ctx.save_qr_state(qr_state)
 
     return {"id": item_id, "version": item["version"], "operation": "updated"}
@@ -227,14 +194,7 @@ def assign_group(ctx: QRContext, item_id: str, group_id: str) -> dict:
 
     with qr_write_lock(ctx.state_dir, ctx.phase):
         qr_state = ctx.load_qr_state()
-
-        idx, item = find_item(qr_state, item_id)
-        if idx < 0:
-            raise ValueError(f"Item {item_id} not found in qr-{ctx.phase}.json")
-        assert item is not None
-
-        item["group_id"] = group_id
-        qr_state["items"][idx] = item
+        item = assign_group_in_state(qr_state, item_id, group_id)
         ctx.save_qr_state(qr_state)
 
     return {"id": item_id, "version": item.get("version", 1), "operation": "updated"}

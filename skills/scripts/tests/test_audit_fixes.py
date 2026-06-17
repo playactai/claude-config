@@ -474,6 +474,23 @@ class TestGateSourceOfTruth:
         out = _gate(tmp_path, qr).output
         assert "GATE RESULT: PASS" in out
 
+    def test_deescalation_veto_routes_to_verify_not_reimplement(self, tmp_path: Path):
+        # §5 edge: the de-escalation veto (--qr-status fail + no recorded FAIL on disk
+        # + iteration below ceiling) must route to the verify step, not the work step.
+        # A re-implement run would re-execute the implement step with no fix context,
+        # wasting a round; re-verify re-dispatches the stuck TODO item.
+        _write_qr(
+            tmp_path,
+            "impl-code",
+            1,
+            [{"id": "q1", "scope": "*", "check": "x", "status": "TODO", "severity": "MUST"}],
+        )
+        qr = QRState(iteration=1, state=LoopState.RETRY, status=QRStatus.FAIL)
+        out = _gate(tmp_path, qr).output
+        assert "GATE RESULT: FAIL" in out
+        assert "--step 4" in out  # routes to re-verify
+        assert "--step 2" not in out  # must NOT route to re-implement
+
     def test_fail_when_blocking_failure_despite_status_pass(self, tmp_path: Path):
         _write_qr(
             tmp_path,
@@ -500,7 +517,7 @@ class TestGateSourceOfTruth:
         qr = QRState(iteration=1, state=LoopState.RETRY, status=QRStatus.FAIL)
         out = _gate(tmp_path, qr).output
         assert "GATE RESULT: FAIL" in out
-        assert "--step 2" in out  # routes to the fixer, does not finalize
+        assert "--step 4" in out  # routes to re-verify, does not finalize
 
     def test_explicit_fail_does_not_veto_genuine_deescalated_pass(self, tmp_path: Path):
         # The veto must not defeat the legitimate de-escalation upgrade: a RECORDED
@@ -535,7 +552,8 @@ class TestGateSourceOfTruth:
         qr = QRState(iteration=4, state=LoopState.RETRY, status=QRStatus.FAIL)
         out = _gate(tmp_path, qr).output
         assert "GATE RESULT: FAIL" in out
-        assert "--step 2" in out  # routes back to re-verify, does not finalize
+        assert "--step 4" in out  # routes back to re-verify, does not finalize
+        assert "--step 2" not in out  # must NOT route to re-implement
 
     def test_blocking_todo_vetoes_pass_despite_status_pass(self, tmp_path: Path):
         # Same root cause via the other input: the aggregator is the LLM, which emits
@@ -553,7 +571,8 @@ class TestGateSourceOfTruth:
         qr = QRState(iteration=4, state=LoopState.INITIAL, status=QRStatus.PASS)
         out = _gate(tmp_path, qr).output
         assert "GATE RESULT: FAIL" in out
-        assert "--step 2" in out  # routes back to re-verify, does not finalize
+        assert "--step 4" in out  # routes back to re-verify, does not finalize
+        assert "--step 2" not in out  # must NOT route to re-implement
 
     def test_blocking_todo_veto_respects_deescalation_threshold(self, tmp_path: Path):
         # The veto must use the SAME blocking-severity threshold as the verify dispatch:
@@ -1314,12 +1333,14 @@ class TestQrCommonExtraction:
     def test_both_clis_share_qr_common_objects(self):
         from skills.planner.cli import qr_common
 
-        assert qr_cli.VALID_STATUSES is qr_common.VALID_STATUSES
-        assert qr_commands.VALID_STATUSES is qr_common.VALID_STATUSES
         assert qr_cli.find_item is qr_common.find_item
         assert qr_commands.find_item is qr_common.find_item
         assert qr_cli.save_qr_state_atomic is qr_common.save_qr_state_atomic
         assert qr_commands.save_qr_state_atomic is qr_common.save_qr_state_atomic
+        assert qr_cli.update_item_in_state is qr_common.update_item_in_state
+        assert qr_commands.update_item_in_state is qr_common.update_item_in_state
+        assert qr_cli.assign_group_in_state is qr_common.assign_group_in_state
+        assert qr_commands.assign_group_in_state is qr_common.assign_group_in_state
 
     def test_load_qr_state_under_lock_rejects_non_dict(self, tmp_path: Path):
         # B2: the write-side loader must fail closed on a valid-JSON non-object
@@ -2095,7 +2116,7 @@ class TestQrItemControlCharRejection:
         assert qr_states is not None
         assert "impl-code" in qr_states
         # The finding must be preserved intact (neutralization happens at sinks, not here)
-        loaded_finding = qr_states["impl-code"]["items"][0]["finding"]
+        loaded_finding = qr_states["impl-code"].model_dump(mode="json")["items"][0]["finding"]
         assert "Problem:" in loaded_finding
         assert "Expected:" in loaded_finding
 

@@ -32,6 +32,10 @@ from skills.planner.shared.qr.phases import is_execution_phase
 from skills.planner.shared.qr.utils import load_qr_state
 from skills.planner.shared.resources import get_context_path, render_context_file
 
+
+def _reinvoke_cmd(module_path: str, step: int, phase: str, state_dir: str) -> str:
+    return f"uv run python -m {module_path} --step {step} --phase {phase} --state-dir {shell_quote(state_dir)}"
+
 # =============================================================================
 # UTILITIES (mechanical operations)
 # =============================================================================
@@ -476,7 +480,7 @@ def step_9_structural_grouping(state_dir: str, phase: str, module_path: str) -> 
             "",
             format_assign_cmd(state_dir, phase, ""),
         ],
-        "next": f"uv run python -m {module_path} --step 10 --phase {phase} --state-dir {shell_quote(state_dir)}",
+        "next": _reinvoke_cmd(module_path, 10, phase, state_dir),
     }
 
 

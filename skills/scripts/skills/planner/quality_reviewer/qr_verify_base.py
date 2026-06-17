@@ -343,7 +343,7 @@ class VerifyBase(ABC):
         # Record the verdict via THIS script's --result flag (verify_main routes
         # it to cli.qr's locked update). One tool instead of two: the agent
         # records with the same command family it is already running, so the
-        # natural guess succeeds (audit §3b NEW-C). --step pins which grouped
+        # natural guess succeeds. --step pins which grouped
         # item the verdict applies to; pin_cwd keeps it cwd-independent.
         record_base = (
             f"uv run python -m {module_path} --step {current_step}{phase_arg}{state_dir_arg} {item_flags}"
@@ -479,7 +479,7 @@ def _record_verify_result(
     Lets an agent record a result with the SAME script it is already running
     (`..._qr_verify ... --result PASS`) instead of switching to the separate
     `cli.qr update-item` tool -- the two-tool split made the natural guess
-    hard-fail with 'unrecognized arguments' (audit §3b NEW-C). Delegates to
+    hard-fail with 'unrecognized arguments'. Delegates to
     cmd_update_item, which holds the phase write lock, validates the transition
     (FAIL needs a finding, PASS forbids one, PASS is terminal), writes
     atomically, and prints the structured result.
@@ -532,8 +532,8 @@ def verify_main(script_file: str, get_step_guidance, description: str) -> None:
     which parses --step/--phase/--state-dir/--qr-item, routes to the step handler,
     and renders the step. With --result/--status PASS|FAIL (optionally --finding), it
     records the verdict directly and exits, so an agent appending the verdict to
-    the verify command succeeds instead of erroring with 'unrecognized arguments'
-    (audit §3b NEW-C). The CONFIRM step's own NEXT STEP pointer (read before
+    the verify command succeeds instead of erroring with 'unrecognized arguments'.
+    The CONFIRM step's own NEXT STEP pointer (read before
     recording) carries the agent onward.
     """
     from skills.lib.workflow.cli import mode_main

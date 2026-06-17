@@ -4,6 +4,7 @@ Authoritative source for: context.json, plan.json, qr-{phase}.json schemas.
 Pydantic is a required dependency (pydantic>=2.0 in pyproject.toml).
 """
 
+import itertools
 import json
 import os
 import sys
@@ -256,7 +257,7 @@ if True:
             """
             nums = []
             for eid in existing_ids:
-                head, _, suffix = eid.partition("-")
+                head, _, suffix = eid.rpartition("-")
                 if head == prefix and suffix.isascii() and suffix.isdigit():
                     nums.append(int(suffix))
             return f"{prefix}-{max(nums, default=0) + 1:03d}"
@@ -285,14 +286,7 @@ if True:
             return self._next_numeric_id((g.id for g in self.diagram_graphs), "DIAG")
 
         def next_intent_id(self, ms) -> str:
-            prefix = f"CI-{ms.id}"
-            nums = []
-            for ci in ms.code_intents:
-                if ci.id.startswith(prefix + "-"):
-                    suffix = ci.id[len(prefix) + 1 :]
-                    if suffix.isascii() and suffix.isdigit():
-                        nums.append(int(suffix))
-            return f"{prefix}-{max(nums, default=0) + 1:03d}"
+            return self._next_numeric_id((ci.id for ci in ms.code_intents), f"CI-{ms.id}")
 
         def validate_diagram_edges(self, diagram_id: str) -> list[str]:
             """Validate edges for a specific diagram."""
@@ -314,31 +308,23 @@ if True:
             Returns error list (empty = valid). Prevents dangling references
             that would break navigation/traceability.
             """
+            def _dup_id_errors(ids, label: str) -> list[str]:
+                seen: set[str] = set()
+                errors: list[str] = []
+                for i in ids:
+                    if i in seen:
+                        errors.append(f"duplicate {label} id '{i}'")
+                    seen.add(i)
+                return errors
+
             errors = []
             decision_ids = {dl.id for dl in self.planning_context.decisions}
             milestone_ids = {ms.id for ms in self.milestones}
 
-            seen: set[str] = set()
-            for ms in self.milestones:
-                if ms.id in seen:
-                    errors.append(f"duplicate milestone id '{ms.id}'")
-                seen.add(ms.id)
-            seen = set()
-            for dl in self.planning_context.decisions:
-                if dl.id in seen:
-                    errors.append(f"duplicate decision id '{dl.id}'")
-                seen.add(dl.id)
-            seen = set()
-            for ms in self.milestones:
-                for ci in ms.code_intents:
-                    if ci.id in seen:
-                        errors.append(f"duplicate intent id '{ci.id}'")
-                    seen.add(ci.id)
-            seen = set()
-            for dg in self.diagram_graphs:
-                if dg.id in seen:
-                    errors.append(f"duplicate diagram id '{dg.id}'")
-                seen.add(dg.id)
+            errors += _dup_id_errors((ms.id for ms in self.milestones), "milestone")
+            errors += _dup_id_errors((dl.id for dl in self.planning_context.decisions), "decision")
+            errors += _dup_id_errors((ci.id for ms in self.milestones for ci in ms.code_intents), "intent")
+            errors += _dup_id_errors((dg.id for dg in self.diagram_graphs), "diagram")
 
             # Per-wave invariants in a single pass (id uniqueness, milestone refs,
             # intra-wave file overlap). Each milestone's file set is the union of its
@@ -359,16 +345,8 @@ if True:
                 }
                 for ms in self.milestones
             }
-            seen_wave_ids: set[str] = set()
+            errors += _dup_id_errors((w.id for w in self.waves), "wave")
             for w in self.waves:
-                # Wave ids are the executor's dispatch handles and the update-by-id
-                # key; a duplicate id makes update-by-id edit only the first match and
-                # silently strand the rest. set-wave only ever derives contiguous ids,
-                # so the realistic source is a hand-authored/transcribed plan.json.
-                if w.id in seen_wave_ids:
-                    errors.append(f"duplicate wave id '{w.id}'")
-                seen_wave_ids.add(w.id)
-
                 # Waves are first-class milestone cross-references (executor IR): a
                 # wave listing a nonexistent milestone would silently drop it from
                 # execution.
@@ -377,7 +355,7 @@ if True:
                         errors.append(f"wave {w.id} references unknown milestone '{mid}'")
 
                 # Two milestones in one wave run as concurrent developer agents; if
-                # they touch the same file they corrupt it mid-write (audit §2 leak 1).
+                # they touch the same file they corrupt it mid-write.
                 # Compare the normalized file sets built above (declared files plus
                 # intent targets) so 'src/a.py' and './src/a.py' cannot evade the
                 # check. Dedupe to distinct resolvable ids: a milestone listed twice
@@ -387,15 +365,13 @@ if True:
                 resolved = list(
                     dict.fromkeys(mid for mid in w.milestones if mid in milestone_files)
                 )
-                for i in range(len(resolved)):
-                    for j in range(i + 1, len(resolved)):
-                        a, b = resolved[i], resolved[j]
-                        shared = milestone_files[a] & milestone_files[b]
-                        if shared:
-                            errors.append(
-                                f"wave {w.id} co-schedules {a} and {b} which share "
-                                f"file(s): {', '.join(sorted(shared))}"
-                            )
+                for a, b in itertools.combinations(resolved, 2):
+                    shared = milestone_files[a] & milestone_files[b]
+                    if shared:
+                        errors.append(
+                            f"wave {w.id} co-schedules {a} and {b} which share "
+                            f"file(s): {', '.join(sorted(shared))}"
+                        )
 
             for ms in self.milestones:
                 for ci in ms.code_intents:
@@ -599,7 +575,7 @@ _schema_registry: dict = {
 }
 
 
-def validate_state(state_dir: str) -> tuple[Plan | None, dict[str, dict]]:
+def validate_state(state_dir: str) -> tuple[Plan | None, dict[str, QRFile]]:
     """Validate all state files in state_dir; return the parsed plan.json and qr dicts.
 
     Raises SchemaValidationError on first validation failure.
@@ -636,11 +612,11 @@ def validate_state(state_dir: str) -> tuple[Plan | None, dict[str, dict]]:
 
     # Validate only the canonical qr-{phase}.json files. A decompose agent can
     # leave non-canonical scratch files (e.g. qr-items.json, qr-items-draft.json)
-    # in the state dir; a bare `qr-*.json` glob validated those as QRFile dicts
-    # and aborted the whole run on a list-shaped scratch file (audit §3 #3, field
-    # evidence ab1dc60a: "Input should be a valid dictionary ... input_type=list").
+    # in the state dir; a bare `qr-*.json` glob would validate those as QRFile
+    # dicts, and a list-shaped scratch file fails QRFile validation
+    # ("Input should be a valid dictionary ... input_type=list").
     # Restricting to the known phases ignores any non-canonical file by construction.
-    qr_states: dict[str, dict] = {}
+    qr_states: dict[str, QRFile] = {}
     for phase in get_all_phases():
         path = state_path / f"qr-{phase}.json"
         if not path.exists():
@@ -648,7 +624,7 @@ def validate_state(state_dir: str) -> tuple[Plan | None, dict[str, dict]]:
         try:
             data = json.loads(path.read_text(encoding="utf-8"))
             qr_file = QRFile.model_validate(data)
-            qr_states[phase] = qr_file.model_dump(mode="json")
+            qr_states[phase] = qr_file
         except json.JSONDecodeError:
             # Truncated/partial canonical file from a non-atomic decompose Write, or
             # raw control chars (json rejects both). Remove the corrupt file so the

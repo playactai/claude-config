@@ -42,7 +42,7 @@ from pathlib import Path
 from typing import NoReturn
 from xml.sax.saxutils import escape
 
-from skills.planner.shared.qr.utils import load_qr_state, qr_write_lock
+from skills.planner.shared.qr.utils import _fix_field_safe, load_qr_state, qr_write_lock
 from skills.planner.shared.schema import canonicalize_severity
 
 from . import qr_commands
@@ -221,8 +221,6 @@ def cmd_list_items(state_dir: str, phase: str, args: list[str]):
     qr_state = load_qr_state(state_dir, phase)
     if qr_state is None:
         error_exit(f"{qr_path.name} is not a valid QR state object")
-
-    from skills.planner.shared.qr.utils import _fix_field_safe
 
     for item in qr_state.get("items", []):
         item_status = item.get("status", "TODO")

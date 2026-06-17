@@ -114,7 +114,10 @@ def _parse_indent_4_items(
     """Handle list items and phase/mode headers (indent 4).
 
     Returns:
-        current_phase (updated if phase/mode header found, else unchanged)
+        current_phase if a phase/mode header was parsed, None for consumed list items
+
+    Raises:
+        ValueError: If the line doesn't match any indent-4 pattern
     """
     if current_key == "receives" and content.startswith("-"):
         value = _parse_list_item(content)
@@ -132,13 +135,19 @@ def _parse_indent_4_items(
         result[current_role][current_key][mode_name] = mode_list
         return mode_name
 
-    return None
+    raise ValueError(
+        f"Unparseable REGISTRY.yaml line (indent 4): {content!r}"
+    )
 
 
 def _parse_indent_6_phase_items(
     content: str, current_role: str, current_key: str, current_phase: str | None, result: dict
 ) -> None:
-    """Handle phase-specific and mode-specific list items (indent 6)."""
+    """Handle phase-specific and mode-specific list items (indent 6).
+
+    Raises:
+        ValueError: If the line doesn't match any indent-6 pattern
+    """
     if (
         current_key in ("phase_specific", "mode_specific")
         and current_phase
@@ -146,6 +155,10 @@ def _parse_indent_6_phase_items(
     ):
         value = _parse_list_item(content)
         result[current_role][current_key][current_phase].append(value)
+    else:
+        raise ValueError(
+            f"Unparseable REGISTRY.yaml line (indent 6): {content!r}"
+        )
 
 
 def _validate_parsed_structure(result: dict) -> None:

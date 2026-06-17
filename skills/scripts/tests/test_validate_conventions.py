@@ -63,6 +63,39 @@ def test_parse_registry_raises_on_unrecognized_indent():
         conventions._parse_registry(bad)
 
 
+def test_parse_registry_raises_on_malformed_indent4_receives():
+    """Indent-4 line under receives missing '-' is a hard error, not silent skip."""
+    bad = "developer:\n  receives:\n    temporal.md\n"
+    with pytest.raises(ValueError, match="Unparseable REGISTRY"):
+        conventions._parse_registry(bad)
+
+
+def test_parse_registry_raises_on_malformed_indent4_phase_specific():
+    """Indent-4 line under phase_specific missing ':' is a hard error."""
+    bad = "developer:\n  receives: []\n  phase_specific:\n    plan_completeness\n"
+    with pytest.raises(ValueError, match="Unparseable REGISTRY"):
+        conventions._parse_registry(bad)
+
+
+def test_parse_registry_raises_on_malformed_indent6():
+    """Indent-6 line missing '-' under a phase is a hard error, not silent skip."""
+    bad = (
+        "quality_reviewer:\n"
+        "  phase_specific:\n"
+        "    plan_completeness:\n"
+        "      structural.md\n"
+    )
+    with pytest.raises(ValueError, match="Unparseable REGISTRY"):
+        conventions._parse_registry(bad)
+
+
+def test_parse_registry_raises_on_indent6_under_receives():
+    """Indent-6 list item under receives is a hard error, not silent drop."""
+    bad = "developer:\n  receives:\n    - temporal.md\n      - documentation.md\n"
+    with pytest.raises(ValueError, match="Unparseable REGISTRY"):
+        conventions._parse_registry(bad)
+
+
 def test_committed_registry_parses_under_strict_parser():
     """The real REGISTRY.yaml stays parseable -- the strict parser isn't over-strict
     and no committed line is silently dropped."""

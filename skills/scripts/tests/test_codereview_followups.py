@@ -491,7 +491,25 @@ def test_batch_flush_failure_reports_and_clears_cache(tmp_path, monkeypatch):
 # F5 / F1 - a batch against a missing state file is a structured error, not a crash
 # ---------------------------------------------------------------------------
 def test_plan_batch_missing_file_raises_valueerror(tmp_path):
+    """Non-init batch w/o plan.json: command fails, not batch-level crash.
+
+    begin_batch tolerates a missing plan.json (init may create it in the same
+    batch). A non-init command that needs the plan fails at dispatch time and
+    is surfaced as a command-level error entry, not a ValueError escape.
+    """
     ctx = pc.PlanContext(state_dir=tmp_path)  # no init -> plan.json absent
     methods = discover_methods(pc)
-    with pytest.raises(ValueError, match="batch could not start"):
-        batch(methods, [{"method": "list-milestones", "params": {}, "id": 7}], ctx)
+    results = batch(methods, [{"method": "list-milestones", "params": {}, "id": 7}], ctx)
+    assert len(results) == 1
+    assert results[0]["id"] == 7
+    assert "error" in results[0]
+
+
+def test_plan_batch_init_creates_first_plan(tmp_path):
+    """An init batch must succeed even when plan.json doesn't exist yet."""
+    ctx = pc.PlanContext(state_dir=tmp_path)
+    methods = discover_methods(pc)
+    results = batch(methods, [{"method": "init", "params": {"task": "test"}, "id": 1}], ctx)
+    assert len(results) == 1
+    assert results[0]["result"]["operation"] == "created"
+    assert (tmp_path / "plan.json").exists()

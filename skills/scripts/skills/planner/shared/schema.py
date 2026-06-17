@@ -654,12 +654,16 @@ def validate_state(state_dir: str) -> tuple[Plan | None, dict[str, dict]]:
             qr_states[phase] = qr_file.model_dump(mode="json")
         except json.JSONDecodeError:
             # Truncated/partial canonical file from a non-atomic decompose Write, or
-            # raw control chars (json rejects both). Skip rather than abort: the verify
-            # step routes back to decompose on a missing/None qr_state and the gate
-            # fails closed the same way, so the run self-heals. A *parseable* but
-            # schema-invalid file (e.g. a forged item) is instead rejected below by
-            # model_validate -> SchemaValidationError -- the security boundary before
-            # the verify fan-out renders it.
+            # raw control chars (json rejects both). Remove the corrupt file so the
+            # next decompose recreates it; a bare existence check would skip it and
+            # the verify→decompose route-back loop would cycle indefinitely. A
+            # *parseable* but schema-invalid file (e.g. a forged item) is instead
+            # rejected by model_validate -> SchemaValidationError -- the security
+            # boundary before the verify fan-out renders it.
+            try:
+                path.unlink(missing_ok=True)
+            except OSError:
+                pass
             continue
         except Exception as e:
             raise SchemaValidationError(f"{path.name}: {e}") from e

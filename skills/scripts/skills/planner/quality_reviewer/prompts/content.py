@@ -63,7 +63,7 @@ PLAN_DESIGN_STEP_2_CONCERNS = """\
 Brainstorm concerns specific to PLAN STRUCTURE:
   - Missing decisions (non-obvious choices not logged)
   - Policy defaults without user backing
-  - Orphan milestones (no code_intents)
+  - Orphan code milestones (no code_intents, excluding is_documentation_only)
   - Invalid references (decision_refs point nowhere)
   - Reasoning chains too shallow
   - Risks identified but not addressed

@@ -72,7 +72,10 @@ class PlanContext:
         return self.plan_path()
 
     def begin_batch(self) -> None:
-        self._batch = self.load_plan()
+        try:
+            self._batch = self.load_plan()
+        except FileNotFoundError:
+            self._batch = None
         self._batch_dirty = False
 
     def end_batch(self) -> None:

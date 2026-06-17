@@ -6,11 +6,12 @@ Pydantic is a required dependency (pydantic>=2.0 in pyproject.toml).
 
 import json
 import os
+import sys
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal
 
-from pydantic import BaseModel, Field, ValidationInfo, field_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, field_validator
 
 from skills.planner.shared.qr.phases import get_all_phases
 
@@ -92,9 +93,7 @@ if True:
         version: int = 1  # CAS optimistic locking: increment on update
         decision: str
         reasoning: str = Field(alias="reasoning_chain")  # premise -> implication -> conclusion
-
-        class Config:
-            populate_by_name = True
+        model_config = ConfigDict(populate_by_name=True)
 
     class RejectedAlternative(BaseModel):
         """Alternative considered but rejected.
@@ -126,9 +125,7 @@ if True:
         rejected_alternatives: list[RejectedAlternative] = Field(default_factory=list)
         constraints: list[str] = Field(default_factory=list)  # INTENT.md line 67: string[]
         risks: list[Risk] = Field(default_factory=list, alias="known_risks")
-
-        class Config:
-            populate_by_name = True
+        model_config = ConfigDict(populate_by_name=True)
 
     class InvisibleKnowledge(BaseModel):
         """Knowledge for future LLM sessions."""
@@ -662,7 +659,11 @@ def validate_state(state_dir: str) -> tuple[Plan | None, dict[str, dict]]:
             # boundary before the verify fan-out renders it.
             try:
                 path.unlink(missing_ok=True)
-            except OSError:
+            except OSError as e:
+                print(
+                    f"WARNING: Failed to remove corrupt QR file {path}: {e}",
+                    file=sys.stderr,
+                )
                 pass
             continue
         except Exception as e:

@@ -46,6 +46,8 @@ QR_VERIFY_FORBIDDEN = (
     "Proceeding to a later step without QR PASS",
 )
 
+ESCALATE_HANDLER = "AskUserQuestion"
+
 
 def shell_quote(path: str | None) -> str:
     """Shell-quote a path for safe interpolation into an emitted command string.

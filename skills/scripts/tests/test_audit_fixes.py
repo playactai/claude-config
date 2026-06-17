@@ -234,9 +234,11 @@ class TestSeverityCoercion:
         # qr-{phase}.json. validate_state must NOT abort the run on bad JSON: it skips
         # the file so the verify/gate step re-decomposes. A *parseable* but malformed
         # file (list/schema/control-char) still hard-fails -- see the tests around it.
-        (tmp_path / "qr-impl-code.json").write_text('{"phase": "impl-code", "items": [')
+        file_path = tmp_path / "qr-impl-code.json"
+        file_path.write_text('{"phase": "impl-code", "items": [')
         _plan, qr_states = validate_state(str(tmp_path))  # must not raise
         assert "impl-code" not in qr_states
+        assert not file_path.exists()  # corrupt file must be removed from disk
 
     def test_qr_commands_update_item_canonicalizes_severity(self, tmp_path: Path):
         # The batch-RPC twin of cmd_update_item must canonicalize like the CLI:

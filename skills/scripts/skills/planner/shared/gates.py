@@ -5,10 +5,11 @@ Both planner.py and executor.py call this with their MODULE_PATH.
 """
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from skills.lib.workflow.prompts.step import SKILLS_DIR, format_step
 from skills.planner.shared.builders import (
+    ESCALATE_HANDLER,
     PEDANTIC_ENFORCEMENT,
     format_forbidden,
     format_gate_result,
@@ -29,11 +30,18 @@ from skills.planner.shared.qr.utils import (
 if TYPE_CHECKING:
     from skills.planner.shared.schema import Plan
 
-# Sentinel for build_gate_output's qr_state param: distinguishes "caller did not
-# pre-load" (self-load from disk) from "caller pre-loaded and the file was missing"
-# (a None that must fail closed). The orchestrators thread their loaded dict-or-None;
-# only a direct caller (e.g. tests) omits it, leaving _UNSET to trigger the self-load.
-_UNSET: Any = object()
+class _UnsetType:
+    """Sentinel for qr_state default: distinguishes 'not provided' from None.
+
+    The orchestrators thread their loaded dict-or-None; only a direct caller
+    (e.g. tests) omits it, leaving _UNSET to trigger the self-load.
+    """
+
+    def __repr__(self) -> str:
+        return "<_UNSET>"
+
+
+_UNSET = _UnsetType()
 
 
 @dataclass
@@ -128,7 +136,7 @@ def _build_iteration_limit_escalation(
     parts.append("")
     parts.append(
         "ESCALATE TO USER -- the workflow will NOT loop again on its own.\n"
-        "User authority is absolute (INTENT.md). Use AskUserQuestion to ask how to proceed:"
+        f"User authority is absolute (INTENT.md). Use {ESCALATE_HANDLER} to ask how to proceed:"
     )
     parts.append("")
     if pass_step is not None:

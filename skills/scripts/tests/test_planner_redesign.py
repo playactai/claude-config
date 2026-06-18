@@ -149,7 +149,7 @@ def test_exec_implement_execute_implements_from_intent():
     from skills.planner.developer.exec_implement_execute import get_step_guidance
 
     for step in (1, 2):
-        body = "\n".join(get_step_guidance(step)["actions"])
+        body = "\n".join(get_step_guidance(step, state_dir="/tmp/x")["actions"])
         assert "Code Intent" in body or "code_intents" in body
         assert "code_changes" not in body
         assert "implementation source" not in body.lower()  # old diff-application framing gone
@@ -159,7 +159,9 @@ def test_exec_implement_execute_implements_from_intent():
 def test_exec_docs_authors_not_transcribes():
     from skills.planner.technical_writer.exec_docs_execute import STEPS, get_step_guidance
 
-    all_body = "\n".join("\n".join(get_step_guidance(step)["actions"]) for step in STEPS)
+    all_body = "\n".join(
+        "\n".join(get_step_guidance(step, state_dir="/tmp/x")["actions"]) for step in STEPS
+    )
     assert "transcrib" not in all_body.lower()  # no comment-transcription model
     assert "sole author" in all_body.lower()  # TW authors docs directly (not "authority")
     assert "docstring" in all_body.lower()
@@ -352,7 +354,7 @@ def test_impl_code_decompose_injects_scope_into_steps_1_and_3(tmp_path):
             content["phase_prompts"],
             content["grouping_config"],
             state_dir=str(tmp_path),
-            scope_provider=content.get("scope_provider"),
+            scope_provider=content["scope_provider"],
         )
         body = "\n".join(result["actions"])
         assert "CODE MILESTONES IN SCOPE" in body, f"step {step}"
@@ -424,7 +426,7 @@ def test_doc_only_milestone_surfaces_in_plan_markdown():
 def test_exec_docs_authors_doc_only_deliverables():
     from skills.planner.technical_writer.exec_docs_execute import STEPS, get_step_guidance
 
-    body = "\n".join("\n".join(get_step_guidance(s)["actions"]) for s in STEPS)
+    body = "\n".join("\n".join(get_step_guidance(s, state_dir="/tmp/x")["actions"]) for s in STEPS)
     assert "is_documentation_only" in body
     assert "acceptance_criteria" in body  # the authoring targets
 

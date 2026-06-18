@@ -33,7 +33,7 @@ from skills.planner.quality_reviewer.prompts.content import (
 from skills.planner.quality_reviewer.qr_decompose import get_step_guidance as decompose_guidance
 from skills.planner.shared.builders import (
     QR_VERIFY_FORBIDDEN,
-    format_qr_verify_forbidden,
+    format_forbidden,
     shell_quote,
 )
 from skills.planner.shared.schema import Overview, Plan
@@ -48,7 +48,7 @@ _MUST_ITEM = {"id": "qa-001", "scope": "*", "check": "code quality", "status": "
 class TestForbiddenListSSOT:
     def test_superset_has_all_six(self):
         assert len(QR_VERIFY_FORBIDDEN) == 6
-        block = format_qr_verify_forbidden()
+        block = format_forbidden(*QR_VERIFY_FORBIDDEN)
         assert block.count("\n  - ") == 6
 
     def test_both_orchestrators_emit_the_same_forbidden_block(self, tmp_path: Path):
@@ -57,7 +57,7 @@ class TestForbiddenListSSOT:
         Re-inlining a divergent list in either orchestrator (the original §4
         defect) would make this exact block absent from one of them.
         """
-        block = format_qr_verify_forbidden()
+        block = format_forbidden(*QR_VERIFY_FORBIDDEN)
 
         planner_dir = tmp_path / "plan"
         planner_dir.mkdir()

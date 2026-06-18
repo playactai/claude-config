@@ -14,7 +14,10 @@ For QR fix mode, see exec_docs_qr_fix.py.
 Router (exec_docs.py) dispatches to appropriate script.
 """
 
+from skills.planner.shared.builders import shell_quote
 from skills.planner.shared.constraints import format_state_banner
+from skills.planner.shared.resources import validate_state_dir_requirement
+from skills.planner.shared.schema import DOC_ONLY_DELIVERABLES_FILTER
 
 STEPS = {
     1: "Task Description",
@@ -30,7 +33,8 @@ def get_step_guidance(step: int, module_path: str | None = None, **kwargs) -> di
     """Return guidance for the given step."""
     MODULE_PATH = module_path or "skills.planner.technical_writer.exec_docs_execute"
     state_dir = kwargs.get("state_dir", "")
-    state_dir_arg = f" --state-dir {state_dir}" if state_dir else ""
+    validate_state_dir_requirement(step, state_dir or None)
+    state_dir_arg = f" --state-dir {shell_quote(state_dir)}" if state_dir else ""
 
     if step == 1:
         banner = format_state_banner("TW-POST-IMPL", 1, "work")
@@ -93,8 +97,7 @@ def get_step_guidance(step: int, module_path: str | None = None, **kwargs) -> di
                 "5. DOCUMENTATION-ONLY MILESTONES (is_documentation_only == true):",
                 "   - Their files[] are docs YOU author; their acceptance_criteria[] are",
                 "     your authoring targets (write each file so every criterion holds):",
-                "       cat $STATE_DIR/plan.json | jq '.milestones[] "
-                "| select(.is_documentation_only == true) | {files, acceptance_criteria}'",
+                f"       cat $STATE_DIR/plan.json | jq '{DOC_ONLY_DELIVERABLES_FILTER}'",
                 "",
                 "Write out your extraction before proceeding:",
                 "  EXTRACTION:",

@@ -32,6 +32,13 @@ QA_ITEM_DEFAULTS = {
 # Valid severity values (per conventions/severity.md)
 VALID_SEVERITIES = frozenset({"MUST", "SHOULD", "COULD"})
 
+# jq filters that route on Milestone.is_documentation_only. Single source so the
+# verify guidance (content.py) and the TW execute prompt (exec_docs_execute.py)
+# cannot drift from the field name or from Plan.code_milestones()'s `!= true` split.
+DOC_ONLY_SELECTOR = ".milestones[] | select(.is_documentation_only == true)"
+CODE_ONLY_SELECTOR = ".milestones[] | select(.is_documentation_only != true)"
+DOC_ONLY_DELIVERABLES_FILTER = f"{DOC_ONLY_SELECTOR} | {{files, acceptance_criteria}}"
+
 # Out-of-set tokens decompose agents occasionally emit meaning "maximum/blocking".
 _SEVERITY_SYNONYMS = {"BLOCKER": "MUST", "CRITICAL": "MUST"}
 

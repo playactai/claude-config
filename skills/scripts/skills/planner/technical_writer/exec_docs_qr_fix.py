@@ -12,6 +12,7 @@ Router (exec_docs.py) dispatches to appropriate script.
 """
 
 from skills.lib.conventions import get_convention
+from skills.planner.shared.builders import shell_quote
 from skills.planner.shared.constraints import format_state_banner
 from skills.planner.shared.qr.utils import (
     format_failed_items_for_fix,
@@ -71,7 +72,7 @@ def get_step_guidance(step: int, module_path: str | None = None, **kwargs) -> di
                 "  - Do NOT remove valid documentation",
                 "  - Focus ONLY on addressing the specific failures",
             ],
-            "next": f"uv run python -m {MODULE_PATH} --step 2 --state-dir {state_dir}",
+            "next": f"uv run python -m {MODULE_PATH} --step 2 --state-dir {shell_quote(state_dir)}",
         }
 
     elif step == 2:
@@ -105,7 +106,7 @@ def get_step_guidance(step: int, module_path: str | None = None, **kwargs) -> di
                 "",
                 "CONSTRAINT: Fix ONLY the failing items. Don't refactor passing docs.",
             ],
-            "next": f"uv run python -m {MODULE_PATH} --step 3 --state-dir {state_dir}",
+            "next": f"uv run python -m {MODULE_PATH} --step 3 --state-dir {shell_quote(state_dir)}",
         }
 
     elif step == 3:

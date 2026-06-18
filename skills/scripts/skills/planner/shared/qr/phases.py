@@ -12,7 +12,6 @@ This works by:
 
 Invariants:
 - Each phase has exactly one entry in QR_PHASES
-- Step numbers match orchestrator STEPS dict
 - Script paths are valid Python module paths
 - Artifact paths are relative to state_dir
 """
@@ -24,10 +23,6 @@ from __future__ import annotations
 # Keys: phase name as used in qr-{phase}.json filename
 # Values: dict with:
 #   workflow: "planner" or "executor"
-#   work_step: orchestrator step that dispatches work agent
-#   decompose_step: orchestrator step that dispatches QR decompose
-#   verify_step: orchestrator step that dispatches parallel verify agents
-#   route_step: orchestrator step that routes based on QR result
 #   artifact: primary artifact being reviewed (relative to state_dir)
 #   decompose_script: Python module for decomposition (phase-parameterized runner,
 #                     dispatched with --phase {name}; same module for every phase)
@@ -36,30 +31,18 @@ from __future__ import annotations
 QR_PHASES: dict[str, dict] = {
     "plan-design": {
         "workflow": "planner",
-        "work_step": 3,
-        "decompose_step": 4,
-        "verify_step": 5,
-        "route_step": 6,
         "artifact": "plan.json",
         "decompose_script": "skills.planner.quality_reviewer.qr_decompose",
         "verify_script": "skills.planner.quality_reviewer.qr_verify",
     },
     "impl-code": {
         "workflow": "executor",
-        "work_step": 2,
-        "decompose_step": 3,
-        "verify_step": 4,
-        "route_step": 5,
         "artifact": "plan.json",
         "decompose_script": "skills.planner.quality_reviewer.qr_decompose",
         "verify_script": "skills.planner.quality_reviewer.qr_verify",
     },
     "impl-docs": {
         "workflow": "executor",
-        "work_step": 6,
-        "decompose_step": 7,
-        "verify_step": 8,
-        "route_step": 9,
         "artifact": "plan.json",
         "decompose_script": "skills.planner.quality_reviewer.qr_decompose",
         "verify_script": "skills.planner.quality_reviewer.qr_verify",

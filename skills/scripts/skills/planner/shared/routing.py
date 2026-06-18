@@ -18,9 +18,13 @@ Invariants:
 
 from __future__ import annotations
 
+from collections.abc import Callable
+
+from .builders import shell_quote
 from .qr.utils import (
     by_blocking_severity,
     by_status,
+    get_qr_iteration,
     get_qr_iteration_from_state,
     load_qr_state,
     query_items,
@@ -115,4 +119,49 @@ def route_work_phase(state_dir: str, phase_key: str) -> dict:
         "target_module": target,
         "has_failures": has_failures,
         "failed_count": len(failed_items),
+    }
+
+
+def build_route_dispatch(
+    state_dir: str,
+    phase_key: str,
+    title_stem: str,
+    execute_actions_provider: Callable[[], list[str] | None] | None = None,
+) -> dict:
+    """Build the work-phase router's fix/execute dispatch dict.
+
+    Single owner of the {title, actions, dispatch_to, next} shape the three thin
+    routers emit. Calls route_work_phase once, shell-quotes state_dir in the next
+    command, and reads the iteration from state for the fix-mode message.
+    execute_actions_provider, invoked only in the execute branch, lets a router
+    override the default execute message (the architect surfaces completeness
+    gaps); returning None falls back to the default.
+    """
+    result = route_work_phase(state_dir, phase_key)
+    target = result["target_module"]
+    next_cmd = f"uv run python -m {target} --step 1 --state-dir {shell_quote(state_dir)}"
+
+    if result["has_failures"]:
+        iteration = get_qr_iteration(state_dir, phase_key)
+        return {
+            "title": f"{title_stem} - Routing to Fix Mode",
+            "actions": [
+                f"QR state detected: {result['failed_count']} failed items (iteration {iteration})",
+                "Dispatching to FIX workflow.",
+            ],
+            "dispatch_to": target,
+            "next": next_cmd,
+        }
+
+    actions = execute_actions_provider() if execute_actions_provider else None
+    if actions is None:
+        actions = [
+            "First-time execution or no QR failures.",
+            "Dispatching to EXECUTE workflow.",
+        ]
+    return {
+        "title": f"{title_stem} - Routing to Execute Mode",
+        "actions": actions,
+        "dispatch_to": target,
+        "next": next_cmd,
     }

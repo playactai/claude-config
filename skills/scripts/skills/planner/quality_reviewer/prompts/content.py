@@ -18,10 +18,15 @@ Constants are phase-prefixed ([PHASE]_[TYPE]) so the three phases coexist here.
 
 import json
 
-from skills.planner.quality_reviewer.prompts.decompose import render_code_milestone_scope
-from skills.planner.quality_reviewer.qr_verify_base import VerifyBase
+from skills.planner.quality_reviewer.prompts.decompose import no_scope, render_code_milestone_scope
+from skills.planner.quality_reviewer.qr_verify_base import (
+    VerifyBase,
+    parse_scope,
+    select_check_guidance,
+)
 from skills.planner.shared.builders import shell_quote
 from skills.planner.shared.qr.phases import get_phase_config
+from skills.planner.shared.schema import CODE_ONLY_SELECTOR, DOC_ONLY_DELIVERABLES_FILTER
 
 
 def _jq_command(state_dir: str, jq_filter: str) -> str:
@@ -345,6 +350,7 @@ DECOMPOSE_CONTENT: dict[str, dict] = {
             "component_examples": PLAN_DESIGN_COMPONENT_EXAMPLES,
             "concern_examples": PLAN_DESIGN_CONCERN_EXAMPLES,
         },
+        "scope_provider": no_scope,
     },
     "impl-code": {
         "phase_prompts": {
@@ -370,6 +376,7 @@ DECOMPOSE_CONTENT: dict[str, dict] = {
             "component_examples": IMPL_DOCS_COMPONENT_EXAMPLES,
             "concern_examples": IMPL_DOCS_CONCERN_EXAMPLES,
         },
+        "scope_provider": no_scope,
     },
 }
 
@@ -387,9 +394,11 @@ def get_decompose_content(phase: str) -> dict:
 # VERIFY CLASSES
 # ============================================================================
 #
-# One VerifyBase subclass per phase: the only per-phase behavior is
-# get_verification_guidance (scope/check -> instruction lines). Kept as classes
-# (not flattened to data) so the bodies stay byte-identical to the old files.
+# One VerifyBase subclass per phase; the only per-phase behavior is
+# get_verification_guidance. Scope dispatch is shared via parse_scope; the
+# check-specific guidance is an ordered (predicate, lines) table resolved by
+# select_check_guidance (first match wins). Emitted lines are verbatim -- tests
+# assert on substrings/offsets.
 
 
 class PlanDesignVerify(VerifyBase):
@@ -404,7 +413,8 @@ class PlanDesignVerify(VerifyBase):
 
         guidance = []
 
-        if scope == "*":
+        kind, value = parse_scope(scope)
+        if kind == "macro":
             # Macro check
             guidance.extend(
                 [
@@ -415,25 +425,23 @@ class PlanDesignVerify(VerifyBase):
                     "",
                 ]
             )
-        elif scope.startswith("milestone:"):
-            milestone_id = scope.split(":", 1)[1]
+        elif kind == "milestone":
             guidance.extend(
                 [
-                    f"MILESTONE CHECK - Focus on {milestone_id}:",
+                    f"MILESTONE CHECK - Focus on {value}:",
                     "",
                     "  Read milestone:",
-                    f"    {_jq_select_by_id(state_dir, '.milestones[]', milestone_id)}",
+                    f"    {_jq_select_by_id(state_dir, '.milestones[]', value)}",
                     "",
                 ]
             )
-        elif scope.startswith("code_intent:"):
-            intent_id = scope.split(":", 1)[1]
+        elif kind == "code_intent":
             guidance.extend(
                 [
-                    f"CODE INTENT CHECK - Focus on {intent_id}:",
+                    f"CODE INTENT CHECK - Focus on {value}:",
                     "",
                     "  Read intent (find containing milestone first):",
-                    f"    {_jq_select_by_id(state_dir, '.milestones[].code_intents[]', intent_id)}",
+                    f"    {_jq_select_by_id(state_dir, '.milestones[].code_intents[]', value)}",
                     "",
                 ]
             )
@@ -447,37 +455,39 @@ class PlanDesignVerify(VerifyBase):
                 ]
             )
 
-        # Add check-specific guidance
-        if "decision_log" in check.lower() or "decision log" in check.lower():
-            guidance.extend(
+        rules = [
+            (
+                lambda c: "decision_log" in c or "decision log" in c,
                 [
                     "DECISION LOG VERIFICATION:",
                     "  - Each entry should have multi-step reasoning",
                     "  - BAD: 'Polling | Webhooks unreliable'",
                     "  - GOOD: 'Polling | 30% webhook failure -> need fallback anyway'",
                     "",
-                ]
-            )
-        elif "policy" in check.lower():
-            guidance.extend(
+                ],
+            ),
+            (
+                lambda c: "policy" in c,
                 [
                     "POLICY DEFAULT VERIFICATION:",
                     "  - Policy defaults affect user/org (lifecycle, capacity, failure handling)",
                     "  - Must have Tier 1 (user-specified) backing in decision_log",
                     "  - Technical defaults can use Tier 2-3 backing",
                     "",
-                ]
-            )
-        elif "code_intent" in check.lower():
-            guidance.extend(
+                ],
+            ),
+            (
+                lambda c: "code_intent" in c,
                 [
                     "CODE INTENT VERIFICATION:",
                     "  - Each implementation milestone needs code_intents",
                     "  - Each code_intent needs file path and behavior",
                     "  - decision_refs should point to valid decision_log entries",
                     "",
-                ]
-            )
+                ],
+            ),
+        ]
+        guidance.extend(select_check_guidance(check, rules))
 
         return guidance
 
@@ -494,7 +504,8 @@ class ImplCodeVerify(VerifyBase):
 
         guidance = []
 
-        if scope == "*":
+        kind, value = parse_scope(scope)
+        if kind == "macro":
             guidance.extend(
                 [
                     "MACRO CHECK - Verify across all implemented code:",
@@ -502,30 +513,28 @@ class ImplCodeVerify(VerifyBase):
                     "  Read plan.json for acceptance criteria (code milestones only --",
                     "  is_documentation_only milestones have no implemented code and are",
                     "  verified in impl-docs):",
-                    f"    {_jq_command(state_dir, '.milestones[] | select(.is_documentation_only != true) | .acceptance_criteria')}",
+                    f"    {_jq_command(state_dir, CODE_ONLY_SELECTOR + ' | .acceptance_criteria')}",
                     "",
                     "  Read modified files from codebase.",
                     "",
                 ]
             )
-        elif scope.startswith("milestone:"):
-            ms_id = scope.split(":", 1)[1]
+        elif kind == "milestone":
             guidance.extend(
                 [
-                    f"MILESTONE CHECK - Focus on {ms_id}:",
+                    f"MILESTONE CHECK - Focus on {value}:",
                     "",
                     "  Extract milestone:",
-                    f"    {_jq_select_by_id(state_dir, '.milestones[]', ms_id)}",
+                    f"    {_jq_select_by_id(state_dir, '.milestones[]', value)}",
                     "",
                     "  Read the files associated with this milestone.",
                     "",
                 ]
             )
-        elif scope.startswith("file:"):
-            file_path = scope.split(":", 1)[1]
+        elif kind == "file":
             guidance.extend(
                 [
-                    f"FILE CHECK - Focus on {file_path}:",
+                    f"FILE CHECK - Focus on {value}:",
                     "",
                     "  Read the file content from codebase.",
                     "",
@@ -542,8 +551,9 @@ class ImplCodeVerify(VerifyBase):
             )
 
         # Add check-specific guidance
-        if "factored" in check.lower() and "expect" in check.lower():
-            guidance.extend(
+        rules = [
+            (
+                lambda c: "factored" in c and "expect" in c,
                 [
                     "FACTORED VERIFICATION - STEP 1 (Expectations):",
                     "  Write down what you EXPECT to observe in code",
@@ -552,10 +562,10 @@ class ImplCodeVerify(VerifyBase):
                     "  | --------- | ---------------------- |",
                     "  Fill this table FIRST, then proceed to observation step.",
                     "",
-                ]
-            )
-        elif "factored" in check.lower() and "actually" in check.lower():
-            guidance.extend(
+                ],
+            ),
+            (
+                lambda c: "factored" in c and "actually" in c,
                 [
                     "FACTORED VERIFICATION - STEP 2 (Observations):",
                     "  Document what the code ACTUALLY does",
@@ -564,10 +574,10 @@ class ImplCodeVerify(VerifyBase):
                     "  | ---------------- | --------------------- |",
                     "  Note behaviors, not what it should do.",
                     "",
-                ]
-            )
-        elif "factored" in check.lower() and "compare" in check.lower():
-            guidance.extend(
+                ],
+            ),
+            (
+                lambda c: "factored" in c and "compare" in c,
                 [
                     "FACTORED VERIFICATION - STEP 3 (Comparison):",
                     "  NOW compare your expectations vs observations.",
@@ -575,43 +585,47 @@ class ImplCodeVerify(VerifyBase):
                     "  | --------- | -------- | -------- | ------ |",
                     "  Report mismatches as FAIL.",
                     "",
-                ]
-            )
-        elif "marker" in check.lower() or ":perf:" in check.lower() or ":unsafe:" in check.lower():
-            guidance.extend(self._intent_marker_guidance(include_examples=True))
-        elif "temporal" in check.lower():
-            guidance.extend(self._temporal_contamination_guidance())
-        elif "god function" in check.lower() or "nesting" in check.lower():
-            guidance.extend(
+                ],
+            ),
+            (
+                lambda c: "marker" in c or ":perf:" in c or ":unsafe:" in c,
+                lambda: self._intent_marker_guidance(include_examples=True),
+            ),
+            (
+                lambda c: "temporal" in c,
+                self._temporal_contamination_guidance,
+            ),
+            (
+                lambda c: "god function" in c or "nesting" in c,
                 [
                     "STRUCTURAL CHECK:",
                     "  - No functions >50 lines",
                     "  - No nesting >3 levels",
                     "  Count lines and nesting depth for flagged functions.",
                     "",
-                ]
-            )
-        elif "duplicate" in check.lower():
-            guidance.extend(
+                ],
+            ),
+            (
+                lambda c: "duplicate" in c,
                 [
                     "DUPLICATION CHECK:",
                     "  Look for copy-pasted code blocks",
                     "  or parallel functions doing similar things.",
                     "",
-                ]
-            )
-        elif "code quality" in check.lower():
-            guidance.extend(
+                ],
+            ),
+            (
+                lambda c: "code quality" in c,
                 [
                     "CODE QUALITY CHECK:",
                     "  Apply all 8 quality documents:",
                     "  01-naming, 02-structure, 03-patterns, 04-repetition,",
                     "  05-documentation, 06-module, 07-cross-file, 08-codebase",
                     "",
-                ]
-            )
-        elif "convention" in check.lower():
-            guidance.extend(
+                ],
+            ),
+            (
+                lambda c: "convention" in c,
                 [
                     "CONVENTION VERIFICATION:",
                     "  Confirm the change follows the documented project convention.",
@@ -619,10 +633,10 @@ class ImplCodeVerify(VerifyBase):
                     "  - FAIL only when the code contradicts a convention that is",
                     "    actually documented (cite it); style preference is not a FAIL.",
                     "",
-                ]
-            )
-        elif "testing" in check.lower() and "strategy" in check.lower():
-            guidance.extend(
+                ],
+            ),
+            (
+                lambda c: "testing" in c and "strategy" in c,
                 [
                     "TESTING-STRATEGY VERIFICATION:",
                     "  Confirm new/changed tests follow the strategy confirmed in the plan.",
@@ -630,8 +644,10 @@ class ImplCodeVerify(VerifyBase):
                     "  - FAIL if tests assert only the happy path when the strategy",
                     "    requires edge/error coverage, or use a banned mocking style.",
                     "",
-                ]
-            )
+                ],
+            ),
+        ]
+        guidance.extend(select_check_guidance(check, rules))
 
         return guidance
 
@@ -648,7 +664,8 @@ class ImplDocsVerify(VerifyBase):
 
         guidance = []
 
-        if scope == "*":
+        kind, value = parse_scope(scope)
+        if kind == "macro":
             guidance.extend(
                 [
                     "MACRO CHECK - Verify across all documentation:",
@@ -657,33 +674,31 @@ class ImplDocsVerify(VerifyBase):
                     f"    {_jq_command(state_dir, '{ik: .invisible_knowledge, milestones: .milestones[].files}')}",
                     "",
                     "  Read documentation-only milestone deliverables (files + acceptance criteria):",
-                    f"    {_jq_command(state_dir, '.milestones[] | select(.is_documentation_only == true) | {files, acceptance_criteria}')}",
+                    f"    {_jq_command(state_dir, DOC_ONLY_DELIVERABLES_FILTER)}",
                     "",
                     "  Read CLAUDE.md and README.md files in modified directories.",
                     "",
                 ]
             )
-        elif scope.startswith("milestone:"):
-            ms_id = scope.split(":", 1)[1]
+        elif kind == "milestone":
             guidance.extend(
                 [
-                    f"MILESTONE CHECK - Focus on {ms_id}:",
+                    f"MILESTONE CHECK - Focus on {value}:",
                     "",
                     "  Extract the milestone (files + acceptance criteria):",
-                    f"    {_jq_select_by_id(state_dir, '.milestones[]', ms_id)}",
+                    f"    {_jq_select_by_id(state_dir, '.milestones[]', value)}",
                     "",
                     "  Read the files this milestone authored and verify its acceptance criteria.",
                     "",
                 ]
             )
-        elif scope.startswith("directory:"):
-            directory = scope.split(":", 1)[1]
+        elif kind == "directory":
             guidance.extend(
                 [
-                    f"DIRECTORY CHECK - Focus on {directory}:",
+                    f"DIRECTORY CHECK - Focus on {value}:",
                     "",
-                    f"  Read CLAUDE.md: cat {shell_quote(directory)}/CLAUDE.md",
-                    f"  Read README.md: cat {shell_quote(directory)}/README.md (if exists)",
+                    f"  Read CLAUDE.md: cat {shell_quote(value)}/CLAUDE.md",
+                    f"  Read README.md: cat {shell_quote(value)}/README.md (if exists)",
                     "",
                 ]
             )
@@ -698,8 +713,9 @@ class ImplDocsVerify(VerifyBase):
             )
 
         # Add check-specific guidance
-        if "claude.md" in check.lower() and "tabular" in check.lower():
-            guidance.extend(
+        rules = [
+            (
+                lambda c: "claude.md" in c and "tabular" in c,
                 [
                     "CLAUDE.MD FORMAT CHECK:",
                     "  Must use tabular index format:",
@@ -708,10 +724,10 @@ class ImplDocsVerify(VerifyBase):
                     "  - FAIL if prose instead of table",
                     "  - FAIL if overview >1 sentence",
                     "",
-                ]
-            )
-        elif "forbidden section" in check.lower():
-            guidance.extend(
+                ],
+            ),
+            (
+                lambda c: "forbidden section" in c,
                 [
                     "FORBIDDEN SECTIONS CHECK:",
                     "  CLAUDE.md must NOT have:",
@@ -720,21 +736,23 @@ class ImplDocsVerify(VerifyBase):
                     "  - 'Constraints' section",
                     "  These belong in README.md, not CLAUDE.md.",
                     "",
-                ]
-            )
-        elif "overview" in check.lower() and "one sentence" in check.lower():
-            guidance.extend(
+                ],
+            ),
+            (
+                lambda c: "overview" in c and "one sentence" in c,
                 [
                     "OVERVIEW LENGTH CHECK:",
                     "  CLAUDE.md overview must be ONE sentence max.",
                     "  Count sentences in Overview section.",
                     "",
-                ]
-            )
-        elif "temporal" in check.lower():
-            guidance.extend(self._temporal_contamination_guidance())
-        elif "ik" in check.lower() and "proximity" in check.lower():
-            guidance.extend(
+                ],
+            ),
+            (
+                lambda c: "temporal" in c,
+                self._temporal_contamination_guidance,
+            ),
+            (
+                lambda c: "ik" in c and "proximity" in c,
                 [
                     "IK PROXIMITY CHECK:",
                     "  Each Invisible Knowledge item must be documented",
@@ -742,20 +760,20 @@ class ImplDocsVerify(VerifyBase):
                     "  - FAIL if IK is in separate doc/ directory",
                     "  - FAIL if IK references external wiki without local summary",
                     "",
-                ]
-            )
-        elif "readme" in check.lower() and "created" in check.lower():
-            guidance.extend(
+                ],
+            ),
+            (
+                lambda c: "readme" in c and "created" in c,
                 [
                     "README.MD CREATION CHECK:",
                     "  If invisible_knowledge has content:",
                     "  - README.md should exist in relevant directories",
                     "  - README.md should contain IK items",
                     "",
-                ]
-            )
-        elif "self-contained" in check.lower():
-            guidance.extend(
+                ],
+            ),
+            (
+                lambda c: "self-contained" in c,
                 [
                     "SELF-CONTAINED CHECK:",
                     "  README.md must not rely on external sources:",
@@ -763,10 +781,10 @@ class ImplDocsVerify(VerifyBase):
                     "  - No 'refer to doc/ directory'",
                     "  External knowledge must be summarized locally.",
                     "",
-                ]
-            )
-        elif "deliverable" in check.lower() or "acceptance" in check.lower():
-            guidance.extend(
+                ],
+            ),
+            (
+                lambda c: "deliverable" in c or "acceptance" in c,
                 [
                     "DOCUMENTATION-ONLY DELIVERABLE CHECK:",
                     "  For the documentation-only milestone, read each file in its files[]",
@@ -774,20 +792,24 @@ class ImplDocsVerify(VerifyBase):
                     "  - A milestone with NO acceptance_criteria is vacuously satisfied (PASS).",
                     "  - FAIL a criterion only with concrete evidence it is unmet.",
                     "",
-                ]
-            )
-        elif "why" in check.lower() and "what" in check.lower():
-            guidance.extend(
+                ],
+            ),
+            (
+                lambda c: "why" in c and "what" in c,
                 [
                     "WHY-NOT-WHAT VERIFICATION:",
                     "  Comments should explain reasoning, not describe code.",
                     "  BAD: 'Added a new function' (describes action)",
                     "  GOOD: 'Mutex serializes cache access' (explains purpose)",
                     "",
-                ]
-            )
-        elif "marker" in check.lower():
-            guidance.extend(self._intent_marker_guidance(include_examples=False))
+                ],
+            ),
+            (
+                lambda c: "marker" in c,
+                lambda: self._intent_marker_guidance(include_examples=False),
+            ),
+        ]
+        guidance.extend(select_check_guidance(check, rules))
 
         return guidance
 

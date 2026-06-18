@@ -72,6 +72,19 @@ def get_qr_path(state_dir: str, phase: str) -> Path:
     return Path(state_dir) / f"qr-{phase}.json"
 
 
+def _load_qr_state_or_exit(state_dir: str, phase: str) -> dict:
+    """Load + validate a QR state file for read-only commands, or error_exit.
+
+    Shared by get-item / list-items / summary. Mutating commands take the lock
+    path (load_qr_state_under_lock), not this.
+    """
+    qr_path = get_qr_path(state_dir, phase)
+    if not qr_path.exists():
+        error_exit(f"QR state file not found: {qr_path}")
+    qr_state = load_qr_state(state_dir, phase)
+    if qr_state is None:
+        error_exit(f"{qr_path.name} is not a valid QR state object")
+    return qr_state
 
 
 def cmd_update_item(state_dir: str, phase: str, args: list[str]):
@@ -142,14 +155,7 @@ def cmd_get_item(state_dir: str, phase: str, args: list[str]):
         error_exit("Usage: get-item <id>")
 
     item_id = args[0]
-    qr_path = get_qr_path(state_dir, phase)
-
-    if not qr_path.exists():
-        error_exit(f"QR state file not found: {qr_path}")
-
-    qr_state = load_qr_state(state_dir, phase)
-    if qr_state is None:
-        error_exit(f"{qr_path.name} is not a valid QR state object")
+    qr_state = _load_qr_state_or_exit(state_dir, phase)
 
     _, item = find_item(qr_state, item_id)
     if item is None:
@@ -170,13 +176,7 @@ def cmd_list_items(state_dir: str, phase: str, args: list[str]):
         else:
             i += 1
 
-    qr_path = get_qr_path(state_dir, phase)
-    if not qr_path.exists():
-        error_exit(f"QR state file not found: {qr_path}")
-
-    qr_state = load_qr_state(state_dir, phase)
-    if qr_state is None:
-        error_exit(f"{qr_path.name} is not a valid QR state object")
+    qr_state = _load_qr_state_or_exit(state_dir, phase)
 
     for item in qr_state.get("items", []):
         item_status = item.get("status", "TODO")
@@ -188,13 +188,7 @@ def cmd_list_items(state_dir: str, phase: str, args: list[str]):
 
 def cmd_summary(state_dir: str, phase: str, args: list[str]):
     """Print summary of QR state (counts by status)."""
-    qr_path = get_qr_path(state_dir, phase)
-    if not qr_path.exists():
-        error_exit(f"QR state file not found: {qr_path}")
-
-    qr_state = load_qr_state(state_dir, phase)
-    if qr_state is None:
-        error_exit(f"{qr_path.name} is not a valid QR state object")
+    qr_state = _load_qr_state_or_exit(state_dir, phase)
 
     counts = {"TODO": 0, "PASS": 0, "FAIL": 0}
     for item in qr_state.get("items", []):

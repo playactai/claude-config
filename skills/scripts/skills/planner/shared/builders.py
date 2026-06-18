@@ -67,14 +67,6 @@ def format_forbidden(*items: str) -> str:
     return f"FORBIDDEN:\n{lines}"
 
 
-def format_qr_verify_forbidden() -> str:
-    """QR-verify AGGREGATE-step forbidden block (QR_VERIFY_FORBIDDEN superset).
-
-    Both orchestrators call this so the list cannot drift again.
-    """
-    return format_forbidden(*QR_VERIFY_FORBIDDEN)
-
-
 def format_gate_result(passed: bool) -> str:
     """Gate result banner.
 
@@ -169,5 +161,42 @@ def build_qr_verify_dispatch(
         "  ALL agents returned PASS  ->  invoke next step with --qr-status pass",
         "  ANY agent returned FAIL   ->  invoke next step with --qr-status fail",
         "",
-        format_qr_verify_forbidden(),
+        format_forbidden(*QR_VERIFY_FORBIDDEN),
+    ]
+
+
+def build_qr_decompose_dispatch(
+    decompose_script: str,
+    phase: str,
+    state_dir: str,
+    iteration: int,
+    constraint: str,
+    model: str | None = None,
+) -> list[str]:
+    """Build the QR-decompose dispatch action block shared by planner + executor.
+
+    Single owner of the decompose dispatch shape: the QR-<PHASE>-DECOMPOSE banner,
+    the injected --phase, the shell-quoted --state-dir, the quality-reviewer
+    subagent_dispatch, and the expected-output prose. The only per-orchestrator
+    differences are `constraint` (ORCHESTRATOR_CONSTRAINT vs _EXTENDED) and `model`,
+    passed in. The caller resolves decompose_script, keeps its own qr_file_exists
+    skip branch, and wraps the returned list its own way (planner returns it as
+    `actions`; executor "\\n".join()s it into format_step).
+    """
+    from skills.lib.workflow.prompts import subagent_dispatch
+    from skills.planner.shared.constraints import format_state_banner
+
+    invoke_cmd = (
+        f"uv run python -m {decompose_script} --step 1 --phase {shell_quote(phase)} "
+        f"--state-dir {shell_quote(state_dir)}"
+    )
+    return [
+        format_state_banner(f"QR-{phase.upper()}-DECOMPOSE", iteration, "decompose"),
+        "",
+        constraint,
+        "",
+        subagent_dispatch(agent_type="quality-reviewer", command=invoke_cmd, model=model),
+        "",
+        f"Expected output: qr-{phase}.json written to STATE_DIR",
+        "Orchestrator generates verification dispatch from this file.",
     ]

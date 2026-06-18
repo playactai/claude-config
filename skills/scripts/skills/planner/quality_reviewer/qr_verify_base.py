@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import sys
 from abc import ABC, abstractmethod
+from collections.abc import Callable, Sequence
 from typing import ClassVar
 
 from skills.lib.workflow.prompts import pin_cwd
@@ -46,6 +47,44 @@ from skills.planner.shared.qr.utils import (
     load_validated_qr_state,
 )
 from skills.planner.shared.resources import render_phase_context
+
+
+def parse_scope(scope: str) -> tuple[str, str]:
+    """Split a QR item scope into (kind, value).
+
+    "*"            -> ("macro", "")
+    "milestone:M1" -> ("milestone", "M1")   # kind is the text before the first ":"
+    "file:a/b.py"  -> ("file", "a/b.py")
+    "plainscope"   -> ("other", "plainscope")  # no ":" -> generic fallback
+
+    Each VerifyBase subclass branches on the kinds its phase defines and routes the
+    rest through its generic ("other") fallback, so the per-phase scope grammar stays
+    identical while the split lives in one place.
+    """
+    if scope == "*":
+        return ("macro", "")
+    prefix, sep, value = scope.partition(":")
+    if not sep:
+        return ("other", scope)
+    return (prefix, value)
+
+
+def select_check_guidance(
+    check: str,
+    rules: Sequence[tuple[Callable[[str], bool], list[str] | Callable[[], list[str]]]],
+) -> list[str]:
+    """First-match check-specific guidance from an ordered (predicate, producer) list.
+
+    predicate receives the lower-cased check text; producer is the guidance lines or
+    a zero-arg callable returning them (for guidance that delegates to a shared
+    VerifyBase method). Returns [] when nothing matches -- the verifier then emits
+    only the scope block. Ordered + first-match, mirroring the original if/elif chain.
+    """
+    lowered = check.lower()
+    for predicate, producer in rules:
+        if predicate(lowered):
+            return producer() if callable(producer) else producer
+    return []
 
 
 class VerifyBase(ABC):

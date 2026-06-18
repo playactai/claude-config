@@ -35,7 +35,9 @@ from skills.lib.workflow.prompts import subagent_dispatch
 from skills.lib.workflow.prompts.step import format_step
 from skills.lib.workflow.types import AgentRole
 from skills.planner.shared.builders import (
+    ESCALATE_HANDLER,
     THINKING_EFFICIENCY,
+    build_qr_decompose_dispatch,
     build_qr_verify_dispatch,
     shell_quote,
 )
@@ -45,7 +47,7 @@ from skills.planner.shared.constraints import (
 )
 from skills.planner.shared.gates import GateResult, build_gate_output
 from skills.planner.shared.qr.cli import add_qr_args
-from skills.planner.shared.qr.types import LoopState, QRState, QRStatus
+from skills.planner.shared.qr.types import LoopState
 from skills.planner.shared.qr.utils import prepare_verify_items, qr_file_exists
 from skills.planner.shared.resources import get_mode_script_path
 
@@ -328,31 +330,10 @@ def qr_decompose_step(title, phase, script, model=None):
                 "next": f"uv run python -m {MODULE_PATH} --step {verify_step} --state-dir {shell_quote(state_dir)}",
             }
 
-        action_children = []
-
-        qr_name = f"QR-{phase.upper()}-DECOMPOSE"
-        action_children.append(format_state_banner(qr_name, qr.iteration, "decompose"))
-        action_children.append("")
-
-        action_children.append(ORCHESTRATOR_CONSTRAINT_EXTENDED)
-        action_children.append("")
-
         mode_script = get_mode_script_path(script)
-        invoke_cmd = (
-            f"uv run python -m {mode_script} --step 1 --phase {phase} "
-            f"--state-dir {shell_quote(state_dir)}"
+        action_children = build_qr_decompose_dispatch(
+            mode_script, phase, state_dir, qr.iteration, ORCHESTRATOR_CONSTRAINT_EXTENDED, model=model
         )
-
-        dispatch_prompt = subagent_dispatch(
-            agent_type="quality-reviewer",
-            command=invoke_cmd,
-            model=model,
-        )
-        action_children.append(dispatch_prompt)
-        action_children.append("")
-
-        action_children.append(f"Expected output: qr-{phase}.json written to STATE_DIR")
-        action_children.append("Orchestrator generates verification dispatch from this file.")
 
         next_step = step + 1
         next_cmd = f"uv run python -m {MODULE_PATH} --step {next_step} --state-dir {shell_quote(state_dir)}"
@@ -511,7 +492,7 @@ STEPS = {
             "[ ] 5. Someone unfamiliar would understand why we're building this",
             "[ ] 6. Reference documentation paths captured or explicit 'none'",
             "",
-            "IF ANY CHECK FAILS: gather missing context via AskUserQuestion or exploration.",
+            f"IF ANY CHECK FAILS: gather missing context via {ESCALATE_HANDLER} or exploration.",
         ],
     ),
     # Plan-design phase (steps 3-6)
@@ -559,11 +540,7 @@ def get_step_guidance(
     qr_states is the validate_state qr dict threaded from main so the gate
     path avoids a second load_qr_state.
     """
-    from skills.planner.shared.qr.utils import (
-        get_qr_iteration_from_state,
-        has_qr_failures_from_state,
-        load_qr_state,
-    )
+    from skills.planner.shared.qr.utils import resolve_qr_for_step
 
     handler = STEPS.get(step)
     if not handler:
@@ -572,17 +549,7 @@ def get_step_guidance(
     # Phase stored as handler attribute by step factory.
     # None for non-QR steps (1, 2).
     phase = getattr(handler, "phase", None)
-    if qr_states is not None:
-        qr_model = qr_states.get(phase) if state_dir and phase else None
-        qr_state = qr_model.model_dump(mode="json") if qr_model else None
-    else:
-        qr_state = load_qr_state(state_dir, phase) if state_dir and phase else None
-    iteration = get_qr_iteration_from_state(qr_state) if qr_state else 1
-
-    status = QRStatus(qr_status) if qr_status else None
-    is_fix_mode = bool(qr_state and has_qr_failures_from_state(qr_state))
-    state = LoopState.RETRY if is_fix_mode else LoopState.INITIAL
-    qr = QRState(iteration=iteration, state=state, status=status)
+    qr_state, qr = resolve_qr_for_step(qr_states, state_dir, phase, qr_status)
 
     ctx = {
         "step": step,

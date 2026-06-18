@@ -13,8 +13,7 @@ Selection based on QR state detection:
 - FAIL items present -> qr_fix
 """
 
-from skills.planner.shared.qr.utils import get_qr_iteration
-from skills.planner.shared.routing import route_work_phase
+from skills.planner.shared.routing import build_route_dispatch
 
 PHASE_KEY = "impl-code"
 
@@ -45,30 +44,7 @@ def get_step_guidance(step: int, module_path: str | None = None, **kwargs) -> di
             "next": f"uv run python -m {target} --step 1",
         }
 
-    # Single detection: route_work_phase reads QR state once and decides fix vs execute.
-    result = route_work_phase(state_dir, PHASE_KEY)
-
-    if result["has_failures"]:
-        iteration = get_qr_iteration(state_dir, PHASE_KEY)
-        return {
-            "title": "Exec Implement - Routing to Fix Mode",
-            "actions": [
-                f"QR state detected: {result['failed_count']} failed items (iteration {iteration})",
-                "Dispatching to FIX workflow.",
-            ],
-            "dispatch_to": result["target_module"],
-            "next": f"uv run python -m {result['target_module']} --step 1 --state-dir {state_dir}",
-        }
-    else:
-        return {
-            "title": "Exec Implement - Routing to Execute Mode",
-            "actions": [
-                "First-time execution or no QR failures.",
-                "Dispatching to EXECUTE workflow.",
-            ],
-            "dispatch_to": result["target_module"],
-            "next": f"uv run python -m {result['target_module']} --step 1 --state-dir {state_dir}",
-        }
+    return build_route_dispatch(state_dir, PHASE_KEY, "Exec Implement")
 
 
 if __name__ == "__main__":

@@ -216,6 +216,15 @@ def render_code_milestone_scope(state_dir: str, phase: str) -> str:
     )
 
 
+def no_scope(state_dir: str, phase: str) -> str:
+    """Default scope provider: no extra in-scope enumeration.
+
+    Phases other than impl-code register this so dispatch_step always holds a
+    callable scope_provider (uniform slot) -- no `if provider` special-casing.
+    """
+    return ""
+
+
 def dispatch_step(
     step: int,
     phase: str,
@@ -223,7 +232,7 @@ def dispatch_step(
     phase_prompts: dict[int, str],
     grouping_config: dict,
     state_dir: str = "",
-    scope_provider: Callable[[str, str], str] | None = None,
+    scope_provider: Callable[[str, str], str] = no_scope,
 ) -> dict:
     """Route step to appropriate handler.
 
@@ -248,7 +257,7 @@ def dispatch_step(
     # Explicit code-milestone scope for impl-code (structural doc-only exclusion);
     # "" for other phases / missing plan, so the conditional injections below add
     # nothing.
-    code_scope = scope_provider(state_dir, phase) if (scope_provider and step in (1, 3)) else ""
+    code_scope = scope_provider(state_dir, phase) if step in (1, 3) else ""
 
     def next_cmd(s):
         return f"uv run python -m {module_path} --step {s}{phase_arg}{state_dir_arg}"

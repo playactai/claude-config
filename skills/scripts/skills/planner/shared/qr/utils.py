@@ -19,6 +19,7 @@ from collections.abc import Callable, Iterator
 from pathlib import Path
 from xml.sax.saxutils import escape
 
+from skills.planner.shared.qr.types import LoopState, QRState, QRStatus
 from skills.planner.shared.schema import (
     LINE_FORGING_ORDS,
     QA_ITEM_DEFAULTS,
@@ -374,11 +375,14 @@ def _fix_field_safe(text: object) -> str:
 
 
 def format_failed_items_for_fix(qr_state: dict) -> str:
-    """Format all failed items for fixer prompt.
+    """Format the blocking-severity failed items for the fixer prompt.
 
-    Used by developer/architect/TW fix scripts when QR failures detected.
+    Used by developer/architect/TW fix scripts when QR failures detected. Filters
+    to the same blocking set the gate routes on (FAIL items whose severity blocks at
+    the state's current iteration), so the fixer is told to address exactly the items
+    that keep the gate failing -- not de-escalated FAILs the gate now lets pass.
     """
-    failed = get_qr_items_by_status(qr_state, "FAIL")
+    failed = _blocking_items_from_state(qr_state, "FAIL")
     if not failed:
         return ""
 
@@ -432,6 +436,33 @@ def has_qr_failures_from_state(qr_state: dict) -> bool:
     the below-threshold items remain FAIL in state (no auto-pass).
     """
     return len(_blocking_items_from_state(qr_state, "FAIL")) > 0
+
+
+def resolve_qr_for_step(
+    qr_states: dict | None,
+    state_dir: str | None,
+    phase: str | None,
+    qr_status: str | None,
+) -> tuple[dict | None, QRState]:
+    """Resolve the QR state dict + QRState for one orchestrator step.
+
+    Both orchestrators derive the same per-step QR context: prefer a preloaded
+    qr_states model (the batch path, which avoids a second disk load) else read
+    qr-{phase}.json. Iteration and fix-mode come from the state itself; status from
+    the gate flag. The caller passes the resolved phase (executor maps step->phase
+    via EXECUTOR_STEP_PHASES; planner reads it off the step handler).
+    """
+    if qr_states is not None:
+        qr_model = qr_states.get(phase) if state_dir and phase else None
+        qr_state = qr_model.model_dump(mode="json") if qr_model else None
+    else:
+        qr_state = load_qr_state(state_dir, phase) if state_dir and phase else None
+    iteration = get_qr_iteration_from_state(qr_state) if qr_state else 1
+    status = QRStatus(qr_status) if qr_status else None
+    fix_mode = bool(qr_state and has_qr_failures_from_state(qr_state))
+    state = LoopState.RETRY if fix_mode else LoopState.INITIAL
+    qr = QRState(iteration=iteration, state=state, status=status)
+    return qr_state, qr
 
 
 def qr_file_exists(state_dir: str, phase: str) -> bool:

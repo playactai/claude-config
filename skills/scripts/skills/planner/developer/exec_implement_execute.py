@@ -12,7 +12,9 @@ For QR fix mode, see exec_implement_qr_fix.py.
 Router (exec_implement.py) dispatches to appropriate script.
 """
 
+from skills.planner.shared.builders import ESCALATE_HANDLER, shell_quote
 from skills.planner.shared.constraints import format_state_banner
+from skills.planner.shared.resources import validate_state_dir_requirement
 
 STEPS = {
     1: "Implementation Planning",
@@ -26,7 +28,8 @@ def get_step_guidance(step: int, module_path: str | None = None, **kwargs) -> di
     """Return guidance for the given step."""
     MODULE_PATH = module_path or "skills.planner.developer.exec_implement_execute"
     state_dir = kwargs.get("state_dir", "")
-    state_dir_arg = f" --state-dir {state_dir}" if state_dir else ""
+    validate_state_dir_requirement(step, state_dir or None)
+    state_dir_arg = f" --state-dir {shell_quote(state_dir)}" if state_dir else ""
 
     if step == 1:
         banner = format_state_banner("IMPLEMENTATION", 1, "work")
@@ -102,7 +105,7 @@ def get_step_guidance(step: int, module_path: str | None = None, **kwargs) -> di
                 "If tests fail:",
                 "  - Clear problem + solution: Task(developer) immediately",
                 "  - Difficult/unclear: Task(debugger) to diagnose first",
-                "  - Uncertain: AskUserQuestion with options",
+                f"  - Uncertain: {ESCALATE_HANDLER} with options",
             ],
             "next": f"uv run python -m {MODULE_PATH} --step 4{state_dir_arg}",
         }

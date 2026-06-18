@@ -16,6 +16,7 @@ Router (plan_design.py) dispatches to appropriate script.
 
 from skills.lib.workflow.constants import SUB_AGENT_QUESTION_FORMAT
 from skills.lib.workflow.prompts.step import pin_cwd
+from skills.planner.shared.builders import shell_quote
 from skills.planner.shared.resources import (
     STATE_DIR_ARG_REQUIRED,
     PlannerResourceProvider,
@@ -90,12 +91,12 @@ def get_step_guidance(step: int, module_path: str | None = None, **kwargs) -> di
                 "DO NOT write any files yet. Gather understanding for step 2.",
                 "Record your analysis mentally for use in subsequent steps.",
             ],
-            "next": f"uv run python -m {MODULE_PATH} --step 2 --state-dir {state_dir}",
+            "next": f"uv run python -m {MODULE_PATH} --step 2 --state-dir {shell_quote(state_dir)}",
         }
 
     elif step == 2:
         state_dir = kwargs.get("state_dir", "")
-        state_dir_arg = f" --state-dir {state_dir}" if state_dir else ""
+        state_dir_arg = f" --state-dir {shell_quote(state_dir)}" if state_dir else ""
         return {
             "title": STEPS[2],
             "actions": [
@@ -120,7 +121,7 @@ def get_step_guidance(step: int, module_path: str | None = None, **kwargs) -> di
 
     elif step == 3:
         state_dir = kwargs.get("state_dir", "")
-        state_dir_arg = f" --state-dir {state_dir}" if state_dir else ""
+        state_dir_arg = f" --state-dir {shell_quote(state_dir)}" if state_dir else ""
         return {
             "title": STEPS[3],
             "actions": [
@@ -141,7 +142,7 @@ def get_step_guidance(step: int, module_path: str | None = None, **kwargs) -> di
 
     elif step == 4:
         state_dir = kwargs.get("state_dir", "")
-        state_dir_arg = f" --state-dir {state_dir}" if state_dir else ""
+        state_dir_arg = f" --state-dir {shell_quote(state_dir)}" if state_dir else ""
         return {
             "title": STEPS[4],
             "actions": [
@@ -164,7 +165,7 @@ def get_step_guidance(step: int, module_path: str | None = None, **kwargs) -> di
 
     elif step == 5:
         state_dir = kwargs.get("state_dir", "")
-        state_dir_arg = f" --state-dir {state_dir}" if state_dir else ""
+        state_dir_arg = f" --state-dir {shell_quote(state_dir)}" if state_dir else ""
         return {
             "title": STEPS[5],
             "actions": [

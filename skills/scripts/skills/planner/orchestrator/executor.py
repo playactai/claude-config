@@ -30,7 +30,9 @@ from typing import TYPE_CHECKING
 from skills.lib.workflow.prompts import subagent_dispatch
 from skills.lib.workflow.prompts.step import format_step
 from skills.planner.shared.builders import (
+    ESCALATE_HANDLER,
     THINKING_EFFICIENCY,
+    build_qr_decompose_dispatch,
     build_qr_verify_dispatch,
     shell_quote,
 )
@@ -46,13 +48,11 @@ from skills.planner.shared.constraints import (
 from skills.planner.shared.gates import build_gate_output
 from skills.planner.shared.qr.cli import add_qr_args
 from skills.planner.shared.qr.phases import get_phase_config
-from skills.planner.shared.qr.types import LoopState, QRState, QRStatus
+from skills.planner.shared.qr.types import LoopState, QRState
 from skills.planner.shared.qr.utils import (
-    get_qr_iteration_from_state,
-    has_qr_failures_from_state,
-    load_qr_state,
     prepare_verify_items,
     qr_file_exists,
+    resolve_qr_for_step,
 )
 from skills.planner.shared.resources import get_mode_script_path
 
@@ -215,7 +215,7 @@ def format_step_2(qr: QRState, state_dir: str) -> str:
             "ERROR HANDLING (you NEVER fix code yourself):",
             "  Clear problem + solution: Task(developer) immediately",
             "  Difficult/unclear problem: Task(debugger) to diagnose first",
-            "  Uncertain how to proceed: AskUserQuestion with options",
+            f"  Uncertain how to proceed: {ESCALATE_HANDLER} with options",
         ]
 
     body = "\n".join(actions)
@@ -248,26 +248,9 @@ def format_qr_decompose(step: int, phase: str, state_dir: str, qr: QRState) -> s
         next_cmd = f"uv run python -m {MODULE_PATH} --step {next_step} --state-dir {shell_quote(state_dir)}"
         return format_step(body, next_cmd, title=f"{title} - Skipped")
 
-    actions = [
-        format_state_banner(f"QR-{phase.upper()}-DECOMPOSE", qr.iteration, "decompose"),
-        "",
-        ORCHESTRATOR_CONSTRAINT,
-        "",
-    ]
-
-    invoke_cmd = (
-        f"uv run python -m {decompose_script} --step 1 --phase {phase} "
-        f"--state-dir {shell_quote(state_dir)}"
+    actions = build_qr_decompose_dispatch(
+        decompose_script, phase, state_dir, qr.iteration, ORCHESTRATOR_CONSTRAINT
     )
-    actions.append(
-        subagent_dispatch(
-            agent_type="quality-reviewer",
-            command=invoke_cmd,
-        )
-    )
-    actions.append("")
-    actions.append(f"Expected output: qr-{phase}.json written to STATE_DIR")
-    actions.append("Orchestrator generates verification dispatch from this file.")
 
     body = "\n".join(actions)
     next_step = step + 1
@@ -425,16 +408,7 @@ def format_output(
     # renders different prose on retry. Restricting to N/N+1 would leave
     # verify/gate running as INITIAL even mid-fix-loop (Qodo review #4).
     phase = EXECUTOR_STEP_PHASES.get(step)
-    if qr_states is not None:
-        qr_model = qr_states.get(phase) if state_dir and phase else None
-        qr_state = qr_model.model_dump(mode="json") if qr_model else None
-    else:
-        qr_state = load_qr_state(state_dir, phase) if state_dir and phase else None
-    iteration = get_qr_iteration_from_state(qr_state) if qr_state else 1
-    status = QRStatus(qr_status) if qr_status else None
-    fix_mode = bool(qr_state and has_qr_failures_from_state(qr_state))
-    state = LoopState.RETRY if fix_mode else LoopState.INITIAL
-    qr = QRState(iteration=iteration, state=state, status=status)
+    qr_state, qr = resolve_qr_for_step(qr_states, state_dir, phase, qr_status)
 
     # Non-QR steps: 1 and 10 carry no phase; 2 and 6 have one the dispatch ignores.
     if step == 1:

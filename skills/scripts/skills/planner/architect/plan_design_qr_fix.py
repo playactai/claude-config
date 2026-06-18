@@ -18,6 +18,7 @@ Fix scripts separate from execute scripts:
 """
 
 from skills.lib.workflow.prompts.step import pin_cwd
+from skills.planner.shared.builders import shell_quote
 from skills.planner.shared.qr.utils import (
     format_failed_items_for_fix,
     get_qr_iteration_from_state,
@@ -84,7 +85,7 @@ def get_step_guidance(step: int, module_path: str | None = None, **kwargs) -> di
                 "  - You MUST NOT write, modify, or append to context.json",
                 "  - Your fixes go to plan.json -- never context.json",
             ],
-            "next": f"uv run python -m {MODULE_PATH} --step 2 --state-dir {state_dir}",
+            "next": f"uv run python -m {MODULE_PATH} --step 2 --state-dir {shell_quote(state_dir)}",
         }
 
     elif step == 2:
@@ -144,7 +145,7 @@ def get_step_guidance(step: int, module_path: str | None = None, **kwargs) -> di
                 "",
                 "CONSTRAINT: Fix ONLY the failing items. Don't refactor passing items.",
             ],
-            "next": f"uv run python -m {MODULE_PATH} --step 3 --state-dir {state_dir}",
+            "next": f"uv run python -m {MODULE_PATH} --step 3 --state-dir {shell_quote(state_dir)}",
         }
 
     elif step == 3:
@@ -154,7 +155,7 @@ def get_step_guidance(step: int, module_path: str | None = None, **kwargs) -> di
                 "VALIDATE your fixes before returning to orchestrator.",
                 "",
                 "Run structural validation:",
-                f"  {pin_cwd(f'uv run python -m skills.planner.cli.plan --state-dir {state_dir} validate --phase plan-design')}",
+                f"  {pin_cwd(f'uv run python -m skills.planner.cli.plan --state-dir {shell_quote(state_dir)} validate --phase plan-design')}",
                 "",
                 "SELF-CHECK each fixed item:",
                 "  For each FAIL item you addressed:",

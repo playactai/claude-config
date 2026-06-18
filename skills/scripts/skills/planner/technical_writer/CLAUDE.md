@@ -10,5 +10,3 @@ Technical writer sub-agent workflows: exec-docs phase only. The TW authors ALL d
 | `exec_docs_execute.py`  | Post-implementation documentation authorship workflow       | Modifying how docs are authored in real source files      |
 | `exec_docs_qr_fix.py`   | Targeted repair for impl-docs QR failures                   | Changing how post-docs QR fixes are dispatched            |
 | `__init__.py`           | Package marker                                              | Never (empty module)                                      |
-
-Routers call `route_work_phase()` from `planner/shared/routing.py` to detect fix mode from QR state; no `--qr-fail` flag required.

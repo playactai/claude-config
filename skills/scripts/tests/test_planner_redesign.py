@@ -352,6 +352,7 @@ def test_impl_code_decompose_injects_scope_into_steps_1_and_3(tmp_path):
             content["phase_prompts"],
             content["grouping_config"],
             state_dir=str(tmp_path),
+            scope_provider=content.get("scope_provider"),
         )
         body = "\n".join(result["actions"])
         assert "CODE MILESTONES IN SCOPE" in body, f"step {step}"

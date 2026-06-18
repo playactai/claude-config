@@ -190,6 +190,10 @@ Blocking severity by iteration:
 | 3         | MUST, SHOULD        |
 | 4+        | MUST only           |
 
+Each orchestrator runs QR as a 4-step block per phase — work → decompose → verify
+(N parallel) → gate. The planner has one QR phase (plan-design); the executor has
+two (impl-code, impl-docs).
+
 ## Step Handler Architecture
 
 Closures capture static config, handlers receive dynamic state:
@@ -222,6 +226,9 @@ STEPS = {
 **QR iteration blocking**: Severity thresholds vary by iteration. Early iterations block all severities. Later iterations block only MUST to prevent infinite loops.
 
 **No temp directory cleanup**: OS handles /tmp cleanup on reboot.
+
+**Fix-mode routing**: routers call `route_work_phase()` (`shared/routing.py`) to detect fix
+mode from `qr-{phase}.json` state — no `--qr-fail` flag is threaded.
 
 ## Invariants
 

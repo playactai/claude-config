@@ -259,6 +259,7 @@ def build_gate_output(
     # open()+json.load() per gate. _UNSET means a direct caller (e.g. tests) skipped
     # the pre-load, so we self-load here to preserve standalone usability.
     resolved_state: dict | None = None
+    has_blocking_fail = False  # raw blocking-FAIL verdict; reused by fail_step below
     if state_dir and phase:
         if qr_state is _UNSET:
             resolved_state = load_qr_state(state_dir, phase)
@@ -276,7 +277,8 @@ def build_gate_output(
             passed = False
             iteration = qr.iteration
         else:
-            passed = not has_qr_failures_from_state(resolved_state)
+            has_blocking_fail = has_qr_failures_from_state(resolved_state)
+            passed = not has_blocking_fail
             iteration = get_qr_iteration_from_state(resolved_state)
             # has_qr_failures_from_state reads False in two distinct situations: failures have
             # de-escalated below the blocking threshold (a real pass), OR nothing is
@@ -415,7 +417,7 @@ def build_gate_output(
         # self-heals. verify_step is always gate_step - 1 (work -> decompose -> verify -> gate).
         # When the file is missing (resolved_state is None), route to work_step so
         # decompose re-creates the file.
-        fail_step = work_step if resolved_state is None or has_qr_failures_from_state(resolved_state) else step - 1
+        fail_step = work_step if resolved_state is None or has_blocking_fail else step - 1
         next_cmd = f"uv run python -m {module_path} --step {fail_step} --state-dir {shell_quote(state_dir)}"
 
     return GateResult(

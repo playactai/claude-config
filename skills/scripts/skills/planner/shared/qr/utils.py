@@ -128,6 +128,29 @@ def load_qr_state(state_dir: str, phase: str) -> dict | None:
         return None
 
 
+def load_validated_qr_state(state_dir: str, phase: str) -> dict | None:
+    """Load qr-{phase}.json and re-run QRFile validation, failing closed to None.
+
+    The orchestrator's validate_state gate runs only in the orchestrator process; the
+    decompose/verify subprocesses re-read the file directly (load_qr_state checks
+    dict-ness only), so a control-char-forged id/scope -- a column-0 prompt-injection
+    vector -- must be rejected here too. Single home for that boundary, shared by both
+    subprocess entry points.
+    """
+    from pydantic import ValidationError
+
+    from skills.planner.shared.schema import QRFile
+
+    qr_state = load_qr_state(state_dir, phase)
+    if qr_state is None:
+        return None
+    try:
+        QRFile.model_validate(qr_state)
+    except ValidationError:
+        return None
+    return qr_state
+
+
 def get_qr_item(qr_state: dict, item_id: str) -> dict | None:
     """Get single QR item by ID.
 

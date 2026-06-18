@@ -23,6 +23,7 @@ def get_step_guidance(step: int, module_path: str, **kwargs) -> dict:
         content["phase_prompts"],
         content["grouping_config"],
         state_dir,
+        scope_provider=content.get("scope_provider"),
     )
 
 

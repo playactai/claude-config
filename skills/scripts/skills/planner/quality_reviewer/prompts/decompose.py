@@ -24,13 +24,13 @@ Called via: python3 -m {module_path} --step N --state-dir {dir}
 """
 
 import json
+from collections.abc import Callable
 from pathlib import Path
 
 from skills.lib.workflow.prompts import pin_cwd
 from skills.planner.shared.builders import shell_quote
-from skills.planner.shared.qr.phases import is_execution_phase
-from skills.planner.shared.qr.utils import load_qr_state
-from skills.planner.shared.resources import get_context_path, render_context_file
+from skills.planner.shared.qr.utils import load_qr_state, load_validated_qr_state
+from skills.planner.shared.resources import render_phase_context
 
 
 def _reinvoke_cmd(module_path: str, step: int, phase: str, state_dir: str) -> str:
@@ -69,16 +69,8 @@ def load_ungrouped_todo_items(state_dir: str, phase: str) -> list[dict]:
     _load_validated_qr_state) so a verify-authored control-char-injected
     check/finding loaded by the decompose subprocess fails closed here.
     """
-    from pydantic import ValidationError
-
-    from skills.planner.shared.schema import QRFile
-
-    qr_state = load_qr_state(state_dir, phase)
+    qr_state = load_validated_qr_state(state_dir, phase)
     if not qr_state:
-        return []
-    try:
-        QRFile.model_validate(qr_state)
-    except ValidationError:
         return []
     return [
         i
@@ -231,6 +223,7 @@ def dispatch_step(
     phase_prompts: dict[int, str],
     grouping_config: dict,
     state_dir: str = "",
+    scope_provider: Callable[[str, str], str] | None = None,
 ) -> dict:
     """Route step to appropriate handler.
 
@@ -255,22 +248,14 @@ def dispatch_step(
     # Explicit code-milestone scope for impl-code (structural doc-only exclusion);
     # "" for other phases / missing plan, so the conditional injections below add
     # nothing.
-    code_scope = render_code_milestone_scope(state_dir, phase) if step in (1, 3) else ""
+    code_scope = scope_provider(state_dir, phase) if (scope_provider and step in (1, 3)) else ""
 
     def next_cmd(s):
         return f"uv run python -m {module_path} --step {s}{phase_arg}{state_dir_arg}"
 
     # Step 1: Absorb context (phase-specific)
     if step == 1:
-        # Execution-phase (impl-*) state dirs carry no context.json -- the
-        # executor writes plan.json only. Degrade gracefully there; keep the
-        # plan phase strict (its orchestrator must write context.json in step 2,
-        # so absence is a real bug worth surfacing). See is_execution_phase.
-        context_display = (
-            render_context_file(get_context_path(state_dir), missing_ok=is_execution_phase(phase))
-            if state_dir
-            else ""
-        )
+        context_display = render_phase_context(state_dir, phase) if state_dir else ""
         return {
             "title": f"QR Decomposition Step 1: Absorb Context ({phase})",
             "actions": [
@@ -525,7 +510,7 @@ def step_10_component_grouping(
             "",
             f"If no component groups: # No component groups. {len(ungrouped)} items to Phase 2.",
         ],
-        "next": f"uv run python -m {module_path} --step 11 --phase {phase} --state-dir {shell_quote(state_dir)}",
+        "next": _reinvoke_cmd(module_path, 11, phase, state_dir),
     }
 
 
@@ -565,7 +550,7 @@ def step_11_concern_grouping(
             "",
             format_assign_cmd(state_dir, phase, "concern-"),
         ],
-        "next": f"uv run python -m {module_path} --step 12 --phase {phase} --state-dir {shell_quote(state_dir)}",
+        "next": _reinvoke_cmd(module_path, 12, phase, state_dir),
     }
 
 
@@ -599,7 +584,7 @@ def step_12_affinity_grouping(state_dir: str, phase: str, module_path: str) -> d
             "",
             "Remaining ungrouped items become singletons.",
         ],
-        "next": f"uv run python -m {module_path} --step 13 --phase {phase} --state-dir {shell_quote(state_dir)}",
+        "next": _reinvoke_cmd(module_path, 13, phase, state_dir),
     }
 
 

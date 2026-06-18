@@ -508,12 +508,12 @@ class TestGateSourceOfTruth:
         # returned FAIL without persisting its item, or items remain TODO) must NOT be
         # upgraded to a disk-derived pass -- absent any recorded failure there is no
         # de-escalation to justify the upgrade, so the explicit failure stands.
-        _write_qr(
-            tmp_path,
-            "impl-code",
-            1,
-            [{"id": "q1", "scope": "*", "check": "x", "status": "TODO", "severity": "MUST"}],
-        )
+        #
+        # Empty item set isolates THIS veto: no blocking FAIL (passed=True), no recorded
+        # FAIL (explicit-fail veto fires), and no blocking TODO (the blocking-TODO veto,
+        # which a MUST-at-TODO fixture would also trip, stays silent). Deleting the
+        # explicit-fail branch now flips this test red.
+        _write_qr(tmp_path, "impl-code", 1, [])
         qr = QRState(iteration=1, state=LoopState.RETRY, status=QRStatus.FAIL)
         out = _gate(tmp_path, qr).output
         assert "GATE RESULT: FAIL" in out

@@ -327,40 +327,6 @@ def format_qr_verify(
 
 
 # =============================================================================
-# Steps 5, 9: QR Gate (route pass/fail)
-# =============================================================================
-
-
-def format_qr_gate(
-    step: int,
-    phase: str,
-    state_dir: str,
-    qr: QRState,
-    qr_state: dict | None,
-    plan: "Plan | None" = None,
-) -> str:
-    """Route based on QR results: pass → next phase, fail → fix loop."""
-    qr_name, work_step, pass_step, pass_message, fix_target = EXECUTOR_GATE_CONFIG[step]
-
-    result = build_gate_output(
-        module_path=MODULE_PATH,
-        qr_name=qr_name,
-        qr=qr,
-        step=step,
-        work_step=work_step,
-        pass_step=pass_step,
-        pass_message=pass_message,
-        fix_target=fix_target,
-        state_dir=state_dir,
-        phase=phase,
-        qr_state=qr_state,
-        plan=plan,
-    )
-
-    return result.output
-
-
-# =============================================================================
 # Step 6: Documentation
 # =============================================================================
 
@@ -485,22 +451,28 @@ def format_output(
     if phase is None:
         return invalid_step
 
-    if step == 3:
-        return format_qr_decompose(3, phase, state_dir, qr)
-    elif step == 4:
-        return format_qr_verify(4, phase, state_dir, qr, qr_state)
-    elif step == 5:
+    if step in (3, 7):
+        return format_qr_decompose(step, phase, state_dir, qr)
+    if step in (4, 8):
+        return format_qr_verify(step, phase, state_dir, qr, qr_state)
+    if step in EXECUTOR_GATE_CONFIG:  # {5, 9}
+        qr_name, work_step, pass_step, pass_message, fix_target = EXECUTOR_GATE_CONFIG[step]
         if not qr_status:
-            return "Error: --qr-status required for step 5 (Code QR Gate)"
-        return format_qr_gate(5, phase, state_dir, qr, qr_state, plan)
-    elif step == 7:
-        return format_qr_decompose(7, phase, state_dir, qr)
-    elif step == 8:
-        return format_qr_verify(8, phase, state_dir, qr, qr_state)
-    elif step == 9:
-        if not qr_status:
-            return "Error: --qr-status required for step 9 (Doc QR Gate)"
-        return format_qr_gate(9, phase, state_dir, qr, qr_state, plan)
+            return f"Error: --qr-status required for step {step} ({qr_name} Gate)"
+        return build_gate_output(
+            module_path=MODULE_PATH,
+            qr_name=qr_name,
+            qr=qr,
+            step=step,
+            work_step=work_step,
+            pass_step=pass_step,
+            pass_message=pass_message,
+            fix_target=fix_target,
+            state_dir=state_dir,
+            phase=phase,
+            qr_state=qr_state,
+            plan=plan,
+        ).output
     return invalid_step
 
 

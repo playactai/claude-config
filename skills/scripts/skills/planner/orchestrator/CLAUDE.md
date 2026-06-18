@@ -10,8 +10,6 @@ Main workflow orchestrators: `planner` (6-step plan creation with one QR block) 
 | `executor.py`  | 10-step exec workflow: impl + code-QR + docs + docs-QR              | Debugging executor steps, changing fix-mode detection |
 | `__init__.py`  | Package marker                                                      | Never (empty module)                                  |
 
-Each orchestrator runs QR in a 4-step block per phase: `work → decompose → verify(N, parallel) → gate`. The planner has one QR phase (plan-design); the executor has two (impl-code, impl-docs).
-
 ## Run
 
 ```bash

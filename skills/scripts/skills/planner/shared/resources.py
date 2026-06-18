@@ -81,6 +81,7 @@ __all__ = [
     "get_qa_schema",
     "get_resource",
     "render_context_file",
+    "render_phase_context",
     "validate_state_dir_requirement",
 ]
 
@@ -227,3 +228,15 @@ def render_context_file(context_file: str | Path, *, missing_ok: bool = False) -
             "Orchestrator must create context.json before sub-agent dispatch."
         ) from e
     return format_file_content("context.json", content)
+
+
+def render_phase_context(state_dir: str, phase: str) -> str:
+    """Render context.json for a phase, degrading gracefully for execution phases.
+
+    impl-* state dirs carry no context.json (the executor writes plan.json only), so
+    missing_ok follows is_execution_phase; plan phases stay strict. Single owner of the
+    'which phases tolerate a missing context.json' rule.
+    """
+    from skills.planner.shared.qr.phases import is_execution_phase
+
+    return render_context_file(get_context_path(state_dir), missing_ok=is_execution_phase(phase))

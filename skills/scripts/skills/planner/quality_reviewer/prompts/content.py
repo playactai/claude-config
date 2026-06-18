@@ -18,6 +18,7 @@ Constants are phase-prefixed ([PHASE]_[TYPE]) so the three phases coexist here.
 
 import json
 
+from skills.planner.quality_reviewer.prompts.decompose import render_code_milestone_scope
 from skills.planner.quality_reviewer.qr_verify_base import VerifyBase
 from skills.planner.shared.builders import shell_quote
 from skills.planner.shared.qr.phases import get_phase_config
@@ -356,6 +357,7 @@ DECOMPOSE_CONTENT: dict[str, dict] = {
             "component_examples": IMPL_CODE_COMPONENT_EXAMPLES,
             "concern_examples": IMPL_CODE_CONCERN_EXAMPLES,
         },
+        "scope_provider": render_code_milestone_scope,
     },
     "impl-docs": {
         "phase_prompts": {

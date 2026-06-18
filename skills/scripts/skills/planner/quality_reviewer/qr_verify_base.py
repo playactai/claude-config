@@ -34,22 +34,18 @@ import sys
 from abc import ABC, abstractmethod
 from typing import ClassVar
 
-from pydantic import ValidationError
-
 from skills.lib.workflow.prompts import pin_cwd
 from skills.planner.shared.builders import shell_quote
 from skills.planner.shared.qr.phases import (
     get_all_phases,
     get_phase_config,
-    is_execution_phase,
 )
 from skills.planner.shared.qr.utils import (
     format_qr_item_for_verification,
     get_qr_item,
-    load_qr_state,
+    load_validated_qr_state,
 )
-from skills.planner.shared.resources import get_context_path, render_context_file
-from skills.planner.shared.schema import QRFile
+from skills.planner.shared.resources import render_phase_context
 
 
 class VerifyBase(ABC):
@@ -195,11 +191,8 @@ class VerifyBase(ABC):
 
         # Execution-phase (impl-*) state dirs have no context.json (the executor
         # writes plan.json only), so degrade gracefully there; plan phases stay
-        # strict. get_context_path always returns a Path, so render decides.
-        context_file = get_context_path(state_dir)
-        context_display = render_context_file(
-            context_file, missing_ok=is_execution_phase(self.PHASE)
-        )
+        # strict.
+        context_display = render_phase_context(state_dir, self.PHASE)
 
         qr_state = self._load_validated_qr_state(state_dir)
         if not qr_state:
@@ -248,25 +241,8 @@ class VerifyBase(ABC):
         }
 
     def _load_validated_qr_state(self, state_dir: str) -> dict | None:
-        """Load qr state for this verify subprocess, re-running the QRFile/QRItem
-        validation the orchestrator's validate_state gate applies.
-
-        That gate runs only in the orchestrator process; this separate verify
-        process re-reads the file directly (load_qr_state checks dict-ness only),
-        so a control-char-forged id/scope -- which would forge a column-0 line in
-        the rendered plaintext prompt -- must be rejected here too. Fails closed to
-        None (the callers' existing 'could not load' path), rejecting only what the
-        orchestrator already rejects.
-        """
         assert self.PHASE is not None
-        qr_state = load_qr_state(state_dir, self.PHASE)
-        if qr_state is None:
-            return None
-        try:
-            QRFile.model_validate(qr_state)
-        except ValidationError:
-            return None
-        return qr_state
+        return load_validated_qr_state(state_dir, self.PHASE)
 
     def _step_analyze(
         self, state_dir: str, module_path: str, item_ids: list[str], item_idx: int, total_steps: int

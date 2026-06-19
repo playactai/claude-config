@@ -13,7 +13,7 @@ import sys
 from pathlib import Path
 
 import pytest
-from conftest import write_qr
+from conftest import write_qr  # pyright: ignore[reportMissingImports]
 
 from skills.planner.orchestrator import executor
 from skills.planner.orchestrator.executor import format_output, format_qr_verify

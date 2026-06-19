@@ -290,7 +290,7 @@ def execute_dispatch_step(title, agent, script, post_dispatch=None, phase=None):
             "next": next_cmd,
         }
 
-    handler.phase = phase
+    handler.phase = phase  # pyright: ignore[reportFunctionMemberAccess]
     return handler
 
 
@@ -334,7 +334,7 @@ def qr_decompose_step(title, phase, script, model=None):
             "next": next_cmd,
         }
 
-    handler.phase = phase
+    handler.phase = phase  # pyright: ignore[reportFunctionMemberAccess]
     return handler
 
 
@@ -390,7 +390,7 @@ def qr_verify_step(title, phase):
             "if_fail": f"{base_cmd} --qr-status fail",
         }
 
-    handler.phase = phase
+    handler.phase = phase  # pyright: ignore[reportFunctionMemberAccess]
     return handler
 
 
@@ -422,7 +422,7 @@ def qr_route_step(title, phase, work_step, pass_step, pass_message, fix_target=N
             plan=ctx.get("plan"),
         )
 
-    handler.phase = phase
+    handler.phase = phase  # pyright: ignore[reportFunctionMemberAccess]
     return handler
 
 

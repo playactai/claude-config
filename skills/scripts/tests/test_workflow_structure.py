@@ -1,7 +1,7 @@
 """Tests for workflow structural validity."""
 
 import pytest
-from conftest import EXCLUDED
+from conftest import EXCLUDED  # pyright: ignore[reportMissingImports]
 
 from skills.lib.workflow import discover_workflows
 

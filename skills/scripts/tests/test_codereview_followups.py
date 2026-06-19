@@ -13,7 +13,7 @@ from __future__ import annotations
 import json
 
 import pytest
-from conftest import write_qr
+from conftest import write_qr  # pyright: ignore[reportMissingImports]
 
 from skills.lib import conventions
 from skills.planner.cli import plan_commands as pc

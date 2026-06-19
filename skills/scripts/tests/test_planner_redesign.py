@@ -14,7 +14,7 @@ from __future__ import annotations
 import json
 
 import pytest
-from conftest import write_qr
+from conftest import write_qr  # pyright: ignore[reportMissingImports]
 
 from skills.planner.shared.gates import GateResult
 

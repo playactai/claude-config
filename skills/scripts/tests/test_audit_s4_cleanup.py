@@ -18,7 +18,7 @@ from datetime import datetime
 from pathlib import Path
 
 import pytest
-from conftest import write_qr
+from conftest import write_qr  # pyright: ignore[reportMissingImports]
 
 import validate_conventions as vc
 from skills.lib.workflow.prompts.step import format_step

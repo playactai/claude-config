@@ -5,8 +5,8 @@ Uses domain types (BoundedInt, ChoiceSet, Constant) to generate Cartesian produc
 """
 
 import pytest
-from conftest import EXCLUDED, run_skill_invocation
-from test_generation import generate_inputs
+from conftest import EXCLUDED, run_skill_invocation  # pyright: ignore[reportMissingImports]
+from test_generation import generate_inputs  # pyright: ignore[reportMissingImports]
 
 from skills.lib.workflow import discover_workflows
 

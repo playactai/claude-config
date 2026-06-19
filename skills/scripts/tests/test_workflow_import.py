@@ -3,7 +3,7 @@
 import importlib
 
 import pytest
-from conftest import EXCLUDED, SKILL_MODULES
+from conftest import EXCLUDED, SKILL_MODULES  # pyright: ignore[reportMissingImports]
 
 
 def _skill_name_from_module(module_path: str) -> str:

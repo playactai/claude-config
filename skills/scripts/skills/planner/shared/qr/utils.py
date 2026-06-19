@@ -433,24 +433,8 @@ def format_failed_items_for_fix(qr_state: dict) -> str:
     return "\n".join(lines)
 
 
-def get_qr_iteration(state_dir: str, phase: str) -> int:
-    """Get current QR iteration from qr-{phase}.json.
-
-    Args:
-        state_dir: Path to state directory
-        phase: QR phase name (plan-design, impl-code, impl-docs)
-
-    Returns:
-        Current iteration (1 if file missing or no iteration field)
-    """
-    qr_state = load_qr_state(state_dir, phase)
-    if not qr_state:
-        return 1
-    return _iteration_of(qr_state)
-
-
 def get_qr_iteration_from_state(qr_state: dict | None) -> int:
-    """Same as get_qr_iteration but accepts a pre-loaded qr_state dict (or None)."""
+    """Current QR iteration from a pre-loaded qr_state dict (1 if None/empty/no iteration field)."""
     return _iteration_of(qr_state)
 
 

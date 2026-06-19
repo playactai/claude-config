@@ -1,14 +1,13 @@
 """Temporal contamination detection criteria.
 
-WHY: Detection questions were duplicated across QR and TW agent scripts —
-once in XML format for QR agents, once in prose format for TW agents.
-
-Both need the same criteria but different formats. This module
-defines the criteria once and provides formatters for each use case.
+Single source of truth for the temporal-contamination detection taxonomy: the five
+detection questions plus their signals and recommended actions. The QR verify base
+(quality_reviewer/qr_verify_base.py) generates its temporal guidance from
+TEMPORAL_DETECTION_QUESTIONS so every phase lists all five categories without
+duplicating the criteria.
 """
 
 from dataclasses import dataclass
-from xml.sax.saxutils import quoteattr
 
 
 @dataclass
@@ -74,30 +73,3 @@ TEMPORAL_DETECTION_QUESTIONS = [
         action="EXTRACT technical justification",
     ),
 ]
-
-
-def format_as_xml() -> str:
-    """Format detection questions as XML for QR agents."""
-    lines = ['<detection_questions category="temporal-contamination">']
-    for q in TEMPORAL_DETECTION_QUESTIONS:
-        signals = ", ".join(f"'{s}'" for s in q.signals)
-        text_attr = quoteattr(f"{q.text} Signal: {signals}")
-        lines.append(f"  <question id={quoteattr(q.id)} text={text_attr} />")
-    lines.append("</detection_questions>")
-    return "\n".join(lines)
-
-
-def format_as_prose() -> str:
-    """Format detection questions as prose for TW agents."""
-    lines = ["For EACH comment, evaluate against 5 detection questions:"]
-    for i, q in enumerate(TEMPORAL_DETECTION_QUESTIONS, 1):
-        lines.append(f"  {i}. {q.text} ({q.id.lower().replace('_', ' ')})")
-    return "\n".join(lines)
-
-
-def format_actions() -> str:
-    """Format recommended actions for each detection type."""
-    lines = []
-    for q in TEMPORAL_DETECTION_QUESTIONS:
-        lines.append(f"  - {q.id}: {q.action}")
-    return "\n".join(lines)

@@ -249,7 +249,7 @@ def verify_step(title, actions):
 
 
 def execute_dispatch_step(title, agent, script, post_dispatch=None, phase=None):
-    """Steps 3, 7, 11: work execution dispatch."""
+    """Step 3: work execution dispatch."""
 
     def handler(ctx):
         from skills.planner.shared.resources import validate_state_dir_requirement
@@ -295,7 +295,7 @@ def execute_dispatch_step(title, agent, script, post_dispatch=None, phase=None):
 
 
 def qr_decompose_step(title, phase, script, model=None):
-    """Steps 4, 8, 12: QR decomposition dispatch.
+    """Step 4: QR decomposition dispatch.
 
     Dispatches single QR agent to decompose artifact into verification items.
     Agent outputs qr-{phase}.json.
@@ -339,7 +339,7 @@ def qr_decompose_step(title, phase, script, model=None):
 
 
 def qr_verify_step(title, phase):
-    """Steps 5, 9, 13: Parallel QR verification with group-aware dispatch.
+    """Step 5: Parallel QR verification with group-aware dispatch.
 
     Reads qr-{phase}.json and generates expanded dispatch.
     Decompose agent outputs item data. Orchestrator transforms this data

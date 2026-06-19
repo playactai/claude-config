@@ -5,7 +5,6 @@ Consolidated from planner/shared/qr_utils.py.
 Provides centralized access to qr-<phase>.json state files:
 - load_qr_state: Parse QR state from state directory
 - get_qr_item: Single item lookup by ID (for --qr-item verification)
-- get_qr_items_by_status: Batch lookup by status (for QR fix workflows)
 - format_*: Prompt formatting for different workflows
 """
 
@@ -89,18 +88,56 @@ def qr_write_lock(state_dir: str | Path, phase: str) -> Iterator[None]:
             f.close()
 
 
-def parse_qr_dict(content: str) -> dict:
-    """Parse qr-file text into a dict; raise ValueError if it is not a JSON object.
+def _validate_qr_item_shape(item: object) -> None:
+    """Reject an items[] entry whose identity/relational fields would crash a direct
+    (validate_state-skipping) consumer. `id` is required+str: it is find_item's lookup
+    key, a `{i["id"]}` set member at decompose step 9, and a shlex.quote() arg in
+    build_qr_verify_dispatch (absent -> KeyError, unhashable -> TypeError). status/
+    group_id/parent_id are str-or-absent: status keys status_counts' dict and by_status'
+    frozenset; group_id keys decompose's groups dict; parent_id is tested `in item_ids`.
+    Matches QRItem's str / str|None typing for exactly these fields -- the free-text
+    fields (scope/check/finding) are str()-wrapped at their sinks and the numeric fields
+    (version/iteration) are _coerce_*'d, so neither is checked here."""
+    if not isinstance(item, dict):
+        raise ValueError("qr state item is not an object")
+    if not isinstance(item.get("id"), str):
+        raise ValueError("qr state item id is not a string")
+    for field in ("status", "group_id", "parent_id"):
+        value = item.get(field)
+        if value is not None and not isinstance(value, str):
+            raise ValueError(f"qr state item {field} is not a string")
 
-    The shared dict-contract core for the two QR loaders. Each layers its own
-    missing-file / parse-error policy on top: load_qr_state swallows everything to
-    None (fail closed); load_qr_state_under_lock wraps a malformed-JSON
-    json.JSONDecodeError as a self-identifying ValueError so the CLI's top-level
-    handler renders a clean error frame instead of a raw traceback.
+
+def parse_qr_dict(content: str) -> dict:
+    """Parse qr-file text into a dict; raise ValueError if it violates the minimal shape
+    every direct QR consumer relies on.
+
+    The shared dict-contract core for the two QR loaders. The orchestrator gates its own
+    reads through QRFile/validate_state, but the direct readers -- the CLI (status_counts,
+    filtered_items_view), the router (detect_qr_state -> by_status), the fix subprocess
+    (format_failed_items_for_fix), and decompose steps 9/13 ({i["id"] for i in items},
+    groups.setdefault(group_id), parent_id `in` set) -- bypass that gate. They iterate
+    items[] and use the identity fields as dict keys / set members / shlex.quote args, so a
+    structurally-malformed-but-top-level-dict file (items not a list, a non-object item, an
+    unhashable/absent id, a list-valued status/group_id/parent_id) would crash them with a
+    raw TypeError/KeyError/AttributeError -- a raw traceback instead of the clean
+    <qr_cli_error> frame. Validate the shape once here (the single load chokepoint) rather
+    than at every consumer, mirroring how _coerce_positive_int hardened the raw int fields
+    one layer up.
+
+    Each loader layers its own policy on the raised ValueError: load_qr_state swallows
+    everything to None (fail closed); load_qr_state_under_lock surfaces the message so the
+    CLI's top-level handler renders a clean error frame instead of a raw traceback.
     """
     data = json.loads(content)
     if not isinstance(data, dict):
         raise ValueError("qr state is not a JSON object")
+    items = data.get("items")
+    if items is not None:
+        if not isinstance(items, list):
+            raise ValueError("qr state items is not a list")
+        for item in items:
+            _validate_qr_item_shape(item)
     return data
 
 
@@ -165,22 +202,6 @@ def get_qr_item(qr_state: dict, item_id: str) -> dict | None:
     return find_item(qr_state, item_id)[1] if qr_state else None
 
 
-def get_qr_items_by_status(qr_state: dict, status: str) -> list[dict]:
-    """Get all items with given status.
-
-    Args:
-        qr_state: Parsed QR state from load_qr_state()
-        status: Status to filter by (TODO, PASS, FAIL)
-
-    Returns:
-        List of matching items (empty if none or invalid state)
-    """
-    if not qr_state:
-        return []
-
-    return [item for item in qr_state.get("items", []) if item.get("status") == status]
-
-
 # Predicate: item dict -> bool. Compose via query_items(*predicates).
 ItemPredicate = Callable[[dict], bool]
 
@@ -226,14 +247,23 @@ def by_blocking_severity(iteration: int) -> ItemPredicate:
     return lambda item: _coerce(item.get("severity")) in blocking
 
 
-def _coerce_iteration(raw: object) -> int:
-    """qr-{phase}.json is external; a string/float/garbled iteration must not crash
-    the gate's `iteration >= 4` severity math. Tolerant: non-int -> 1."""
+def _coerce_positive_int(raw: object, default: int = 1) -> int:
+    """qr-{phase}.json is external; a string/float/garbled int must not crash callers
+    that do severity math (gate's `iteration >= 4`) or arithmetic (version bumps).
+    Single chokepoint for every integer field read raw off the external file.
+    Tolerant: non-int or below `default` -> `default`. OverflowError is caught because
+    json.loads accepts the bare `Infinity`/`-Infinity` tokens, and int(float('inf'))
+    raises OverflowError (not ValueError, unlike nan)."""
     try:
         n = int(raw)  # pyright: ignore[reportArgumentType]
-    except (TypeError, ValueError):
-        return 1
-    return n if n >= 1 else 1
+    except (TypeError, ValueError, OverflowError):
+        return default
+    return n if n >= default else default
+
+
+def _coerce_iteration(raw: object) -> int:
+    """qr-{phase}.json iteration: non-int -> 1 (see _coerce_positive_int)."""
+    return _coerce_positive_int(raw, default=1)
 
 
 def _iteration_of(qr_state: dict | None) -> int:
@@ -260,11 +290,9 @@ def query_items(qr_state: dict, *predicates: ItemPredicate) -> list[dict]:
     all predicates return True. With zero predicates, returns all
     items (identity filter).
 
-    Separation from get_qr_items_by_status: that function is a raw
-    data accessor for display/debug. This function applies policy
-    filters (status + severity thresholds) for workflow decisions.
-    Both coexist: display code calls the raw accessor, routing/gate
-    code composes predicates via query_items.
+    Applies policy filters (status + severity thresholds) for workflow
+    decisions; compose with by_status()/by_blocking_severity(). Display
+    code that just needs a status filter uses by_status() directly.
 
     Args:
         qr_state: Parsed QR state from load_qr_state()

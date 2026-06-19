@@ -16,8 +16,8 @@ import json
 from pathlib import Path
 
 from skills.lib.io import atomic_write_text
+from skills.planner.shared.qr.utils import _coerce_positive_int, _fix_field_safe, parse_qr_dict
 from skills.planner.shared.qr.utils import find_item as find_item
-from skills.planner.shared.qr.utils import parse_qr_dict
 
 # Valid status values (match QAItemStatus enum)
 VALID_STATUSES = frozenset({"PASS", "FAIL"})
@@ -55,7 +55,11 @@ def load_qr_state_under_lock(qr_path: Path) -> dict:
         # traceback, without mislabeling it as a non-dict.
         raise ValueError(f"{qr_path.name} is not valid JSON: {e}") from e
     except ValueError as e:
-        raise ValueError(f"{qr_path.name} is not a JSON object") from e
+        # parse_qr_dict raises a self-identifying ValueError for every dict-contract
+        # violation (non-object, items-not-a-list, non-object item, bad identity field).
+        # Surface its specific message so the clean <qr_cli_error> frame is accurate
+        # instead of always labeling it "is not a JSON object".
+        raise ValueError(f"{qr_path.name}: {e}") from e
 
 
 def save_qr_state_atomic(qr_path: Path, qr_state: dict) -> None:
@@ -93,7 +97,11 @@ def update_item_in_state(qr_state: dict, item_id: str, status: str,
         raise ValueError(
             f"Item {item_id} has terminal status {current_status}. Cannot transition to {status}."
         )
-    item["version"] = item.get("version", 1) + 1
+    # version is read raw off the external qr-{phase}.json (parse_qr_dict does no
+    # type coercion); coerce before the bump so a string/garbled version cannot raise
+    # an uncaught TypeError on the verify-record path -- same guard _coerce_iteration
+    # already applies to the sibling iteration field.
+    item["version"] = _coerce_positive_int(item.get("version", 1)) + 1
     item["status"] = status
     if finding:
         item["finding"] = finding
@@ -117,3 +125,38 @@ def assign_group_in_state(qr_state: dict, item_id: str, group_id: str) -> dict:
     item["group_id"] = group_id
     qr_state["items"][idx] = item
     return item
+
+
+def filtered_items_view(qr_state: dict, status_filter: str | None = None) -> list[dict]:
+    """Status-filtered {id, status, finding} rows shared by the live CLI and batch RPC.
+
+    Single sink for displaying findings: each finding is run through _fix_field_safe so
+    a decompose-authored control character cannot forge a line in whatever prompt the
+    row is rendered into (the schema's "neutralize finding at every sink" contract). The
+    two list-items entry points (qr.py cmd_list_items, qr_commands.py list_items) share
+    this so they cannot drift on sanitization.
+    """
+    rows = []
+    for item in qr_state.get("items", []):
+        item_status = item.get("status", "TODO")
+        if status_filter and item_status != status_filter:
+            continue
+        finding = item.get("finding")
+        rows.append({
+            "id": item.get("id"),
+            "status": item_status,
+            "finding": _fix_field_safe(finding) if finding else None,
+        })
+    return rows
+
+
+def status_counts(qr_state: dict) -> dict[str, int]:
+    """{TODO, PASS, FAIL} counts shared by qr.py cmd_summary and qr_commands.py summary.
+
+    One owner for the status-tally loop so the two summary entry points cannot drift.
+    """
+    counts: dict[str, int] = {"TODO": 0, "PASS": 0, "FAIL": 0}
+    for item in qr_state.get("items", []):
+        status = item.get("status", "TODO")
+        counts[status] = counts.get(status, 0) + 1
+    return counts

@@ -76,12 +76,14 @@ def validate_phase_registries() -> None:
     if _registries_validated:
         return
     from skills.planner.quality_reviewer.prompts.content import DECOMPOSE_CONTENT, VERIFIERS
+    from skills.planner.quality_reviewer.prompts.fix import FIX_CONTENT
 
-    if not (set(DECOMPOSE_CONTENT) == set(VERIFIERS) == set(QR_PHASES)):
+    if not (set(DECOMPOSE_CONTENT) == set(VERIFIERS) == set(FIX_CONTENT) == set(QR_PHASES)):
         raise RuntimeError(
             "QR phase registries out of sync: "
             f"DECOMPOSE_CONTENT={sorted(DECOMPOSE_CONTENT)}, "
-            f"VERIFIERS={sorted(VERIFIERS)}, QR_PHASES={sorted(QR_PHASES)}"
+            f"VERIFIERS={sorted(VERIFIERS)}, FIX_CONTENT={sorted(FIX_CONTENT)}, "
+            f"QR_PHASES={sorted(QR_PHASES)}"
         )
     for phase, cfg in QR_PHASES.items():
         if cfg.get("workflow") not in _VALID_WORKFLOWS:

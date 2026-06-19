@@ -10,7 +10,7 @@
   6. Milestone Definition & Plan Writing
 
 This is the EXECUTE script for first-time plan creation.
-For QR fix mode, see plan_design_qr_fix.py.
+For QR fix mode, see quality_reviewer/exec_qr_fix.py (--phase plan-design).
 Router (plan_design.py) dispatches to appropriate script.
 """
 

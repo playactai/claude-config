@@ -200,3 +200,40 @@ def build_qr_decompose_dispatch(
         f"Expected output: qr-{phase}.json written to STATE_DIR",
         "Orchestrator generates verification dispatch from this file.",
     ]
+
+
+def build_fix_mode_dispatch(
+    banner_label: str,
+    iteration: int,
+    fix_mode_line: str,
+    constraint: str,
+    agent_type: str,
+    invoke_cmd: str,
+    follow_up: tuple[str, ...] = (),
+) -> list[str]:
+    """Build the orchestrator's QR fix-mode dispatch action block.
+
+    Single owner of the [fix banner, "FIX MODE: ..." line, constraint,
+    subagent_dispatch, optional follow-up prose] shape that the planner plan-design
+    retry and the executor code/doc retries each built inline. Callers differ in the
+    banner label, the "FIX MODE" wording, the constraint (ORCHESTRATOR_CONSTRAINT vs
+    _EXTENDED), the sub-agent type, the router invoke command, and whether they append
+    follow-up lines (the doc retry appends none). Returns the action lines; the caller
+    wraps them (planner returns them as `actions`; executor "\\n".join()s them).
+    """
+    from skills.lib.workflow.prompts import subagent_dispatch
+    from skills.planner.shared.constraints import format_state_banner
+
+    actions = [
+        format_state_banner(banner_label, iteration, "fix"),
+        "",
+        fix_mode_line,
+        "",
+        constraint,
+        "",
+        subagent_dispatch(agent_type=agent_type, command=invoke_cmd),
+    ]
+    if follow_up:
+        actions.append("")
+        actions.extend(follow_up)
+    return actions

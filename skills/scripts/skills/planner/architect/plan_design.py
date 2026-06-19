@@ -6,7 +6,7 @@ This file specifies only: which phase key to use.
 
 Dispatches to:
 - plan_design_execute.py: First-time plan creation (6 steps)
-- plan_design_qr_fix.py: Post-QR fix workflow (3 steps)
+- quality_reviewer/exec_qr_fix.py (--phase plan-design): Post-QR fix workflow (3 steps)
 
 Selection based on QR state detection:
 - No qr-plan-design.json or no FAIL items -> execute

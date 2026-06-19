@@ -1207,6 +1207,112 @@ def test_architect_router_silent_on_first_time_skeleton(tmp_path):
     assert "structural gaps" not in body
 
 
+def test_exec_routers_fail_closed_without_state_dir():
+    # AL2: the work-phase routers fail closed without --state-dir (matching plan_design)
+    # instead of silently routing to first-time EXECUTE. The policy lives once in
+    # build_route_dispatch, so all three routers agree.
+    from skills.planner.developer.exec_implement import get_step_guidance as impl_router
+    from skills.planner.technical_writer.exec_docs import get_step_guidance as docs_router
+
+    assert impl_router(1) == {"error": "--state-dir required"}
+    assert docs_router(1) == {"error": "--state-dir required"}
+
+
+def test_build_route_dispatch_fix_mode_reuses_threaded_iteration(tmp_path):
+    # E1: detect_qr_state loads qr-{phase}.json once and threads the iteration through
+    # route_work_phase; build_route_dispatch reuses it for the fix-mode message rather
+    # than re-reading the file. A blocking FAIL at iteration 2 surfaces "iteration 2".
+    import json
+
+    from skills.planner.shared.routing import build_route_dispatch
+
+    (tmp_path / "qr-impl-code.json").write_text(json.dumps({
+        "phase": "impl-code", "iteration": 2,
+        "items": [{"id": "q1", "scope": "*", "check": "x", "status": "FAIL",
+                   "finding": "boom", "severity": "MUST"}],
+    }))
+    result = build_route_dispatch(str(tmp_path), "impl-code", "Exec Implement")
+    assert "Fix Mode" in result["title"]
+    assert "iteration 2" in "\n".join(result["actions"])
+    # The fix target is the shared phase-parameterized runner: the dispatched command
+    # must carry --phase so it selects the right fix content.
+    assert result["dispatch_to"] == "skills.planner.quality_reviewer.exec_qr_fix"
+    assert "--phase impl-code" in result["next"]
+
+
+def test_detect_qr_state_fails_closed_on_malformed_file(tmp_path):
+    # A structurally-malformed-but-top-level-dict qr file (unhashable status/id) used to
+    # raw-traceback in by_status/detect_qr_state. parse_qr_dict now rejects it -> load
+    # returns None -> the router fails open to EXECUTE (same as a missing file), never crashes.
+    import json
+
+    from skills.planner.shared.routing import detect_qr_state, route_work_phase
+
+    for body in (
+        {"phase": "impl-code", "iteration": 1, "items": [{"id": "q1", "status": ["FAIL"]}]},
+        {"phase": "impl-code", "iteration": 1, "items": [{"id": ["x"], "status": "FAIL"}]},
+    ):
+        (tmp_path / "qr-impl-code.json").write_text(json.dumps(body))
+        assert detect_qr_state(str(tmp_path), "impl-code") == (False, [], 1)
+        result = route_work_phase(str(tmp_path), "impl-code")
+        assert result["has_failures"] is False
+        assert result["failed_count"] == 0
+        assert result["target_module"] == "skills.planner.developer.exec_implement_execute"
+
+
+class TestExecQrFixConsolidation:
+    """The three *_qr_fix.py files collapsed into one shared exec_qr_fix runner;
+    --phase selects FIX_CONTENT, and each phase still emits its own content (AL1).
+    """
+
+    def _guidance(self, phase: str, step: int, tmp_path) -> dict:
+        import json
+
+        from skills.planner.quality_reviewer import exec_qr_fix
+
+        (tmp_path / "context.json").write_text(
+            json.dumps({"task": "t", "reference_docs": [], "decisions": []})
+        )
+        (tmp_path / f"qr-{phase}.json").write_text(
+            json.dumps({"phase": phase, "iteration": 2, "items": []})
+        )
+        return exec_qr_fix.get_step_guidance(
+            step, "skills.planner.quality_reviewer.exec_qr_fix",
+            phase=phase, state_dir=str(tmp_path),
+        )
+
+    def test_impl_code_step1_banner_iteration_and_phase(self, tmp_path):
+        g = self._guidance("impl-code", 1, tmp_path)
+        body = "\n".join(g["actions"])
+        assert "IMPLEMENTATION-FIX" in body
+        assert "QR Iteration 2" in body
+        assert "--phase impl-code" in g["next"]  # phase threaded into the next command
+
+    def test_impl_docs_step2_injects_temporal(self, tmp_path):
+        g = self._guidance("impl-docs", 2, tmp_path)
+        assert g["title"] == "Apply Doc Fixes"
+        assert "TEMPORAL REFERENCE:" in "\n".join(g["actions"])
+
+    def test_plan_design_has_no_banner_but_loads_context(self, tmp_path):
+        g = self._guidance("plan-design", 1, tmp_path)
+        body = "\n".join(g["actions"])
+        assert "PLANNING CONTEXT" in body          # plan-design loads context
+        assert "QR Iteration 2" in body
+        assert "-FIX" not in body                  # plan-design step 1 has no banner
+
+    def test_plan_design_step3_validate_command_is_phase_scoped(self, tmp_path):
+        g = self._guidance("plan-design", 3, tmp_path)
+        body = "\n".join(g["actions"])
+        assert "validate --phase plan-design" in body
+        assert str(tmp_path) in body               # state_dir shell-quoted into the cmd
+
+    def test_unknown_phase_rejected(self):
+        from skills.planner.quality_reviewer import exec_qr_fix
+
+        with pytest.raises((ValueError, KeyError)):
+            exec_qr_fix.get_step_guidance(1, "m", phase="bogus", state_dir="/tmp/x")
+
+
 def test_wave_coverage_required_for_code_milestones():
     # Completeness gate: every code milestone in exactly one wave.
     missing = _plan_with_waves(

@@ -75,8 +75,17 @@ ModuleSpec = tuple[str, Callable[..., dict], list[int], str | None]
 MODULES: list[ModuleSpec] = []
 
 
+def _plan_design_fix_guidance(step: int, **kwargs) -> dict:
+    """The plan-design fix path is now the shared exec_qr_fix runner (--phase bound)."""
+    from skills.planner.quality_reviewer import exec_qr_fix
+
+    return exec_qr_fix.get_step_guidance(
+        step, "skills.planner.quality_reviewer.exec_qr_fix", phase="plan-design", **kwargs
+    )
+
+
 def _register() -> None:
-    from skills.planner.architect import plan_design_execute, plan_design_qr_fix
+    from skills.planner.architect import plan_design_execute
 
     MODULES.extend(
         [
@@ -87,9 +96,9 @@ def _register() -> None:
                 None,
             ),
             (
-                "architect/plan_design_qr_fix",
-                plan_design_qr_fix.get_step_guidance,
-                list(plan_design_qr_fix.STEPS.keys()),
+                "quality_reviewer/exec_qr_fix[plan-design]",
+                _plan_design_fix_guidance,
+                [1, 2, 3],
                 "plan-design",
             ),
         ]

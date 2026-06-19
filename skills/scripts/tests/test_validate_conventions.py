@@ -22,7 +22,7 @@ ROOT = Path("/repo/skills/scripts/skills")
     "relpath, expected",
     [
         ("planner/developer/exec_implement_execute.py", "developer"),
-        ("planner/technical_writer/exec_docs_qr_fix.py", "technical_writer"),
+        ("planner/technical_writer/exec_docs_execute.py", "technical_writer"),
         ("planner/quality_reviewer/qr_decompose.py", "quality_reviewer"),
         ("planner/shared/qr/utils.py", "quality_reviewer"),
         ("refactor/refactor.py", "refactor"),
@@ -45,7 +45,7 @@ def test_role_named_ancestor_does_not_misclassify(ancestor):
     path prevents that.
     """
     root = Path(ancestor) / "co/skills/scripts/skills"
-    script = root / "planner/technical_writer/exec_docs_qr_fix.py"
+    script = root / "planner/technical_writer/exec_docs_execute.py"
     assert vc.infer_role_from_path(script, root) == "technical_writer"
 
 

@@ -37,13 +37,13 @@ from skills.lib.workflow.types import AgentRole
 from skills.planner.shared.builders import (
     ESCALATE_HANDLER,
     THINKING_EFFICIENCY,
+    build_fix_mode_dispatch,
     build_qr_decompose_dispatch,
     build_qr_verify_dispatch,
     shell_quote,
 )
 from skills.planner.shared.constraints import (
     ORCHESTRATOR_CONSTRAINT_EXTENDED,
-    format_state_banner,
 )
 from skills.planner.shared.gates import GateResult, build_gate_output
 from skills.planner.shared.qr.cli import add_qr_args
@@ -172,31 +172,25 @@ def _save_plan_to_docs(state_dir: str) -> "Path | None":
 QUESTION_RELAY_INSTRUCTION = SUB_AGENT_QUESTION_FORMAT
 
 
-def _build_fix_mode_output(title, agent, agent_role, script, mode_total_steps, qr, ctx):
+def _build_fix_mode_output(title, agent, script, qr, ctx):
     """Build output for execute step in fix mode."""
     state_dir = ctx["state_dir"]
-
-    action_children = []
-
-    action_children.append(format_state_banner("PLAN-FIX", qr.iteration, "fix"))
-    action_children.append("")
-    action_children.append("FIX MODE: QR found issues.")
-    action_children.append("")
-
-    action_children.append(ORCHESTRATOR_CONSTRAINT_EXTENDED)
-    action_children.append("")
 
     mode_script = get_mode_script_path(script)
     invoke_cmd = f"uv run python -m {mode_script} --step 1 --state-dir {shell_quote(state_dir)}"
 
-    dispatch_prompt = subagent_dispatch(
+    action_children = build_fix_mode_dispatch(
+        banner_label="PLAN-FIX",
+        iteration=qr.iteration,
+        fix_mode_line="FIX MODE: QR found issues.",
+        constraint=ORCHESTRATOR_CONSTRAINT_EXTENDED,
         agent_type=agent,
-        command=invoke_cmd,
+        invoke_cmd=invoke_cmd,
+        follow_up=(
+            f"{agent.title()} reads QR report and fixes issues.",
+            "After fixes complete, re-run QR for fresh verification.",
+        ),
     )
-    action_children.append(dispatch_prompt)
-    action_children.append("")
-    action_children.append(f"{agent.title()} reads QR report and fixes issues.")
-    action_children.append("After fixes complete, re-run QR for fresh verification.")
 
     next_step = ctx["step"] + 1
     next_cmd = f"uv run python -m {MODULE_PATH} --step {next_step} --state-dir {shell_quote(state_dir)}"
@@ -254,9 +248,7 @@ def verify_step(title, actions):
     return handler
 
 
-def execute_dispatch_step(
-    title, agent, agent_role, script, mode_total_steps, post_dispatch=None, phase=None
-):
+def execute_dispatch_step(title, agent, script, post_dispatch=None, phase=None):
     """Steps 3, 7, 11: work execution dispatch."""
 
     def handler(ctx):
@@ -269,9 +261,7 @@ def execute_dispatch_step(
         validate_state_dir_requirement(step, state_dir)
 
         if qr.state == LoopState.RETRY:
-            return _build_fix_mode_output(
-                title, agent, agent_role, script, mode_total_steps, qr, ctx
-            )
+            return _build_fix_mode_output(title, agent, script, qr, ctx)
 
         action_children = []
 
@@ -499,9 +489,7 @@ STEPS = {
     3: execute_dispatch_step(
         title="plan-design-work",
         agent="architect",
-        agent_role="architect",
         script="architect/plan_design.py",
-        mode_total_steps=6,
         phase="plan-design",
         post_dispatch=[
             QUESTION_RELAY_HANDLER,

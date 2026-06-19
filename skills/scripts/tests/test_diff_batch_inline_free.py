@@ -26,12 +26,17 @@ from skills.planner.architect.plan_design_execute import (
 from skills.planner.architect.plan_design_execute import (
     get_step_guidance as design_execute_guidance,
 )
-from skills.planner.architect.plan_design_qr_fix import (
-    STEPS as DESIGN_QR_FIX_STEPS,
-)
-from skills.planner.architect.plan_design_qr_fix import (
-    get_step_guidance as design_qr_fix_guidance,
-)
+from skills.planner.quality_reviewer import exec_qr_fix
+
+# The plan-design fix path is now the shared exec_qr_fix runner (--phase bound).
+DESIGN_QR_FIX_STEPS = {1: "Load QR Failures", 2: "Apply Targeted Fixes", 3: "Validate Fixes"}
+
+
+def design_qr_fix_guidance(step: int, **kwargs) -> dict:
+    return exec_qr_fix.get_step_guidance(
+        step, "skills.planner.quality_reviewer.exec_qr_fix", phase="plan-design", **kwargs
+    )
+
 
 # ── helpers ─────────────────────────────────────────────────────────────────
 
@@ -66,7 +71,7 @@ def _flatten_actions(result: dict) -> list[str]:
 # (label, guidance_fn, steps dict, qr_phase for state dir)
 _MODULE_SPECS: list[tuple[str, Callable[..., dict], dict, str | None]] = [
     ("plan_design_execute", design_execute_guidance, DESIGN_EXECUTE_STEPS, None),
-    ("plan_design_qr_fix", design_qr_fix_guidance, DESIGN_QR_FIX_STEPS, "plan-design"),
+    ("exec_qr_fix[plan-design]", design_qr_fix_guidance, DESIGN_QR_FIX_STEPS, "plan-design"),
 ]
 
 

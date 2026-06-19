@@ -42,7 +42,7 @@ from pathlib import Path
 from typing import NoReturn
 from xml.sax.saxutils import escape
 
-from skills.planner.shared.qr.utils import _fix_field_safe, load_qr_state, qr_write_lock
+from skills.planner.shared.qr.utils import load_qr_state, qr_write_lock
 from skills.planner.shared.schema import canonicalize_severity
 
 from . import qr_commands
@@ -51,10 +51,12 @@ from .dispatch import discover_methods, list_methods
 from .output import EntityResult, print_entity_result
 from .qr_common import (
     assign_group_in_state,
+    filtered_items_view,
     find_item,
     is_valid_group_id,
     load_qr_state_under_lock,
     save_qr_state_atomic,
+    status_counts,
     update_item_in_state,
 )
 
@@ -178,23 +180,16 @@ def cmd_list_items(state_dir: str, phase: str, args: list[str]):
 
     qr_state = _load_qr_state_or_exit(state_dir, phase)
 
-    for item in qr_state.get("items", []):
-        item_status = item.get("status", "TODO")
-        if status_filter and item_status != status_filter:
-            continue
-        finding_str = f" | {_fix_field_safe(item['finding'])}" if item.get("finding") else ""
-        print(f"{item.get('id')}\t{item_status}{finding_str}")
+    for row in filtered_items_view(qr_state, status_filter):
+        finding_str = f" | {row['finding']}" if row["finding"] else ""
+        print(f"{row['id']}\t{row['status']}{finding_str}")
 
 
 def cmd_summary(state_dir: str, phase: str, args: list[str]):
     """Print summary of QR state (counts by status)."""
     qr_state = _load_qr_state_or_exit(state_dir, phase)
 
-    counts = {"TODO": 0, "PASS": 0, "FAIL": 0}
-    for item in qr_state.get("items", []):
-        status = item.get("status", "TODO")
-        counts[status] = counts.get(status, 0) + 1
-
+    counts = status_counts(qr_state)
     total = sum(counts.values())
     print(f"Phase: {phase}")
     print(f"Total: {total}")

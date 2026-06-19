@@ -13,10 +13,12 @@ from skills.planner.shared.schema import canonicalize_severity
 
 from .qr_common import (
     assign_group_in_state,
+    filtered_items_view,
     find_item,
     is_valid_group_id,
     load_qr_state_under_lock,
     save_qr_state_atomic,
+    status_counts,
     update_item_in_state,
 )
 
@@ -142,20 +144,7 @@ def list_items(ctx: QRContext, status: str | None = None) -> list[dict]:
     if qr_state is None:
         raise ValueError(f"{qr_path.name} is not a valid QR state object")
 
-    items = []
-    for item in qr_state.get("items", []):
-        item_status = item.get("status", "TODO")
-        if status and item_status != status.upper():
-            continue
-        items.append(
-            {
-                "id": item.get("id"),
-                "status": item_status,
-                "finding": item.get("finding"),
-            }
-        )
-
-    return items
+    return filtered_items_view(qr_state, status.upper() if status else None)
 
 
 def summary(ctx: QRContext) -> dict:
@@ -168,11 +157,7 @@ def summary(ctx: QRContext) -> dict:
     if qr_state is None:
         raise ValueError(f"{qr_path.name} is not a valid QR state object")
 
-    counts = {"TODO": 0, "PASS": 0, "FAIL": 0}
-    for item in qr_state.get("items", []):
-        status = item.get("status", "TODO")
-        counts[status] = counts.get(status, 0) + 1
-
+    counts = status_counts(qr_state)
     return {
         "phase": ctx.phase,
         "total": sum(counts.values()),

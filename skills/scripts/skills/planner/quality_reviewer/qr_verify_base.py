@@ -511,11 +511,13 @@ def _record_verify_result(
     cmd_update_item(state_dir, phase, update_args)
 
 
-def decompose_main(script_file: str, get_step_guidance, description: str) -> None:
-    """Entry point for the QR decompose runner: mode_main with --phase/--state-dir wired in.
+def _phase_mode_main(
+    script_file: str, get_step_guidance, description: str, phase_help: str
+) -> None:
+    """Shared --phase/--state-dir CLI wiring for the plain phase runners.
 
-    Mirrors verify_main's CLI wiring so qr_decompose.py doesn't re-declare the
-    shared extra_args inline.
+    decompose_main and fix_main differ only in the --phase help text; verify_main
+    layers a result-recording pre-dispatch on top of this same arg set.
     """
     from skills.lib.workflow.cli import mode_main
 
@@ -530,12 +532,22 @@ def decompose_main(script_file: str, get_step_guidance, description: str) -> Non
                     "type": str,
                     "required": True,
                     "choices": get_all_phases(),
-                    "help": "QR phase to decompose",
+                    "help": phase_help,
                 },
             ),
             (["--state-dir"], {"type": str, "required": True, "help": "State directory path"}),
         ],
     )
+
+
+def decompose_main(script_file: str, get_step_guidance, description: str) -> None:
+    """Entry point for the QR decompose runner (shared wiring; see _phase_mode_main)."""
+    _phase_mode_main(script_file, get_step_guidance, description, "QR phase to decompose")
+
+
+def fix_main(script_file: str, get_step_guidance, description: str) -> None:
+    """Entry point for the QR fix runner (shared wiring; see _phase_mode_main)."""
+    _phase_mode_main(script_file, get_step_guidance, description, "QR phase to fix")
 
 
 def verify_main(script_file: str, get_step_guidance, description: str) -> None:

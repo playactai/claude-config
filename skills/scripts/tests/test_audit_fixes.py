@@ -212,6 +212,63 @@ class TestSeverityCoercion:
         assert data["items"][0]["severity"] == "SHOULD"  # unchanged
         assert data["items"][0]["status"] == "PASS"  # unchanged
 
+    def test_update_item_coerces_string_version_without_crashing(self, tmp_path: Path):
+        # qr-{phase}.json is external (parse_qr_dict does no coercion); a hand-authored
+        # or garbled string "version" must NOT crash the bump with an uncaught TypeError
+        # ("3" + 1). The CLI catches only ValueError and the RPC twin catches nothing, so
+        # an unguarded bump would surface a raw traceback on the verify-record path.
+        _write_qr(
+            tmp_path,
+            "impl-code",
+            1,
+            [{"id": "q1", "scope": "*", "check": "x", "status": "TODO",
+              "version": "3", "severity": "SHOULD"}],
+        )
+        qr_cli.cmd_update_item(str(tmp_path), "impl-code", ["q1", "--status", "PASS"])
+        data = json.loads((tmp_path / "qr-impl-code.json").read_text())
+        assert data["items"][0]["version"] == 4  # coerced to int, bumped
+
+    def test_qr_commands_update_item_coerces_string_version(self, tmp_path: Path):
+        # The batch-RPC twin shares update_item_in_state, so the same coercion applies.
+        _write_qr(
+            tmp_path,
+            "impl-code",
+            1,
+            [{"id": "q1", "scope": "*", "check": "x", "status": "TODO",
+              "version": "garbled", "severity": "SHOULD"}],
+        )
+        ctx = qr_commands.QRContext(state_dir=tmp_path, phase="impl-code")
+        result = qr_commands.update_item(ctx, "q1", "PASS")  # must not raise
+        assert result["version"] == 2  # "garbled" -> default 1, bumped
+
+    def test_coerce_positive_int_tolerates_external_garbage(self):
+        # The single coercion chokepoint for every external int field (version,
+        # iteration). int(float('inf')) raises OverflowError -- not ValueError, unlike
+        # nan -- and json.loads accepts the bare Infinity token, so inf must be tolerated.
+        from skills.planner.shared.qr.utils import _coerce_positive_int
+
+        assert _coerce_positive_int("3") == 3
+        assert _coerce_positive_int(1.5) == 1               # truncates toward 1
+        assert _coerce_positive_int(float("inf")) == 1      # OverflowError -> default
+        assert _coerce_positive_int(float("-inf")) == 1
+        assert _coerce_positive_int(float("nan")) == 1      # ValueError -> default
+        assert _coerce_positive_int(None) == 1
+        assert _coerce_positive_int([1]) == 1
+        assert _coerce_positive_int(-5) == 1                # below default
+        assert _coerce_positive_int(0) == 1
+
+    def test_update_item_coerces_infinity_version(self, tmp_path: Path):
+        # json.loads parses the bare Infinity token to float('inf'); the version bump
+        # must not crash with OverflowError on the verify-record path.
+        (tmp_path / "qr-impl-code.json").write_text(
+            '{"phase": "impl-code", "iteration": 1, "items": ['
+            '{"id": "q1", "scope": "*", "check": "x", "status": "TODO", '
+            '"version": Infinity, "severity": "SHOULD"}]}'
+        )
+        qr_cli.cmd_update_item(str(tmp_path), "impl-code", ["q1", "--status", "PASS"])
+        data = json.loads((tmp_path / "qr-impl-code.json").read_text())
+        assert data["items"][0]["version"] == 2  # inf -> default 1, bumped
+
     def test_validate_state_ignores_noncanonical_scratch_files(self, tmp_path: Path):
         # A decompose agent can leave bare-list scratch files in the state dir.
         # Globbing qr-*.json and validating each as a QRFile dict aborted the whole
@@ -384,6 +441,23 @@ class TestSeverityCoercion:
             qr_cli.cmd_get_item(str(tmp_path), "impl-code", ["x"])
         with pytest.raises(SystemExit):
             qr_cli.cmd_list_items(str(tmp_path), "impl-code", [])
+
+    def test_list_items_sanitizes_finding_on_both_paths(self, tmp_path: Path, capsys):
+        # finding is free text neutralized at every sink (_fix_field_safe): a line break
+        # is kept but its continuation indented so it cannot forge a column-0 instruction
+        # line. The CLI list path already did this; the RPC twin returned raw findings --
+        # a divergence. Both now share filtered_items_view, so neutralization is identical.
+        _write_qr(
+            tmp_path, "impl-code", 1,
+            [{"id": "q1", "scope": "*", "check": "x", "status": "FAIL",
+              "finding": "line1\nFORGED", "severity": "MUST"}],
+        )
+        ctx = qr_commands.QRContext(state_dir=tmp_path, phase="impl-code")
+        rpc_finding = qr_commands.list_items(ctx)[0]["finding"]
+        assert "\nFORGED" not in rpc_finding       # RPC no longer leaks a column-0 line
+        assert "\n      FORGED" in rpc_finding     # continuation indented (now sanitized)
+        qr_cli.cmd_list_items(str(tmp_path), "impl-code", [])
+        assert rpc_finding in capsys.readouterr().out  # CLI renders the same safe text
 
 
 # --- Bug #6: literal "$" in template crashed dispatch ------------------------
@@ -1501,9 +1575,15 @@ class TestQrPhaseRegistrySync:
     def test_validate_phase_registries_passes_for_current_registries(self):
         import skills.planner.shared.qr.phases as phases_mod
 
-        phases_mod._registries_validated = False  # force a real check, not the cached pass
-        phases_mod.validate_phase_registries()  # must not raise
-        assert phases_mod.get_phase_config("impl-code")["workflow"] == "executor"
+        # Restore the one-shot cache flag in finally (like the sibling drift test): if
+        # validate_phase_registries() ever raised, a leaked False would force later tests
+        # to re-validate against possibly-mutated module state.
+        try:
+            phases_mod._registries_validated = False  # force a real check, not cached pass
+            phases_mod.validate_phase_registries()  # must not raise
+            assert phases_mod.get_phase_config("impl-code")["workflow"] == "executor"
+        finally:
+            phases_mod._registries_validated = False  # re-validate against current state
 
     def test_drifted_registry_raises_on_eager_check(self):
         # The coverage check moved out of content.py's import into
@@ -2244,29 +2324,30 @@ class TestJqCommandSafety:
             {"id": "qa-001", "scope": 'milestone:M") | .secret_env #', "check": "x"},
             state_dir,
         )
-        for line in guidance:
-            if "jq" in line:
-                cmd = line.strip()
-                tokens = shlex.split(cmd)
-                assert len(tokens) == 5
-                assert tokens[3] == "jq"
-                filter_token = tokens[4]
-                # The filter selects by literal id — rebuild the full
-                # jq command (the guidance line is raw, not shell-parsed)
-                # and run it.  If dual-layer quoting works, jq returns
-                # the milestone as a literal match; if broken, .secret_env
-                # would be evaluated as jq code.
-                result = subprocess.run(
-                    ["jq", filter_token, str(Path(state_dir) / "plan.json")],
-                    capture_output=True, text=True,
-                )
-                # The jq filter must succeed (find the literal-match milestone)
-                assert result.returncode == 0, result.stderr
-                data = json.loads(result.stdout)
-                assert data["id"] == 'M") | .secret_env #'
-                # Broken fix: .secret_env would be evaluated by jq and either
-                # error out or produce an empty object — we got the real
-                # milestone back, so the payload was a literal string.
+        jq_lines = [line for line in guidance if "jq" in line]
+        assert jq_lines  # the jq copy-run command must exist (else this test is vacuous)
+        for line in jq_lines:
+            cmd = line.strip()
+            tokens = shlex.split(cmd)
+            assert len(tokens) == 5
+            assert tokens[3] == "jq"
+            filter_token = tokens[4]
+            # The filter selects by literal id — rebuild the full
+            # jq command (the guidance line is raw, not shell-parsed)
+            # and run it.  If dual-layer quoting works, jq returns
+            # the milestone as a literal match; if broken, .secret_env
+            # would be evaluated as jq code.
+            result = subprocess.run(
+                ["jq", filter_token, str(Path(state_dir) / "plan.json")],
+                capture_output=True, text=True,
+            )
+            # The jq filter must succeed (find the literal-match milestone)
+            assert result.returncode == 0, result.stderr
+            data = json.loads(result.stdout)
+            assert data["id"] == 'M") | .secret_env #'
+            # Broken fix: .secret_env would be evaluated by jq and either
+            # error out or produce an empty object — we got the real
+            # milestone back, so the payload was a literal string.
 
     def test_jq_select_by_id_safe_with_quoted_id(self):
         import shlex
@@ -2280,12 +2361,16 @@ class TestJqCommandSafety:
             {"id": "qa-001", "scope": "milestone:CI-001", "check": "x"},
             "/tmp/state",
         )
-        for line in guidance:
-            if "jq" in line:
-                cmd = line.strip()
-                tokens = shlex.split(cmd)
-                # The jq filter is a single token, safe
-                assert any("CI-001" in t for t in tokens)
+        jq_lines = [line for line in guidance if "jq" in line]
+        assert jq_lines  # the jq copy-run command must exist (else this test is vacuous)
+        for line in jq_lines:
+            cmd = line.strip()
+            tokens = shlex.split(cmd)
+            # The id is a single safe shell token at the filter position (matching the
+            # sibling tests), not split into multiple injectable tokens.
+            assert len(tokens) == 5
+            assert tokens[3] == "jq"
+            assert "CI-001" in tokens[4]
 
     def test_jq_select_by_id_survives_single_quote_in_scope(self):
         """A single-quote in the scope-derived id must survive dual-layer
@@ -2304,19 +2389,20 @@ class TestJqCommandSafety:
             {"id": "qa-001", "scope": "milestone:O'Brien", "check": "x"},
             "/tmp/state",
         )
-        for line in guidance:
-            if "jq" in line:
-                cmd = line.strip()
-                tokens = shlex.split(cmd)
-                assert len(tokens) == 5
-                assert tokens[3] == "jq"
-                # The filter token is a single shell word (shell_quote
-                # wrapping).  json.dumps escapes the ' inside the jq
-                # string literal; shell_quote then wraps the whole
-                # filter as one shell token, so shlex.split sees it
-                # as a single token despite the quote.
-                filter_token = tokens[4]
-                assert "O'Brien" in filter_token or "O\\u0027Brien" in filter_token
+        jq_lines = [line for line in guidance if "jq" in line]
+        assert jq_lines  # the jq copy-run command must exist (else this test is vacuous)
+        for line in jq_lines:
+            cmd = line.strip()
+            tokens = shlex.split(cmd)
+            assert len(tokens) == 5
+            assert tokens[3] == "jq"
+            # The filter token is a single shell word (shell_quote
+            # wrapping).  json.dumps escapes the ' inside the jq
+            # string literal; shell_quote then wraps the whole
+            # filter as one shell token, so shlex.split sees it
+            # as a single token despite the quote.
+            filter_token = tokens[4]
+            assert "O'Brien" in filter_token or "O\\u0027Brien" in filter_token
 
     def test_jq_command_shell_quotes_state_dir(self):
         import shlex
@@ -2330,14 +2416,15 @@ class TestJqCommandSafety:
             {"id": "qa-001", "scope": "*", "check": "x"},
             "/tmp/evil'; rm -rf /",
         )
-        for line in guidance:
-            if "jq" in line:
-                cmd = line.strip()
-                tokens = shlex.split(cmd)
-                assert tokens[0] == "cat"
-                # The path is shell-quoted -> one token; the payload
-                # inside quotes is never interpreted as a shell command
-                assert "rm" not in tokens
+        jq_lines = [line for line in guidance if "jq" in line]
+        assert jq_lines  # the jq copy-run command must exist (else this test is vacuous)
+        for line in jq_lines:
+            cmd = line.strip()
+            tokens = shlex.split(cmd)
+            assert tokens[0] == "cat"
+            # The path is shell-quoted -> one token; the payload
+            # inside quotes is never interpreted as a shell command
+            assert "rm" not in tokens
 
 
 # --- Issue 3: Batch setup failure → snapshot read raising is converted ------
@@ -2409,6 +2496,183 @@ class TestCorruptQrState:
         qr_file.write_text("")
         state = load_qr_state_under_lock(qr_file)
         assert state == {"phase": "", "items": []}
+
+
+# --- QA sweep: structurally-malformed-but-top-level-dict qr file -------------
+class TestQrLoaderShapeContract:
+    """parse_qr_dict enforces the minimal items-of-dicts + str-identity-field shape
+    every direct (validate_state-skipping) consumer relies on, so a malformed-but-dict
+    qr-{phase}.json fails closed to a clean <qr_cli_error> frame / None instead of
+    crashing status_counts / by_status / decompose with a raw TypeError/KeyError.
+    """
+
+    def _write(self, tmp_path: Path, body: str) -> Path:
+        path = tmp_path / "qr-impl-code.json"
+        path.write_text(body)
+        return path
+
+    # -- parse_qr_dict unit: rejections ------------------------------------
+    @pytest.mark.parametrize(
+        ("body", "match"),
+        [
+            ('{"items": "x"}', "items is not a list"),
+            ('{"items": 5}', "items is not a list"),
+            ('{"items": [1]}', "item is not an object"),
+            ('{"items": ["str"]}', "item is not an object"),
+            ('{"items": [{}]}', "item id is not a string"),
+            ('{"items": [{"status": "TODO"}]}', "item id is not a string"),
+            ('{"items": [{"id": 1}]}', "item id is not a string"),
+            ('{"items": [{"id": "q1", "status": ["FAIL"]}]}', "item status is not a string"),
+            ('{"items": [{"id": "q1", "group_id": ["g"]}]}', "item group_id is not a string"),
+            ('{"items": [{"id": "q1", "parent_id": ["p"]}]}', "item parent_id is not a string"),
+            ("[1, 2, 3]", "qr state is not a JSON object"),
+        ],
+    )
+    def test_parse_qr_dict_rejects(self, body: str, match: str):
+        from skills.planner.shared.qr.utils import parse_qr_dict
+
+        with pytest.raises(ValueError, match=match):
+            parse_qr_dict(body)
+
+    # -- parse_qr_dict unit: well-formed shapes round-trip unchanged --------
+    @pytest.mark.parametrize(
+        "body",
+        [
+            '{"phase": "impl-code", "iteration": 1, "items": [{"id": "q1", "status": "TODO"}]}',
+            '{"phase": "impl-code"}',  # items omitted
+            '{"items": []}',  # empty list
+            '{"items": [{"id": "q1", "scope": "*", "check": "c"}]}',  # status absent
+            '{"items": [{"id": "q1", "status": "PASS", "group_id": "umbrella", "parent_id": "q0"}]}',
+        ],
+    )
+    def test_parse_qr_dict_accepts_well_formed(self, body: str):
+        from skills.planner.shared.qr.utils import parse_qr_dict
+
+        assert parse_qr_dict(body) == json.loads(body)  # returned unchanged, no coercion
+
+    # -- read path: load_qr_state fails closed to None ---------------------
+    @pytest.mark.parametrize(
+        "body",
+        [
+            '{"phase": "impl-code", "items": "notalist"}',
+            '{"phase": "impl-code", "items": [1, 2]}',
+            '{"phase": "impl-code", "items": [{"id": "q1", "status": ["FAIL"]}]}',
+            '{"phase": "impl-code", "items": [{"id": ["x"], "status": "TODO"}]}',
+            '{"phase": "impl-code", "items": [{"id": "q1", "group_id": ["g"]}]}',
+        ],
+    )
+    def test_load_qr_state_none_for_malformed(self, tmp_path: Path, body: str):
+        from skills.planner.shared.qr.utils import load_qr_state
+
+        self._write(tmp_path, body)
+        assert load_qr_state(str(tmp_path), "impl-code") is None
+
+    # -- write path: load_qr_state_under_lock surfaces the specific message --
+    @pytest.mark.parametrize(
+        ("body", "match"),
+        [
+            ('{"items": "x"}', "items is not a list"),
+            ('{"items": [1]}', "item is not an object"),
+            ('{"items": [{"id": "q1", "status": ["FAIL"]}]}', "item status is not a string"),
+            ('{"items": [{"id": "q1", "parent_id": ["p"]}]}', "item parent_id is not a string"),
+        ],
+    )
+    def test_under_lock_surfaces_specific_message(self, tmp_path: Path, body: str, match: str):
+        from skills.planner.cli.qr_common import load_qr_state_under_lock
+
+        bad = self._write(tmp_path, body)
+        with pytest.raises(ValueError, match=match):
+            load_qr_state_under_lock(bad)
+
+    def test_under_lock_bare_non_dict_still_matches_legacy(self, tmp_path: Path):
+        # Edit 2 wraps as "<name>: <msg>"; the bare non-dict message is unchanged, so the
+        # legacy substring assertion (test_load_qr_state_under_lock_rejects_non_dict) holds.
+        from skills.planner.cli.qr_common import load_qr_state_under_lock
+
+        bad = self._write(tmp_path, "[1, 2, 3]")
+        with pytest.raises(ValueError, match="not a JSON object") as exc_info:
+            load_qr_state_under_lock(bad)
+        assert str(exc_info.value) == "qr-impl-code.json: qr state is not a JSON object"
+
+    # -- end-to-end CLI: the actual bug -- clean frame, never a raw traceback --
+    @pytest.mark.parametrize(
+        ("cmd", "body"),
+        [
+            ("summary", '{"phase": "impl-code", "items": [{"id": "q1", "status": ["FAIL"]}]}'),
+            ("summary", '{"phase": "impl-code", "items": 5}'),
+            ("list-items", '{"phase": "impl-code", "items": "notalist"}'),
+            ("list-items", '{"phase": "impl-code", "items": [1, 2]}'),
+        ],
+    )
+    def test_read_command_exits_clean_on_malformed(
+        self, tmp_path: Path, capsys, cmd: str, body: str
+    ):
+        self._write(tmp_path, body)
+        with pytest.raises(SystemExit) as exc_info:
+            qr_cli.cli(["--state-dir", str(tmp_path), "--qr-phase", "impl-code", cmd])
+        assert exc_info.value.code == 1
+        captured = capsys.readouterr()
+        assert "<qr_cli_error>" in captured.out
+        assert "Traceback" not in captured.out + captured.err
+
+    def test_update_item_surfaces_specific_message_in_frame(self, tmp_path: Path, capsys):
+        # The write path carries parse_qr_dict's self-identifying message into the frame
+        # (proves Edit 2), unlike the read path's generic "not a valid QR state object".
+        self._write(
+            tmp_path,
+            '{"phase": "impl-code", "items": [{"id": "qa-001", "status": ["FAIL"]}]}',
+        )
+        with pytest.raises(SystemExit) as exc_info:
+            qr_cli.cli([
+                "--state-dir", str(tmp_path), "--qr-phase", "impl-code",
+                "update-item", "qa-001", "--status", "PASS",
+            ])
+        assert exc_info.value.code == 1
+        captured = capsys.readouterr()
+        assert "<qr_cli_error>" in captured.out
+        assert "item status is not a string" in captured.out
+        assert "Traceback" not in captured.out + captured.err
+
+    # -- decompose steps 9/13 no longer raw-traceback on a bad identity field --
+    @pytest.mark.parametrize(
+        "body",
+        [
+            '{"phase": "impl-code", "items": [{"id": ["x"], "status": "TODO"}]}',  # unhashable id
+            '{"phase": "impl-code", "items": [{"id": "q1", "group_id": ["g"]}]}',  # unhashable group_id
+            '{"phase": "impl-code", "items": [{"id": "q1", "parent_id": ["p"]}]}',  # unhashable parent_id
+        ],
+    )
+    def test_decompose_grouping_no_crash_on_malformed(self, tmp_path: Path, body: str):
+        from skills.planner.quality_reviewer.prompts.decompose import (
+            step_9_structural_grouping,
+            step_13_final_validation,
+        )
+
+        self._write(tmp_path, body)
+        mod = "skills.planner.quality_reviewer.qr_decompose"
+        # Malformed file -> load_qr_state None -> items=[] -> grouping proceeds empty.
+        assert isinstance(step_9_structural_grouping(str(tmp_path), "impl-code", mod), dict)
+        assert isinstance(step_13_final_validation(str(tmp_path), "impl-code", mod), dict)
+
+    # -- negative control: well-formed files behave exactly as before -------
+    def test_well_formed_file_unaffected(self, tmp_path: Path, capsys):
+        from skills.planner.shared.routing import detect_qr_state
+
+        _write_qr(tmp_path, "impl-code", 1, [
+            {"id": "q1", "scope": "*", "check": "c", "status": "PASS", "severity": "MUST"},
+            {"id": "q2", "scope": "*", "check": "c", "status": "FAIL",
+             "finding": "f", "severity": "MUST"},
+            {"id": "q3", "scope": "*", "check": "c", "severity": "SHOULD"},  # status absent -> TODO
+        ])
+        qr_cli.cli(["--state-dir", str(tmp_path), "--qr-phase", "impl-code", "summary"])
+        out = capsys.readouterr().out
+        assert "Total: 3" in out
+        assert "PASS: 1" in out and "FAIL: 1" in out and "TODO: 1" in out
+
+        has_failures, failed, iteration = detect_qr_state(str(tmp_path), "impl-code")
+        assert has_failures is True
+        assert iteration == 1
+        assert [i["id"] for i in failed] == ["q2"]
 
 
 # --- Issue 6: Missing f-prefix in decompose prompt --------------------------

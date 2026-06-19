@@ -41,6 +41,44 @@ def _jq_select_by_id(state_dir: str, selector: str, item_id: str) -> str:
     is NOT shell-safe; shell_quote alone is NOT jq-safe — both layers needed)."""
     return _jq_command(state_dir, f"{selector} | select(.id == {json.dumps(item_id)})")
 
+
+def get_shared_scope_guidance(
+    kind: str,
+    value: str,
+    scope: str,
+    state_dir: str,
+    *,
+    milestone_lead: str,
+    scoped_read: str,
+    milestone_tail: str | None = None,
+) -> list[str]:
+    """MILESTONE and scoped-fallback verify branches shared by all three phases.
+
+    Each phase emits a structurally identical MILESTONE block (header, a lead-in line,
+    the milestone jq selector, an optional follow-up line) and an identical SCOPED
+    fallback block; only the per-phase wording differs. One owner for the structure;
+    each caller passes its own lead-in / follow-up / read-target text so no line is lost.
+    Lives here (not qr_verify_base) because it depends on _jq_select_by_id.
+    """
+    if kind == "milestone":
+        lines = [
+            f"MILESTONE CHECK - Focus on {value}:",
+            "",
+            f"  {milestone_lead}",
+            f"    {_jq_select_by_id(state_dir, '.milestones[]', value)}",
+            "",
+        ]
+        if milestone_tail:
+            lines += [f"  {milestone_tail}", ""]
+        return lines
+    return [
+        f"SCOPED CHECK - Scope: {scope}",
+        "",
+        f"  Read the relevant {scoped_read}.",
+        "",
+    ]
+
+
 # ============================================================================
 # DECOMPOSE PROMPTS
 # ============================================================================
@@ -425,16 +463,6 @@ class PlanDesignVerify(VerifyBase):
                     "",
                 ]
             )
-        elif kind == "milestone":
-            guidance.extend(
-                [
-                    f"MILESTONE CHECK - Focus on {value}:",
-                    "",
-                    "  Read milestone:",
-                    f"    {_jq_select_by_id(state_dir, '.milestones[]', value)}",
-                    "",
-                ]
-            )
         elif kind == "code_intent":
             guidance.extend(
                 [
@@ -446,13 +474,13 @@ class PlanDesignVerify(VerifyBase):
                 ]
             )
         else:
+            # milestone + scoped-fallback branches shared across all three phases
             guidance.extend(
-                [
-                    f"SCOPED CHECK - Scope: {scope}",
-                    "",
-                    "  Read the relevant section from plan.json.",
-                    "",
-                ]
+                get_shared_scope_guidance(
+                    kind, value, scope, state_dir,
+                    milestone_lead="Read milestone:",
+                    scoped_read="section from plan.json",
+                )
             )
 
         rules = [
@@ -519,18 +547,6 @@ class ImplCodeVerify(VerifyBase):
                     "",
                 ]
             )
-        elif kind == "milestone":
-            guidance.extend(
-                [
-                    f"MILESTONE CHECK - Focus on {value}:",
-                    "",
-                    "  Extract milestone:",
-                    f"    {_jq_select_by_id(state_dir, '.milestones[]', value)}",
-                    "",
-                    "  Read the files associated with this milestone.",
-                    "",
-                ]
-            )
         elif kind == "file":
             guidance.extend(
                 [
@@ -541,13 +557,14 @@ class ImplCodeVerify(VerifyBase):
                 ]
             )
         else:
+            # milestone + scoped-fallback branches shared across all three phases
             guidance.extend(
-                [
-                    f"SCOPED CHECK - Scope: {scope}",
-                    "",
-                    "  Read the relevant code from codebase.",
-                    "",
-                ]
+                get_shared_scope_guidance(
+                    kind, value, scope, state_dir,
+                    milestone_lead="Extract milestone:",
+                    scoped_read="code from codebase",
+                    milestone_tail="Read the files associated with this milestone.",
+                )
             )
 
         # Add check-specific guidance
@@ -680,18 +697,6 @@ class ImplDocsVerify(VerifyBase):
                     "",
                 ]
             )
-        elif kind == "milestone":
-            guidance.extend(
-                [
-                    f"MILESTONE CHECK - Focus on {value}:",
-                    "",
-                    "  Extract the milestone (files + acceptance criteria):",
-                    f"    {_jq_select_by_id(state_dir, '.milestones[]', value)}",
-                    "",
-                    "  Read the files this milestone authored and verify its acceptance criteria.",
-                    "",
-                ]
-            )
         elif kind == "directory":
             guidance.extend(
                 [
@@ -703,13 +708,17 @@ class ImplDocsVerify(VerifyBase):
                 ]
             )
         else:
+            # milestone + scoped-fallback branches shared across all three phases
             guidance.extend(
-                [
-                    f"SCOPED CHECK - Scope: {scope}",
-                    "",
-                    "  Read the relevant documentation files.",
-                    "",
-                ]
+                get_shared_scope_guidance(
+                    kind, value, scope, state_dir,
+                    milestone_lead="Extract the milestone (files + acceptance criteria):",
+                    scoped_read="documentation files",
+                    milestone_tail=(
+                        "Read the files this milestone authored and verify its "
+                        "acceptance criteria."
+                    ),
+                )
             )
 
         # Add check-specific guidance

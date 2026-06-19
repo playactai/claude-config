@@ -10,7 +10,7 @@
   6. Output Format (documentation report)
 
 This is the EXECUTE script for first-time post-impl documentation.
-For QR fix mode, see exec_docs_qr_fix.py.
+For QR fix mode, see quality_reviewer/exec_qr_fix.py (--phase impl-docs).
 Router (exec_docs.py) dispatches to appropriate script.
 """
 

@@ -32,6 +32,7 @@ from skills.lib.workflow.prompts.step import format_step
 from skills.planner.shared.builders import (
     ESCALATE_HANDLER,
     THINKING_EFFICIENCY,
+    build_fix_mode_dispatch,
     build_qr_decompose_dispatch,
     build_qr_verify_dispatch,
     shell_quote,
@@ -43,7 +44,6 @@ from skills.planner.shared.constants import (
 )
 from skills.planner.shared.constraints import (
     ORCHESTRATOR_CONSTRAINT,
-    format_state_banner,
 )
 from skills.planner.shared.gates import build_gate_output
 from skills.planner.shared.qr.cli import add_qr_args
@@ -121,10 +121,23 @@ def format_step_1(state_dir: str, reconciliation_check: bool) -> str:
         actions.extend(
             [
                 "",
-                "RECONCILIATION CHECK REQUESTED:",
-                "  Before implementing, verify which milestones are already satisfied.",
-                "  For each milestone, check if acceptance criteria are met in current code.",
-                "  Mark satisfied milestones as complete; execute only remaining ones.",
+                "RECONCILIATION CHECK REQUESTED (resuming a partially-completed plan):",
+                "  Determine which milestones are ALREADY satisfied so completed work is",
+                "  skipped and only remaining milestones execute.",
+                "",
+                "  KEY DISTINCTION -- validate REQUIREMENTS, not code presence:",
+                "    - Code may exist but NOT meet the criteria (done wrong).",
+                "    - Criteria may be met by DIFFERENT code than planned (done correctly).",
+                "",
+                "  For EACH milestone, run a factored check (resist confirmation bias):",
+                "    1. EXTRACT its acceptance criteria into a checklist (do not evaluate yet).",
+                "    2. For each criterion, STATE what you expect, then SEARCH the codebase",
+                "       (Grep/Read) with OPEN questions -- 'what is the retry threshold?', NOT",
+                "       'is the threshold 3?' -- and verify BEHAVIOR, not just that code exists.",
+                "    3. RECORD MET | NOT_MET with evidence (file:line, or 'not found').",
+                "",
+                "  Mark a milestone complete ONLY when ALL its criteria are MET; if any is",
+                "  NOT_MET, execute that milestone (fully, or just the missing parts).",
             ]
         )
 
@@ -143,27 +156,20 @@ def format_step_2(qr: QRState, state_dir: str) -> str:
     """Wave-aware implementation dispatch."""
     if qr.state == LoopState.RETRY:
         title = "Implementation - Fix Mode"
-        actions = [
-            format_state_banner("IMPLEMENTATION FIX", qr.iteration, "fix"),
-            "",
-            "FIX MODE: Code QR found issues.",
-            "",
-            ORCHESTRATOR_CONSTRAINT,
-            "",
-        ]
-
         mode_script = get_mode_script_path("developer/exec_implement.py")
         invoke_cmd = f"uv run python -m {mode_script} --step 1 --state-dir {shell_quote(state_dir)}"
-
-        actions.append(
-            subagent_dispatch(
-                agent_type="developer",
-                command=invoke_cmd,
-            )
+        actions = build_fix_mode_dispatch(
+            banner_label="IMPLEMENTATION FIX",
+            iteration=qr.iteration,
+            fix_mode_line="FIX MODE: Code QR found issues.",
+            constraint=ORCHESTRATOR_CONSTRAINT,
+            agent_type="developer",
+            invoke_cmd=invoke_cmd,
+            follow_up=(
+                "Developer reads QR report and fixes issues in <milestone> blocks.",
+                "After developer completes, re-run Code QR for fresh verification.",
+            ),
         )
-        actions.append("")
-        actions.append("Developer reads QR report and fixes issues in <milestone> blocks.")
-        actions.append("After developer completes, re-run Code QR for fresh verification.")
     else:
         title = "Implementation"
         actions = [
@@ -320,21 +326,15 @@ def format_step_6(qr: QRState, state_dir: str) -> str:
 
     if qr.state == LoopState.RETRY:
         title = "Documentation - Fix Mode"
-        actions = [
-            format_state_banner("DOCUMENTATION FIX", qr.iteration, "fix"),
-            "",
-            "FIX MODE: Doc QR found issues.",
-            "",
-            ORCHESTRATOR_CONSTRAINT,
-            "",
-        ]
-
         invoke_cmd = f"uv run python -m {mode_script} --step 1 --state-dir {shell_quote(state_dir)}"
-        actions.append(
-            subagent_dispatch(
-                agent_type="technical-writer",
-                command=invoke_cmd,
-            )
+        # No follow-up prose here -- the doc retry ends at the dispatch (unlike code retry).
+        actions = build_fix_mode_dispatch(
+            banner_label="DOCUMENTATION FIX",
+            iteration=qr.iteration,
+            fix_mode_line="FIX MODE: Doc QR found issues.",
+            constraint=ORCHESTRATOR_CONSTRAINT,
+            agent_type="technical-writer",
+            invoke_cmd=invoke_cmd,
         )
     else:
         title = "Documentation"

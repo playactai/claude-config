@@ -8,7 +8,7 @@
   4. Wave Iteration (next wave or return to orchestrator)
 
 This is the EXECUTE script for first-time implementation.
-For QR fix mode, see exec_implement_qr_fix.py.
+For QR fix mode, see quality_reviewer/exec_qr_fix.py (--phase impl-code).
 Router (exec_implement.py) dispatches to appropriate script.
 """
 

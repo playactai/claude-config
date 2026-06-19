@@ -27,6 +27,8 @@ SKILL_MODULES = [
     "skills.refactor.refactor",
     "skills.planner.orchestrator.planner",
     "skills.prompt_engineer.optimize",
+    "skills.retrospective.retrospect",
+    "skills.retrospective.subagent",
 ]
 
 

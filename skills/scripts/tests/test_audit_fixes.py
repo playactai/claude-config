@@ -29,7 +29,7 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 
 import pytest
-from conftest import write_qr
+from conftest import write_qr  # pyright: ignore[reportMissingImports]
 from hypothesis import given, settings
 from hypothesis import strategies as st
 from pydantic import ValidationError

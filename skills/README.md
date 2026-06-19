@@ -252,6 +252,12 @@ PARSE user intent:
   - What is the user trying to understand?"""
 ```
 
+**Exception — prompt-content modules** (e.g. `planner/.../prompts/content.py`): multi-line
+prompt blocks relocated verbatim from prior per-phase files MAY use triple-quoted strings
+when the exact text (including column-0 layout) is asserted by tests on substrings/offsets.
+Triple-quoting preserves that text faithfully; parenthesized concatenation is preferred for
+all other multi-line strings.
+
 Rules:
 
 - Every line gets its own string literal with explicit `\n`

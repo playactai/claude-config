@@ -9,36 +9,22 @@ Guards from the 2026-04-17 ultrareview:
 
 from __future__ import annotations
 
-import json
 import sys
 from pathlib import Path
 
 import pytest
+from conftest import write_qr
 
 from skills.planner.orchestrator import executor
 from skills.planner.orchestrator.executor import format_output, format_qr_verify
 from skills.planner.shared.qr.types import LoopState, QRState
 
 
-def _write_qr_state(state_dir: Path, phase: str, *, iteration: int, items: list[dict]) -> None:
-    """Create qr-{phase}.json in state_dir with the given iteration and items."""
-    (state_dir / f"qr-{phase}.json").write_text(
-        json.dumps(
-            {
-                "schema_version": "1.0",
-                "phase": phase,
-                "iteration": iteration,
-                "items": items,
-            }
-        )
-    )
-
-
 class TestFixModeIterationBanner:
     """Fix-mode banners must reflect the iteration stored in qr-{phase}.json."""
 
     def test_step_2_banner_reads_iteration_3(self, tmp_path: Path):
-        _write_qr_state(
+        write_qr(
             tmp_path,
             "impl-code",
             iteration=3,
@@ -61,7 +47,7 @@ class TestFixModeIterationBanner:
         assert "IMPLEMENTATION FIX" in out
 
     def test_step_6_banner_reads_iteration_4(self, tmp_path: Path):
-        _write_qr_state(
+        write_qr(
             tmp_path,
             "impl-docs",
             iteration=4,
@@ -91,7 +77,7 @@ class TestFixModeIterationBanner:
         assert "iteration=" not in out
 
     def test_no_fix_mode_when_all_pass(self, tmp_path: Path):
-        _write_qr_state(
+        write_qr(
             tmp_path,
             "impl-code",
             iteration=1,
@@ -140,7 +126,7 @@ class TestEmptyQrVerifyRouting:
 
     def test_empty_items_uses_single_next_step(self, tmp_path: Path):
         # iteration=5 → blocking={MUST}, so COULD items are filtered out.
-        _write_qr_state(
+        write_qr(
             tmp_path,
             "impl-code",
             iteration=5,
@@ -166,7 +152,7 @@ class TestEmptyQrVerifyRouting:
 
     def test_non_empty_items_keeps_branching(self, tmp_path: Path):
         """Sanity check: when items remain, branching prompt is still used."""
-        _write_qr_state(
+        write_qr(
             tmp_path,
             "impl-code",
             iteration=1,
@@ -185,6 +171,28 @@ class TestEmptyQrVerifyRouting:
 
         assert "NEXT STEP (MANDATORY -- execute exactly one)" in out
         assert "Count PASS vs FAIL" in out
+
+
+class TestReconciliationRigor:
+    """--reconciliation-check restores the factored verification protocol inline
+    (B1: the deleted exec_reconcile.py's rigor, not a bare 'mark satisfied' nudge).
+    """
+
+    def test_reconciliation_block_carries_factored_protocol(self, tmp_path: Path):
+        out = format_output(
+            step=1, state_dir=str(tmp_path), qr_status=None, reconciliation_check=True
+        )
+        assert "RECONCILIATION CHECK REQUESTED" in out
+        assert "validate REQUIREMENTS, not code presence" in out  # the key distinction
+        assert "MET | NOT_MET" in out                              # per-criterion record
+        assert "OPEN questions" in out                             # anti-confirmation-bias
+        assert "ALL its criteria are MET" in out                   # complete-only-when-all gate
+
+    def test_reconciliation_absent_when_not_requested(self, tmp_path: Path):
+        out = format_output(
+            step=1, state_dir=str(tmp_path), qr_status=None, reconciliation_check=False
+        )
+        assert "RECONCILIATION CHECK REQUESTED" not in out
 
 
 if __name__ == "__main__":

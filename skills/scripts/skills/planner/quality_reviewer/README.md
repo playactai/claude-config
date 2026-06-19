@@ -2,25 +2,23 @@
 
 ## Overview
 
-Quality Review modules perform validation with severity-based blocking thresholds. Each workflow phase has a decompose/verify pair: decompose generates verification items, verify executes them (single-item mode for parallel dispatch). `qr_verify_base.py` holds the shared VerifyBase ABC so each phase module only declares the phase name and its per-item guidance. `exec_reconcile.py` handles the separate concern of checking whether existing code already satisfies plan milestones.
+Quality Review performs validation with severity-based blocking thresholds. Two phase-parameterized runners serve all three QR phases (`--phase {plan-design|impl-code|impl-docs}`): `qr_decompose.py` generates verification items, `qr_verify.py` executes them (single-item mode for parallel dispatch). Phase-specific content lives in `prompts/content.py`; the shared control flow lives in `prompts/decompose.py` (decompose) and `qr_verify_base.py` (verify).
 
 ## Modules
 
-**Plan-phase QR** (orchestrator: `planner.py`):
+- `qr_decompose.py` — decompose runner; looks up per-phase prompts from `prompts.content.DECOMPOSE_CONTENT` and drives the shared 13-step `prompts.decompose.dispatch_step`.
+- `qr_verify.py` — verify runner; selects the phase's `VerifyBase` subclass from `prompts.content.VERIFIERS` and routes through `verify_main`.
+- `prompts/content.py` — per-phase decompose prompts (e.g. `PLAN_DESIGN_STEP_1_ABSORB`) + the `PlanDesignVerify` / `ImplCodeVerify` / `ImplDocsVerify` classes, registered in `DECOMPOSE_CONTENT` / `VERIFIERS`.
 
-- `plan_design_qr_decompose.py` / `plan_design_qr_verify.py`: Validate plan.json structure, milestone definitions, acceptance criteria, and design-mode code-quality dimensions.
-- `plan_code_qr_decompose.py` / `plan_code_qr_verify.py`: Review proposed code diffs for correctness, edge cases, and code-mode quality.
-- `plan_docs_qr_decompose.py` / `plan_docs_qr_verify.py`: Verify planned documentation completeness and alignment with the planned implementation.
+The phases:
 
-**Executor-phase QR** (orchestrator: `executor.py`):
-
-- `impl_code_qr_decompose.py` / `impl_code_qr_verify.py`: Post-implementation code validation against plan specifications.
-- `impl_docs_qr_decompose.py` / `impl_docs_qr_verify.py`: Post-implementation documentation review for accuracy and completeness.
+- **plan-design** (orchestrator: `planner.py`) — the only plan-phase QR: validates plan.json structure, milestones, code_intents (the binding contract), acceptance criteria, decisions, and the diagram IR. Code and docs are verified at execution.
+- **impl-code** (orchestrator: `executor.py`) — post-implementation code validation against plan specifications.
+- **impl-docs** (orchestrator: `executor.py`) — post-implementation documentation review for accuracy and completeness.
 
 **Supporting:**
 
-- `qr_verify_base.py`: `VerifyBase` ABC implementing the shared dynamic verify workflow (1 context step + 2 steps per item [analyze/confirm] + 1 summary step; total = 2 + 2*N for N items). Each phase subclass only overrides `get_verification_guidance()`.
-- `exec_reconcile.py`: Checks whether existing code already satisfies a milestone, so the executor can skip milestones whose work is already done.
+- `qr_verify_base.py`: `VerifyBase` ABC implementing the shared dynamic verify workflow (1 context step + 2 steps per item [analyze/confirm] + 1 summary step; total = 2 + 2*N for N items) plus `verify_main` (CLI wiring + lock-safe `--result` recording). Each phase subclass only overrides `get_verification_guidance()`.
 
 ## QA State Tracking Integration
 
@@ -116,8 +114,8 @@ Fix: Remove conflict markers (<<<<<<, ======, >>>>>>) and resolve merge conflict
 
 ```json
 {
-  "schema_version": "1.0",
-  "phase": "plan-structure",
+  "phase": "plan-design",
+  "iteration": 1,
   "items": [
     {
       "id": "plan-001",
@@ -144,9 +142,9 @@ Fix: Remove conflict markers (<<<<<<, ======, >>>>>>) and resolve merge conflict
 }
 ```
 
-**schema_version**: Version identifier for qr-{phase}.json format (currently "1.0").
+**phase**: Verification phase -- one of `plan-design`, `impl-code`, `impl-docs`.
 
-**phase**: Verification phase -- one of `plan-structure`, `plan-code`, `plan-docs`, `impl-code`, `impl-docs`.
+**iteration**: QR cycle counter (starts at 1); drives severity de-escalation.
 
 **items**: Array of QA items with exactly 5 fields each:
 

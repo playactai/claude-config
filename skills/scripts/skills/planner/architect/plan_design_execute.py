@@ -10,11 +10,13 @@
   6. Milestone Definition & Plan Writing
 
 This is the EXECUTE script for first-time plan creation.
-For QR fix mode, see plan_design_qr_fix.py.
+For QR fix mode, see quality_reviewer/exec_qr_fix.py (--phase plan-design).
 Router (plan_design.py) dispatches to appropriate script.
 """
 
 from skills.lib.workflow.constants import SUB_AGENT_QUESTION_FORMAT
+from skills.lib.workflow.prompts.step import pin_cwd
+from skills.planner.shared.builders import shell_quote
 from skills.planner.shared.resources import (
     STATE_DIR_ARG_REQUIRED,
     PlannerResourceProvider,
@@ -89,12 +91,12 @@ def get_step_guidance(step: int, module_path: str | None = None, **kwargs) -> di
                 "DO NOT write any files yet. Gather understanding for step 2.",
                 "Record your analysis mentally for use in subsequent steps.",
             ],
-            "next": f"uv run python -m {MODULE_PATH} --step 2 --state-dir {state_dir}",
+            "next": f"uv run python -m {MODULE_PATH} --step 2 --state-dir {shell_quote(state_dir)}",
         }
 
     elif step == 2:
         state_dir = kwargs.get("state_dir", "")
-        state_dir_arg = f" --state-dir {state_dir}" if state_dir else ""
+        state_dir_arg = f" --state-dir {shell_quote(state_dir)}" if state_dir else ""
         return {
             "title": STEPS[2],
             "actions": [
@@ -108,7 +110,6 @@ def get_step_guidance(step: int, module_path: str | None = None, **kwargs) -> di
                 "Read conventions/ files as needed:",
                 "  - structural.md (architectural patterns)",
                 "  - temporal.md (comment hygiene)",
-                "  - diff-format.md (diff specification)",
                 "",
                 "NUDGE: If you need additional context to plan well, read more files.",
                 "Better to over-explore than under-explore.",
@@ -120,7 +121,7 @@ def get_step_guidance(step: int, module_path: str | None = None, **kwargs) -> di
 
     elif step == 3:
         state_dir = kwargs.get("state_dir", "")
-        state_dir_arg = f" --state-dir {state_dir}" if state_dir else ""
+        state_dir_arg = f" --state-dir {shell_quote(state_dir)}" if state_dir else ""
         return {
             "title": STEPS[3],
             "actions": [
@@ -141,7 +142,7 @@ def get_step_guidance(step: int, module_path: str | None = None, **kwargs) -> di
 
     elif step == 4:
         state_dir = kwargs.get("state_dir", "")
-        state_dir_arg = f" --state-dir {state_dir}" if state_dir else ""
+        state_dir_arg = f" --state-dir {shell_quote(state_dir)}" if state_dir else ""
         return {
             "title": STEPS[4],
             "actions": [
@@ -164,7 +165,7 @@ def get_step_guidance(step: int, module_path: str | None = None, **kwargs) -> di
 
     elif step == 5:
         state_dir = kwargs.get("state_dir", "")
-        state_dir_arg = f" --state-dir {state_dir}" if state_dir else ""
+        state_dir_arg = f" --state-dir {shell_quote(state_dir)}" if state_dir else ""
         return {
             "title": STEPS[5],
             "actions": [
@@ -207,22 +208,27 @@ def get_step_guidance(step: int, module_path: str | None = None, **kwargs) -> di
                 "",
                 "CLI COMMANDS (single invocation syntax):",
                 "",
-                "  uv run python -m skills.planner.cli.plan --state-dir $STATE_DIR <command>",
+                f"  {pin_cwd('uv run python -m skills.planner.cli.plan --state-dir $STATE_DIR <command>')}",
                 "",
                 "  Commands:",
                 "    set-decision --decision '<what>' --reasoning '<premise->implication->conclusion>'",
                 "    set-milestone --name '<name>' --files 'path/a.py,path/b.py'",
                 "    set-intent --milestone M-001 --file path/a.py --behavior '<what>' --decision-refs 'DL-001'",
+                "    set-wave --milestones 'M-001,M-002'",
                 "",
-                "BATCH MODE (preferred - reduces process invocations):",
+                "BATCH MODE (preferred - reduces process invocations) -- pass JSON via stdin, never inline:",
                 "",
                 'JSON-RPC format: [{"method": "...", "params": {...}, "id": N}, ...]',
                 "",
-                "  uv run python -m skills.planner.cli.plan --state-dir $STATE_DIR batch '[",
+                "  # Write the batch JSON to a file (Write tool), then pipe it in:",
+                f"  {pin_cwd('uv run python -m skills.planner.cli.plan --state-dir $STATE_DIR batch < /tmp/changes.json')}",
+                "",
+                "  # /tmp/changes.json (JSON escapes apostrophes/backslashes/newlines for you):",
+                "  [",
                 '    {"method": "set-decision", "params": {"decision": "Use polling", "reasoning": "30% webhook failures"}, "id": 1},',
                 '    {"method": "set-milestone", "params": {"name": "Auth stack", "files": "src/auth.py"}, "id": 2},',
                 '    {"method": "set-intent", "params": {"milestone": "M-001", "file": "src/auth.py", "behavior": "Add token validation", "decision_refs": "DL-001"}, "id": 3}',
-                "  ]'",
+                "  ]",
                 "",
                 'Response: [{"id": 1, "result": {"id": "DL-001", ...}}, ...]',
                 'Errors: [{"id": N, "error": {"code": -32000, "message": "..."}}]',
@@ -243,26 +249,46 @@ def get_step_guidance(step: int, module_path: str | None = None, **kwargs) -> di
                 "CLI WORKFLOW:",
                 "",
                 "1. Create diagram:",
-                "   uv run python -m skills.planner.cli.plan --state-dir $STATE_DIR set-diagram \\",
+                "   "
+                + pin_cwd(
+                    "uv run python -m skills.planner.cli.plan --state-dir $STATE_DIR set-diagram \\"
+                ),
                 "     --type architecture --scope overview --title 'System Overview'",
                 "",
                 "2. Add nodes (3-7 recommended, prevents visual overload):",
-                "   uv run python -m skills.planner.cli.plan --state-dir $STATE_DIR add-diagram-node \\",
+                "   "
+                + pin_cwd(
+                    "uv run python -m skills.planner.cli.plan --state-dir $STATE_DIR add-diagram-node \\"
+                ),
                 "     --diagram DIAG-001 --node-id client --label 'Client' --type service",
-                "   uv run python -m skills.planner.cli.plan --state-dir $STATE_DIR add-diagram-node \\",
+                "   "
+                + pin_cwd(
+                    "uv run python -m skills.planner.cli.plan --state-dir $STATE_DIR add-diagram-node \\"
+                ),
                 "     --diagram DIAG-001 --node-id server --label 'Server' --type service",
                 "",
                 "3. Add edges (label every edge):",
-                "   uv run python -m skills.planner.cli.plan --state-dir $STATE_DIR add-diagram-edge \\",
+                "   "
+                + pin_cwd(
+                    "uv run python -m skills.planner.cli.plan --state-dir $STATE_DIR add-diagram-edge \\"
+                ),
                 "     --diagram DIAG-001 --source client --target server --label 'sends request' --protocol gRPC",
+                "",
+                "4. Render each diagram to fixed-width ASCII (<=80 cols) and store it so the",
+                "   approved plan.md shows it. Write the ASCII to a file, then:",
+                "   "
+                + pin_cwd(
+                    "uv run python -m skills.planner.cli.plan --state-dir $STATE_DIR set-diagram-render \\"
+                ),
+                "     --diagram DIAG-001 --content-file /tmp/diag-001.txt",
                 "",
                 "SCOPE VALUES:",
                 "  - overview: Hero diagram, rendered after Overview section",
                 "  - invisible_knowledge: Context for future LLM sessions",
                 "  - milestone:M-XXX: Specific to what milestone implements",
                 "",
-                "NOTE: ascii_render is populated by Technical Writer, not Architect.",
-                "      Separation of concerns: Architect validates connectivity, TW optimizes layout.",
+                "NOTE: you build the graph IR (nodes/edges) AND render its ASCII. Validate",
+                "      connectivity first (edges must reference real nodes), then lay out the ASCII.",
                 "",
                 "NOTE: plan.json skeleton already exists (created by orchestrator).",
                 "      CLI commands ADD to it, do not need 'init'.",
@@ -271,8 +297,16 @@ def get_step_guidance(step: int, module_path: str | None = None, **kwargs) -> di
                 "  - Files: exact paths (each file in ONE milestone only)",
                 "  - Requirements: specific behaviors",
                 "  - Acceptance: testable pass/fail criteria",
-                "  - Code Intent: WHAT to change (Developer converts to code_changes later)",
+                "  - Code Intent: the DURABLE CONTRACT (you read the source; there are no",
+                "    diffs). Per file give symbol signatures + purpose, precise behavior",
+                "    (control flow, error/edge handling, data shapes), the integration seam",
+                "    by name, and a decision_ref for every value/threshold/tradeoff. The",
+                "    developer implements it JIT against the live file at execution and",
+                "    escalates if it is under-specified -- so make it complete.",
                 "  - Tests: type, backing, scenarios",
+                "  - Documentation-only milestone (pure docs, no code): create it with",
+                "    'set-milestone ... --documentation-only' and give it NO code_intents;",
+                "    exec-docs authors its docs at execution.",
                 "",
                 "PARALLELIZATION:",
                 "  Vertical slices (parallel) > Horizontal layers (sequential)",
@@ -280,8 +314,19 @@ def get_step_guidance(step: int, module_path: str | None = None, **kwargs) -> di
                 "  GOOD: M1=auth stack, M2=users stack, M3=posts stack (parallel)",
                 "  If file overlap: extract to M0 (foundation) or consolidate",
                 "",
+                "EXECUTION WAVES (author AFTER milestones, with set-wave):",
+                "  Group milestones that run concurrently into one wave; sequence",
+                "  dependent work across waves (W-001, W-002, ... run in order).",
+                "  HARD RULE: never put two milestones that share a file in the same",
+                "    wave -- they run as concurrent developer agents and would corrupt",
+                "    that file mid-write. Sequence them across waves, or extract the",
+                "    shared file to a foundation milestone in an earlier wave.",
+                "  Every code milestone goes in EXACTLY ONE wave; documentation-only",
+                "    milestones go in NO wave (exec-docs handles them). validate --phase",
+                "    plan-design rejects file overlap and missing/duplicate coverage.",
+                "",
                 "VALIDATION: After building plan.json, run:",
-                "  uv run python -m skills.planner.cli.plan validate --phase plan-design",
+                f"  {pin_cwd('uv run python -m skills.planner.cli.plan --state-dir $STATE_DIR validate --phase plan-design')}",
                 "",
                 "REFERENCE SCHEMA:",
                 "",

@@ -2,7 +2,8 @@
 
 Guards merged_bug_005 from the 2026-04-17 ultrareview:
 - InvokeAfterNode rendering must XML-escape cmd/if_pass/if_fail values
-- working_dir must be shlex-quoted so shell metacharacters can't inject
+- render_invoke_after routes the cmd through pin_cwd (absolute SKILLS_DIR cd) so
+  the emitted command is cwd-independent
 - format_step / sub_agent_invoke must embed the shlex-quoted SKILLS_DIR in
   shell strings they tell the LLM to copy verbatim
 - incoherence.py self-chaining uses --thoughts "<ACCUMULATED_CONTEXT>" which
@@ -18,10 +19,25 @@ import pytest
 from hypothesis import given
 from hypothesis import strategies as st
 
-from skills.lib.workflow.ast.nodes import InvokeAfterNode
-from skills.lib.workflow.ast.renderer import render_invoke_after
+from skills.lib.workflow.ast.dispatch import (
+    RosterDispatchNode,
+    SubagentDispatchNode,
+    TemplateDispatchNode,
+)
+from skills.lib.workflow.ast.dispatch_renderer import (
+    render_roster_dispatch,
+    render_subagent_dispatch,
+    render_template_dispatch,
+)
+from skills.lib.workflow.ast.nodes import ElementNode, InvokeAfterNode, StepHeaderNode, TextNode
+from skills.lib.workflow.ast.renderer import XMLRenderer, render_invoke_after, render_step_header
 from skills.lib.workflow.prompts.step import SKILLS_DIR, format_step
 from skills.lib.workflow.prompts.subagent import sub_agent_invoke
+from skills.refactor.refactor import (
+    _invoke_tag,
+    build_explore_dispatch,
+    format_step_1_output,
+)
 
 
 def _cmd_attr(rendered: str) -> str:
@@ -66,19 +82,12 @@ class TestInvokeAfterEscaping:
         cmd = _cmd_attr(rendered)
         assert "a && b" in cmd
 
-    def test_shell_quotes_working_dir_with_space(self):
-        """working_dir with a space must be single-quoted so cd sees one argument."""
-        node = InvokeAfterNode(cmd="true", working_dir="/tmp/a b")
+    def test_invoke_after_uses_pin_cwd(self):
+        """render_invoke_after routes the cmd through pin_cwd (absolute SKILLS_DIR cd)."""
+        node = InvokeAfterNode(cmd="true")
         rendered = render_invoke_after(node)
         cmd = _cmd_attr(rendered)
-        assert cmd.startswith("cd '/tmp/a b' && ")
-
-    def test_shell_quotes_working_dir_with_metachar(self):
-        node = InvokeAfterNode(cmd="true", working_dir="/tmp/$(evil)")
-        rendered = render_invoke_after(node)
-        cmd = _cmd_attr(rendered)
-        # shlex.quote wraps the whole string; the $( must not leak as bare shell.
-        assert cmd.startswith("cd '/tmp/$(evil)' && "), cmd
+        assert cmd.startswith(f"cd {SKILLS_DIR} && ")
 
     def test_branching_form_escapes_both_branches(self):
         node = InvokeAfterNode(
@@ -159,6 +168,185 @@ class TestIncoherenceRoundTrip:
         # After XML decoding the attribute, the placeholder survives intact.
         assert '--thoughts "<ACCUMULATED_CONTEXT>"' in cmd
         assert "--step-number 2" in cmd
+
+
+class TestSpecializedNodeEscaping:
+    """render_step_header / render_element must XML-escape hostile attrs/title.
+
+    Guards 2026-06-11 audit bug #9: these emitted attrs/text via raw f-strings,
+    so a quote / & / < (or a literal </step_header>) in a title or attribute
+    could malform the element. render_invoke_after already did this correctly.
+    """
+
+    def test_step_header_title_with_markup(self):
+        node = StepHeaderNode(title='x </step_header> & "q" <b>', script="s", step=1)
+        root = ET.fromstring(render_step_header(node))
+        assert root.text == 'x </step_header> & "q" <b>'
+
+    def test_step_header_attr_with_quote_and_markup(self):
+        node = StepHeaderNode(title="t", script='a"b&c', step=1, category="<x>")
+        root = ET.fromstring(render_step_header(node))
+        assert root.get("script") == 'a"b&c'
+        assert root.get("category") == "<x>"
+
+    def test_element_attrs_and_children_well_formed(self):
+        node = ElementNode(tag="group", attrs={"id": 'a"&<b', "n": "1"}, children=[TextNode("in")])
+        root = ET.fromstring(XMLRenderer().render_element(node))
+        assert root.get("id") == 'a"&<b'
+        assert root.get("n") == "1"
+
+    def test_self_closing_element_attr_escaped(self):
+        node = ElementNode(tag="x", attrs={"v": 'has"quote'}, children=[])
+        root = ET.fromstring(XMLRenderer().render_element(node))
+        assert root.get("v") == 'has"quote'
+
+
+class TestDispatchRendererEscaping:
+    """dispatch_renderer must XML-escape attribute values (agent_type, invoke cmd).
+
+    Guards 2026-06-11 audit bug #9 whole-class sibling: dispatch_renderer emitted
+    agent=/cmd= attrs via raw f-strings, so a quote/&/< in agent_type or a shell
+    command (reachable via `refactor --scope`) malformed the dispatch. The invoke
+    cmd is quoteattr-escaped exactly like render_invoke_after (so `&&` -> `&amp;&amp;`
+    and round-trips back to `&&` on decode). Prose bodies (prompt/task) are NOT
+    escaped -- they intentionally carry literal <invoke> markup the sub-agent runs.
+    """
+
+    _HOSTILE_AGENT = 'gp"<x>&'
+    _HOSTILE_CMD = 'uv run x --flag "q" && y'
+
+    def test_subagent_dispatch_attrs_well_formed(self):
+        node = SubagentDispatchNode(
+            agent_type=self._HOSTILE_AGENT, command=self._HOSTILE_CMD, prompt="plain prompt"
+        )
+        root = ET.fromstring(render_subagent_dispatch(node))  # raises if malformed
+        assert root.get("agent") == self._HOSTILE_AGENT
+        invoke = root.find(".//invoke")
+        assert invoke is not None
+        cmd = invoke.get("cmd", "")
+        assert cmd.startswith("cd ")  # pin_cwd applied
+        assert cmd.endswith(self._HOSTILE_CMD)  # quotes + && survive XML decoding
+
+    def test_template_dispatch_attrs_well_formed(self):
+        # Hostile chars live in the agent_type/command attrs; the prose template
+        # stays plain so the whole fragment is parseable.
+        node = TemplateDispatchNode(
+            agent_type=self._HOSTILE_AGENT,
+            template="Explore $name",
+            targets=({"name": "Naming"},),
+            command=self._HOSTILE_CMD,
+            model="haiku",
+        )
+        root = ET.fromstring(render_template_dispatch(node))
+        assert root.get("agent") == self._HOSTILE_AGENT
+        invoke = root.find(".//invoke")
+        assert invoke is not None
+        assert invoke.get("cmd", "").endswith(self._HOSTILE_CMD)
+
+    def test_roster_dispatch_attrs_well_formed(self):
+        node = RosterDispatchNode(
+            agent_type=self._HOSTILE_AGENT,
+            agents=("plain task",),
+            command=self._HOSTILE_CMD,
+            shared_context="ctx",
+        )
+        root = ET.fromstring(render_roster_dispatch(node))
+        assert root.get("agent") == self._HOSTILE_AGENT
+        invoke = root.find(".//invoke")
+        assert invoke is not None
+        assert invoke.get("cmd", "").endswith(self._HOSTILE_CMD)
+
+    def test_prose_markup_is_preserved_not_escaped(self):
+        # The prompt body intentionally carries literal <invoke> markup the
+        # sub-agent reads and runs (refactor's "Start: <invoke .../>"). Escaping
+        # it would corrupt the instruction, so prose must stay raw.
+        node = SubagentDispatchNode(
+            agent_type="general-purpose",
+            command="uv run x --step 1",
+            prompt='Start: <invoke cmd="do" /> use a & b',
+        )
+        out = render_subagent_dispatch(node)
+        prose = out.split("<directive")[0]  # everything before the structured invoke
+        assert 'Start: <invoke cmd="do" />' in prose  # literal markup preserved
+        assert "use a & b" in prose  # prose '&' left literal, not &amp;
+
+
+class TestRefactorScopeEscaping:
+    """refactor --scope must not malform dispatch/invoke XML (audit #9 whole-class).
+
+    scope is an unvalidated CLI path; shlex.quote protects the shell layer but not
+    XML, so a scope containing &/</" once broke the hand-built <invoke> attributes
+    (and build_explore_dispatch double-wrapped a pre-built <invoke> as the dispatch
+    command). _invoke_tag and the bare-command dispatch now route through quoteattr.
+    """
+
+    _HOSTILE = 'src/"weird"&<x>'
+
+    def test_invoke_tag_escapes_hostile_cmd(self):
+        root = ET.fromstring(_invoke_tag("uv run x --scope 'a&b\"c<d'"))
+        assert root.tag == "invoke"
+        # _invoke_tag now cwd-pins via pin_cwd (audit #12); the hostile &/"/< still
+        # survive the quoteattr round-trip intact, and the relative working-dir is gone.
+        assert root.get("cmd") == f"cd {SKILLS_DIR} && uv run x --scope 'a&b\"c<d'"
+        assert root.get("working-dir") is None
+
+    def test_explore_dispatch_well_formed_with_hostile_scope(self):
+        out = build_explore_dispatch(n=2, mode_filter="both", scope=self._HOSTILE)
+        invoke = ET.fromstring(out).find(".//invoke")  # raises if malformed
+        assert invoke is not None
+        cmd = invoke.get("cmd", "")
+        assert self._HOSTILE in cmd  # scope survives XML decoding
+        assert "<invoke" not in cmd  # no double-wrap (bare command, single render)
+
+    def test_step_1_invoke_after_well_formed_with_hostile_scope(self):
+        out = format_step_1_output(2, {"title": "Mode Selection"}, "both", self._HOSTILE)
+        start = out.rfind("<invoke_after>")
+        frag = out[start : out.find("</invoke_after>", start) + len("</invoke_after>")]
+        ET.fromstring(frag)  # raises if malformed
+
+
+class TestCliOutputEscaping:
+    """CLI result/error frames must stay well-formed when agent-influenced values
+    carry XML metacharacters (audit #9 whole-class tail: plan.py/qr.py/output.py
+    emitted <message>/<actual>/entity JSON via raw f-strings)."""
+
+    @staticmethod
+    def _text(root: ET.Element, tag: str) -> str | None:
+        el = root.find(tag)
+        assert el is not None, f"<{tag}> missing"
+        return el.text
+
+    def test_print_entity_result_escapes_id(self, capsys):
+        from skills.planner.cli.output import EntityResult, print_entity_result
+
+        print_entity_result(EntityResult(id="M&<1>", version=2, operation="created"))
+        root = ET.fromstring(capsys.readouterr().out.strip())
+        assert self._text(root, "id") == "M&<1>"
+
+    def test_version_mismatch_cdata_preserves_json(self, capsys):
+        from skills.planner.cli.output import VersionMismatchError, exit_with_version_error
+
+        blob = '{"diff": "a < b && c", "name": "<x>"}'
+        with pytest.raises(SystemExit):
+            exit_with_version_error(VersionMismatchError("M&1", 1, 2, blob))
+        root = ET.fromstring(capsys.readouterr().out.strip())  # raises if malformed
+        assert self._text(root, "current_entity") == blob  # CDATA: byte-for-byte JSON
+
+    def test_plan_validation_error_escapes_values(self, capsys):
+        from skills.planner.cli.plan import validation_error
+
+        with pytest.raises(SystemExit):
+            validation_error("loc", "exp", 'got "<bad>&"', "do x")
+        root = ET.fromstring(capsys.readouterr().out.strip())
+        assert self._text(root, "actual") == 'got "<bad>&"'
+
+    def test_qr_error_exit_escapes_message(self, capsys):
+        from skills.planner.cli.qr import error_exit
+
+        with pytest.raises(SystemExit):
+            error_exit("bad <thing> & co")
+        root = ET.fromstring(capsys.readouterr().out.strip())
+        assert self._text(root, "message") == "bad <thing> & co"
 
 
 if __name__ == "__main__":

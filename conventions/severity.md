@@ -14,16 +14,25 @@
 
 Knowledge loss is permanent. These ALWAYS block.
 
-| Category               | Detection                                   |
-| ---------------------- | ------------------------------------------- |
-| DECISION_LOG_MISSING   | Non-trivial choice without logged rationale |
-| POLICY_UNJUSTIFIED     | Policy default without Tier 1 backing       |
-| IK_TRANSFER_FAILURE    | Invisible knowledge not at BEST location    |
-| TEMPORAL_CONTAMINATION | Change-relative language in comments        |
-| BASELINE_REFERENCE     | Comment references removed/replaced code    |
-| ASSUMPTION_UNVALIDATED | Architectural assumption without citation   |
-| LLM_COMPREHENSION_RISK | Pattern that would confuse future LLM       |
-| MARKER_INVALID         | Intent marker without valid explanation     |
+| Category                    | Detection                                   |
+| --------------------------- | ------------------------------------------- |
+| DECISION_LOG_MISSING        | Non-trivial choice without logged rationale |
+| POLICY_UNJUSTIFIED          | Policy default without Tier 1 backing       |
+| IK_TRANSFER_FAILURE         | Invisible knowledge not at BEST location    |
+| TEMPORAL_CONTAMINATION      | Change-relative language in comments        |
+| BASELINE_REFERENCE          | Comment references removed/replaced code    |
+| ASSUMPTION_UNVALIDATED      | Architectural assumption without citation   |
+| LLM_COMPREHENSION_RISK      | Pattern that would confuse future LLM       |
+| MARKER_INVALID              | Intent marker without valid explanation     |
+| DOC_DELIVERABLE_UNSATISFIED | Acceptance criteria unmet by authored files |
+
+`DOC_DELIVERABLE_UNSATISFIED` is the one MUST a sub-agent can always fix -- the TW
+authors the missing file. It sits in MUST because the unproduced planned document
+*is* the knowledge loss, and a still-failing MUST escalates to the user at the
+iteration ceiling (`get_blocking_severities` / `gates.py`) rather than looping --
+so it never blocks a plan indefinitely. A doc-only milestone exists solely to
+produce its deliverable; de-escalating it to a silent pass would finalize a plan
+with its whole reason for existing unmet.
 
 ### STRUCTURE (SHOULD)
 

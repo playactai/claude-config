@@ -11,7 +11,6 @@ Universal conventions for agents and skills.
 | `severity.md`       | MUST/SHOULD/COULD severity definitions   | Understanding QR severity, writing QR scripts           |
 | `structural.md`     | Code quality conventions, testing rules  | QR code review, planner decision audit                  |
 | `temporal.md`       | Timeless present rule for comments       | TW/QR temporal contamination checks, writing comments   |
-| `diff-format.md`    | Unified diff spec for code changes       | Writing code diffs, Developer/QR diff validation        |
 
 ## Subdirectories
 

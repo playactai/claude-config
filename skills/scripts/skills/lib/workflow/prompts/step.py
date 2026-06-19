@@ -13,6 +13,20 @@ SKILLS_DIR = Path(__file__).resolve().parent.parent.parent.parent.parent
 _SKILLS_DIR_Q = shlex.quote(str(SKILLS_DIR))
 
 
+def pin_cwd(command: str) -> str:
+    """Prefix a shell command with an absolute ``cd`` into SKILLS_DIR.
+
+    The structured next-step and sub-agent-invoke paths already embed this
+    prefix (see format_step below and prompts.subagent.sub_agent_invoke). Use
+    this for commands that appear in PROSE an agent may copy and run directly:
+    a bare ``uv run python -m skills...`` fails with "No module named 'skills'"
+    when the agent's cwd has drifted (e.g. into a /tmp state dir) between Bash
+    calls, because the Bash tool does not persist cwd. The absolute, shlex-quoted
+    cd makes the invocation cwd-independent regardless of where the agent stands.
+    """
+    return f"cd {_SKILLS_DIR_Q} && {command}"
+
+
 def format_step(
     body: str, next_cmd: str = "", title: str = "", if_pass: str = "", if_fail: str = ""
 ) -> str:
@@ -27,7 +41,23 @@ def format_step(
 
     Returns:
         Complete step output as plain text
+
+    Raises:
+        ValueError: if exactly one of if_pass/if_fail is set, or if branching
+            (if_pass/if_fail) is mixed with next_cmd. Both combinations would
+            silently mis-render -- a lone if_pass falls through to "WORKFLOW
+            COMPLETE", and branch+next_cmd silently drops next_cmd. Fail loud
+            instead (mirrors InvokeAfterNode.__post_init__ validation).
     """
+    if bool(if_pass) != bool(if_fail):
+        raise ValueError(
+            "format_step: if_pass and if_fail must be provided together (branching requires both)"
+        )
+    if (if_pass or if_fail) and next_cmd:
+        raise ValueError(
+            "format_step: branching (if_pass/if_fail) and next_cmd are mutually exclusive"
+        )
+
     if title:
         header = f"{title}\n{'=' * len(title)}\n\n"
         body = header + body

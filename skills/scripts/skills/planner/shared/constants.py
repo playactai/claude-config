@@ -9,40 +9,43 @@ Centralizing these constants prevents drift and makes
 workflow structure explicit.
 """
 
-# Planner orchestrator workflow (14 steps with parallel QR)
-PLANNER_TOTAL_STEPS = 14
-PLANNER_GATE_STEPS = frozenset({6, 10, 14})  # QR route steps (gates)
+from skills.lib.workflow.types import AgentRole
 
-# Executor orchestrator workflow (10 steps with parallel QR)
-EXECUTOR_TOTAL_STEPS = 10
-EXECUTOR_GATE_STEPS = frozenset({5, 9})
+# Planner orchestrator workflow (6 steps: plan-design phase + QR, plan approved at step 6)
+PLANNER_TOTAL_STEPS = 6
+PLANNER_GATE_STEPS = frozenset({6})  # QR route step (gate)
 
-# Sub-workflow step counts
-PLAN_DESIGN_TOTAL_STEPS = 6
-PLAN_CODE_TOTAL_STEPS = 4
-PLAN_DOCS_TOTAL_STEPS = 6
-EXEC_IMPLEMENT_TOTAL_STEPS = 4
-EXEC_DOCS_TOTAL_STEPS = 6
+# Executor: QR phase for each step (steps 1, 10 have no QR phase)
+EXECUTOR_STEP_PHASES: dict[int, str] = {
+    2: "impl-code",
+    3: "impl-code",
+    4: "impl-code",
+    5: "impl-code",
+    6: "impl-docs",
+    7: "impl-docs",
+    8: "impl-docs",
+    9: "impl-docs",
+}
 
-# QR workflow step counts (for QR modules)
-QR_PLAN_DESIGN_TOTAL_STEPS = 7
-QR_PLAN_CODE_TOTAL_STEPS = 8
-QR_PLAN_DOCS_TOTAL_STEPS = 6
-QR_IMPL_CODE_TOTAL_STEPS = 5
-QR_IMPL_DOCS_TOTAL_STEPS = 4
+# Executor: human-facing QR name stem per phase. Single source for both the gate
+# titles (EXECUTOR_GATE_CONFIG below) and the decompose/verify step titles in
+# executor.py, so the "Code QR"/"Doc QR" strings live in exactly one place.
+PHASE_QR_NAME: dict[str, str] = {"impl-code": "Code QR", "impl-docs": "Doc QR"}
 
-
-def validate_step_count(steps_dict: dict, expected_total: int, workflow_name: str) -> None:
-    """Validate that STEPS dict matches expected total.
-
-    WHY: Step count constants can diverge from actual handler counts.
-    If a developer adds step 12, they must remember to update the constant.
-    This validation enforces consistency at module load time.
-
-    Call at module load: validate_step_count(STEPS, PLANNER_TOTAL_STEPS, 'planner')
-    """
-    actual = len(steps_dict)
-    if actual != expected_total:
-        raise ValueError(
-            f"{workflow_name}: STEPS has {actual} entries but {expected_total} expected"
-        )
+# Executor: gate step -> (qr_name, work_step, pass_step, pass_message, fix_target)
+EXECUTOR_GATE_CONFIG: dict[int, tuple] = {
+    5: (
+        PHASE_QR_NAME["impl-code"],
+        2,
+        6,
+        "Code quality verified. Proceed to documentation.",
+        AgentRole.DEVELOPER,
+    ),
+    9: (
+        PHASE_QR_NAME["impl-docs"],
+        6,
+        10,
+        "Documentation verified. Proceed to retrospective.",
+        AgentRole.TECHNICAL_WRITER,
+    ),
+}

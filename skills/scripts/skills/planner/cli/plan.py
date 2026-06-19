@@ -17,26 +17,31 @@ import sys
 from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import ClassVar, Literal, NoReturn, cast
+from xml.sax.saxutils import escape
 
 from ..shared.schema import (
-    CodeChange,
     CodeIntent,
     Decision,
     DiagramEdge,
     DiagramGraph,
     DiagramNode,
-    Docstring,
-    FunctionBlock,
-    InlineComment,
     Milestone,
     Overview,
     Plan,
-    ReadmeEntry,
+    SchemaValidationError,
+    Wave,
 )
 from . import plan_commands
 from .dispatch import batch as batch_dispatch
 from .dispatch import discover_methods, list_methods
 from .output import EntityResult, VersionMismatchError, exit_with_version_error, print_entity_result
+from .plan_common import (
+    apply_documentation_only_toggle,
+    parse_csv,
+    reject_doc_only_in_wave,
+    validate_relpath,
+    write_plan,
+)
 
 PYDANTIC_AVAILABLE = True
 
@@ -55,9 +60,9 @@ ROLE_PERMISSIONS = {
         "set-diagram",
         "add-diagram-node",
         "add-diagram-edge",
+        "set-diagram-render",
+        "set-wave",
     },
-    "developer": {"set-change"},
-    "tw": {"set-doc", "set-readme", "set-diagram-render", "set-doc-diff", "create-doc-change"},
     "qr": {"validate"},
 }
 
@@ -111,7 +116,7 @@ def get_plan_path(state_dir: Path) -> Path:
 def error_exit(msg: str, code: int = 1) -> NoReturn:
     """Print error in XML format and exit."""
     print(f"""<validation_error>
-  <message>{msg}</message>
+  <message>{escape(msg)}</message>
 </validation_error>""")
     sys.exit(code)
 
@@ -119,10 +124,10 @@ def error_exit(msg: str, code: int = 1) -> NoReturn:
 def validation_error(location: str, expected: str, actual: str, action: str) -> NoReturn:
     """Print detailed validation error."""
     print(f"""<validation_error>
-  <location>{location}</location>
-  <expected>{expected}</expected>
-  <actual>{actual}</actual>
-  <action>{action}</action>
+  <location>{escape(location)}</location>
+  <expected>{escape(expected)}</expected>
+  <actual>{escape(actual)}</actual>
+  <action>{escape(action)}</action>
 </validation_error>""")
     sys.exit(1)
 
@@ -130,6 +135,11 @@ def validation_error(location: str, expected: str, actual: str, action: str) -> 
 def success(msg: str):
     """Print success message."""
     print(msg)
+
+
+def warn(msg: str) -> None:
+    """Print a non-fatal warning to stderr (keeps stdout parse-clean)."""
+    print(f"WARNING: {msg}", file=sys.stderr)
 
 
 # =============================================================================
@@ -172,7 +182,7 @@ def load_plan(state_dir: Path) -> Plan:
     if not path.exists():
         error_exit(f"plan.json not found at {path}")
     try:
-        data = json.loads(path.read_text())
+        data = json.loads(path.read_text(encoding="utf-8"))
         return Plan.model_validate(data)
     except json.JSONDecodeError as e:
         error_exit(f"Invalid JSON in plan.json: {e}")
@@ -181,15 +191,13 @@ def load_plan(state_dir: Path) -> Plan:
 
 
 def save_plan(state_dir: Path, plan: Plan):
-    """Atomic write: write to .tmp then rename."""
-    path = get_plan_path(state_dir)
-    tmp_path = path.with_suffix(".tmp")
-    tmp_path.write_text(plan.model_dump_json(indent=2))
-    tmp_path.rename(path)
-    # Catch schema violations immediately after mutation
-    from ..shared.schema import validate_state
+    """Validate the in-memory plan, then atomically persist it.
 
-    validate_state(str(state_dir))
+    Delegates to plan_common.write_plan (shared with plan_commands'
+    PlanContext.save_plan): the validate-refs-before-write core lives there so the
+    two CLI mirrors cannot drift.
+    """
+    write_plan(get_plan_path(state_dir), plan)
 
 
 # =============================================================================
@@ -268,23 +276,29 @@ class SetMilestoneCommand(Command):
         parser.add_argument("--requirements", help="Comma-separated requirements")
         parser.add_argument("--acceptance-criteria", help="Comma-separated acceptance criteria")
         parser.add_argument("--tests", help="Comma-separated test specs")
+        parser.add_argument(
+            "--documentation-only",
+            action=argparse.BooleanOptionalAction,
+            default=None,
+            help="Mark milestone documentation-only (no code_intents; docs authored by "
+            "exec-docs). Reversible: pass --no-documentation-only to clear the flag.",
+        )
 
     @classmethod
     def run(cls, args: argparse.Namespace) -> None:
         state_dir = get_state_dir()
         plan = load_plan(state_dir)
 
-        files = [f.strip() for f in args.files.split(",")] if args.files else []
-        flags = [f.strip() for f in args.flags.split(",")] if args.flags else []
-        requirements = (
-            [r.strip() for r in args.requirements.split(",")] if args.requirements else []
-        )
-        acceptance = (
-            [a.strip() for a in args.acceptance_criteria.split(",")]
-            if args.acceptance_criteria
-            else []
-        )
-        tests = [t.strip() for t in args.tests.split(",")] if args.tests else []
+        files = parse_csv(args.files)
+        flags = parse_csv(args.flags)
+        requirements = parse_csv(args.requirements)
+        acceptance = parse_csv(args.acceptance_criteria)
+        tests = parse_csv(args.tests)
+
+        try:
+            files = [validate_relpath(f, "set-milestone --files") for f in files]
+        except ValueError as e:
+            error_exit(str(e))
 
         if args.id:
             # UPDATE path
@@ -317,9 +331,31 @@ class SetMilestoneCommand(Command):
                 ms.acceptance_criteria = acceptance
             if tests:
                 ms.tests = tests
+            # documentation_only: None = leave as-is; True/False applied by the shared
+            # toggle (clears intents + drops the milestone from waves on the forward
+            # flip, warns on the reverse flip). See plan_common.apply_documentation_only_toggle.
+            cleared_intents = 0
+            removed_from_waves = 0
+            toggle_warning = None
+            if args.documentation_only is not None:
+                cleared_intents, removed_from_waves, toggle_warning, _ = (
+                    apply_documentation_only_toggle(plan, ms, args.documentation_only)
+                )
 
             bump_version(ms)
             save_plan(state_dir, plan)
+            if cleared_intents:
+                success(
+                    f"Cleared {cleared_intents} code intent(s) from {ms.id} "
+                    f"to make it documentation-only."
+                )
+            if removed_from_waves:
+                success(
+                    f"Removed {ms.id} from {removed_from_waves} wave(s) "
+                    f"(documentation-only milestones route to exec-docs)."
+                )
+            if toggle_warning:
+                warn(toggle_warning)
             print_entity_result(EntityResult(id=ms.id, version=ms.version, operation="updated"))
 
         else:
@@ -329,19 +365,20 @@ class SetMilestoneCommand(Command):
             if not args.name:
                 error_exit("--name required for create")
 
-            num = len(plan.milestones) + 1
-            mid = f"M-{num:03d}"
+            mid = plan.next_milestone_id()
+            number = int(mid.rsplit("-", 1)[1])
 
             ms = Milestone(
                 id=mid,
                 version=1,
-                number=num,
+                number=number,
                 name=args.name,
                 files=files,
                 flags=flags,
                 requirements=requirements,
                 acceptance_criteria=acceptance,
                 tests=tests,
+                is_documentation_only=bool(args.documentation_only),
             )
             plan.milestones.append(ms)
 
@@ -379,9 +416,23 @@ class SetIntentCommand(Command):
                 f"Use existing: {', '.join(ids) or 'none'}",
             )
 
-        decision_refs = (
-            [r.strip() for r in args.decision_refs.split(",")] if args.decision_refs else []
-        )
+        # Doc-only milestones carry no code_intents (the relationship is exclusive --
+        # see Plan.validate_completeness). Reject here so the plan can't be wedged into
+        # a permanently-invalid state; clear the flag first if code is in fact needed.
+        if ms.is_documentation_only:
+            error_exit(
+                f"milestone {args.milestone} is documentation-only; clear it with "
+                f"'set-milestone --id {args.milestone} --no-documentation-only' "
+                f"before adding code intents"
+            )
+
+        if args.file:
+            try:
+                args.file = validate_relpath(args.file, "set-intent --file")
+            except ValueError as e:
+                error_exit(str(e))
+
+        decision_refs = parse_csv(args.decision_refs)
         for dref in decision_refs:
             if not plan.get_decision(dref):
                 validation_error(
@@ -430,8 +481,7 @@ class SetIntentCommand(Command):
             if not args.file or not args.behavior:
                 error_exit("--file and --behavior required for create")
 
-            num = len(ms.code_intents) + 1
-            cid = f"CI-{ms.id}-{num:03d}"
+            cid = plan.next_intent_id(ms)
 
             ci = CodeIntent(
                 id=cid,
@@ -499,8 +549,7 @@ class SetDecisionCommand(Command):
             if not args.decision or not args.reasoning:
                 error_exit("--decision and --reasoning required for create")
 
-            num = len(plan.planning_context.decisions) + 1
-            did = f"DL-{num:03d}"
+            did = plan.next_decision_id()
 
             dl = Decision(
                 id=did,
@@ -545,8 +594,7 @@ class SetDiagramCommand(Command):
             dg.title = args.title
             operation = "updated"
         else:
-            next_num = len(plan.diagram_graphs) + 1
-            new_id = f"DIAG-{next_num:03d}"
+            new_id = plan.next_diagram_id()
             dg = DiagramGraph(id=new_id, type=args.type, scope=args.scope, title=args.title)
             plan.diagram_graphs.append(dg)
             operation = "created"
@@ -623,250 +671,14 @@ class AddDiagramEdgeCommand(Command):
 
 
 # =============================================================================
-# Commands: Developer Phase (set-change)
+# Commands: Diagram Render
 # =============================================================================
-
-
-class SetChangeCommand(Command):
-    name = "set-change"
-    help = "Create or update code change"
-    role = "developer"
-
-    @classmethod
-    def add_arguments(cls, parser: argparse.ArgumentParser) -> None:
-        parser.add_argument("--id", help="Change ID (omit for create)")
-        parser.add_argument("--version", type=int, help="Current version (required for update)")
-        parser.add_argument("--milestone", required=True, help="Parent milestone ID")
-        parser.add_argument("--intent-ref", help="Intent ID this implements")
-        parser.add_argument("--file", help="Changed file path (required for create)")
-        parser.add_argument("--diff", help="Diff content (required for create)")
-        parser.add_argument("--comments", help="Change-level comments")
-
-    @classmethod
-    def run(cls, args: argparse.Namespace) -> None:
-        state_dir = get_state_dir()
-        plan = load_plan(state_dir)
-
-        ms = plan.get_milestone(args.milestone)
-        if not ms:
-            ids = [m.id for m in plan.milestones]
-            validation_error(
-                "milestone",
-                "Valid milestone ID",
-                args.milestone,
-                f"Use existing: {', '.join(ids) or 'none'}",
-            )
-
-        # Validate intent_ref if provided
-        if args.intent_ref:
-            _, ci = plan.get_intent(args.intent_ref)
-            if not ci:
-                all_intents = [c.id for m in plan.milestones for c in m.code_intents]
-                validation_error(
-                    "intent_ref",
-                    "Valid intent ID",
-                    args.intent_ref,
-                    f"Use existing: {', '.join(all_intents) or 'none'}",
-                )
-
-        if args.id:
-            # UPDATE path
-            _, cc = plan.get_change(args.id)
-            if not cc:
-                all_changes = [c.id for m in plan.milestones for c in m.code_changes]
-                validation_error(
-                    "change.id",
-                    "Valid change ID",
-                    args.id,
-                    f"Use existing: {', '.join(all_changes) or 'none'}",
-                )
-
-            try:
-                check_version(cc, args.version, args.id)
-            except VersionMismatchError as e:
-                exit_with_version_error(e)
-                return
-
-            # Update only provided fields
-            if args.intent_ref is not None:
-                cc.intent_ref = args.intent_ref if args.intent_ref else None
-            if args.file:
-                cc.file = args.file
-            if args.diff:
-                cc.diff = args.diff
-            if args.comments is not None:
-                cc.comments = args.comments
-
-            bump_version(cc)
-            save_plan(state_dir, plan)
-            print_entity_result(EntityResult(id=cc.id, version=cc.version, operation="updated"))
-
-        else:
-            # CREATE path
-            if args.version is not None:
-                error_exit("--version only valid for updates (when --id provided)")
-            if not args.file or not args.diff:
-                error_exit("--file and --diff required for create")
-
-            diff_content = args.diff
-
-            num = len(ms.code_changes) + 1
-            ccid = f"CC-{ms.id}-{num:03d}"
-
-            cc = CodeChange(
-                id=ccid,
-                version=1,
-                intent_ref=args.intent_ref,
-                file=args.file,
-                diff=diff_content,
-                comments=args.comments or "",
-            )
-            ms.code_changes.append(cc)
-
-            # Validate refs
-            errors = plan.validate_refs()
-            if errors:
-                error_exit("\n".join(errors))
-
-            save_plan(state_dir, plan)
-            print_entity_result(EntityResult(id=ccid, version=1, operation="created"))
-
-
-# =============================================================================
-# Commands: TW Phase (set-doc)
-# =============================================================================
-
-
-class SetDocCommand(Command):
-    name = "set-doc"
-    help = "Create or update documentation"
-    role = "tw"
-
-    @classmethod
-    def add_arguments(cls, parser: argparse.ArgumentParser) -> None:
-        parser.add_argument("--milestone", required=True, help="Parent milestone ID")
-        parser.add_argument(
-            "--type",
-            required=True,
-            choices=["module", "docstring", "function_block", "inline"],
-            help="Documentation type",
-        )
-        parser.add_argument("--content-file", required=True, help="Path to content file")
-        parser.add_argument("--function", help="Function name (for docstring or function_block type)")
-        parser.add_argument("--location", help="Location spec (for inline type)")
-        parser.add_argument(
-            "--decision-ref", help="Decision ID reference (for function_block/inline type)"
-        )
-        parser.add_argument("--source", help="Source provenance (for function_block/inline type)")
-
-    @classmethod
-    def run(cls, args: argparse.Namespace) -> None:
-        state_dir = get_state_dir()
-        plan = load_plan(state_dir)
-
-        ms = plan.get_milestone(args.milestone)
-        if not ms:
-            ids = [m.id for m in plan.milestones]
-            validation_error(
-                "milestone.id",
-                "Valid milestone ID",
-                args.milestone,
-                f"Use existing: {', '.join(ids)}",
-            )
-
-        content_path = Path(args.content_file)
-        if not content_path.exists():
-            error_exit(f"Content file not found: {args.content_file}")
-
-        content = content_path.read_text().strip()
-
-        if args.type == "module":
-            ms.documentation.module_comment = content
-        elif args.type == "docstring":
-            if not args.function:
-                error_exit("--function required for docstring type")
-            ms.documentation.docstrings.append(Docstring(function=args.function, docstring=content))
-        elif args.type == "function_block":
-            if not args.function:
-                error_exit("--function required for function_block type")
-            if args.decision_ref and not plan.get_decision(args.decision_ref):
-                dids = [d.id for d in plan.planning_context.decisions]
-                validation_error(
-                    "decision_ref",
-                    "Valid decision ID",
-                    args.decision_ref,
-                    f"Use existing: {', '.join(dids)}",
-                )
-            ms.documentation.function_blocks.append(
-                FunctionBlock(
-                    function=args.function,
-                    comment=content,
-                    decision_ref=args.decision_ref,
-                    source=args.source,
-                )
-            )
-        elif args.type == "inline":
-            if not args.location:
-                error_exit("--location required for inline type")
-            if args.decision_ref and not plan.get_decision(args.decision_ref):
-                dids = [d.id for d in plan.planning_context.decisions]
-                validation_error(
-                    "decision_ref",
-                    "Valid decision ID",
-                    args.decision_ref,
-                    f"Use existing: {', '.join(dids)}",
-                )
-            ms.documentation.inline_comments.append(
-                InlineComment(
-                    location=args.location,
-                    comment=content,
-                    decision_ref=args.decision_ref,
-                    source=args.source,
-                )
-            )
-
-        save_plan(state_dir, plan)
-        success(f"Added {args.type} documentation to {args.milestone}")
-
-
-class SetReadmeCommand(Command):
-    name = "set-readme"
-    help = "Create or update plan-level README entry"
-    role = "tw"
-
-    @classmethod
-    def add_arguments(cls, parser: argparse.ArgumentParser) -> None:
-        parser.add_argument("--path", required=True, help="Directory path for README.md")
-        parser.add_argument("--content-file", required=True, help="Path to content file")
-
-    @classmethod
-    def run(cls, args: argparse.Namespace) -> None:
-        state_dir = get_state_dir()
-        plan = load_plan(state_dir)
-
-        content_path = Path(args.content_file)
-        if not content_path.exists():
-            error_exit(f"Content file not found: {args.content_file}")
-
-        content = content_path.read_text().strip()
-
-        # Upsert: one README per directory path
-        for i, entry in enumerate(plan.readme_entries):
-            if entry.path == args.path:
-                plan.readme_entries[i] = ReadmeEntry(path=args.path, content=content)
-                save_plan(state_dir, plan)
-                success(f"Updated README for {args.path}")
-                return
-
-        plan.readme_entries.append(ReadmeEntry(path=args.path, content=content))
-        save_plan(state_dir, plan)
-        success(f"Created README for {args.path}")
 
 
 class SetDiagramRenderCommand(Command):
     name = "set-diagram-render"
     help = "Set ASCII render for diagram"
-    role = "tw"
+    role = "architect"
 
     @classmethod
     def add_arguments(cls, parser: argparse.ArgumentParser) -> None:
@@ -887,7 +699,7 @@ class SetDiagramRenderCommand(Command):
             error_exit(f"Content file not found: {args.content_file}")
 
         try:
-            dg.ascii_render = content_path.read_text()
+            dg.ascii_render = content_path.read_text(encoding="utf-8")
         except Exception as e:
             error_exit(f"Failed to read render for diagram {args.diagram}: {e}")
 
@@ -895,93 +707,66 @@ class SetDiagramRenderCommand(Command):
         success(f"Set ASCII render for {args.diagram}")
 
 
-class SetDocDiffCommand(Command):
-    name = "set-doc-diff"
-    help = "Set documentation diff for a code change"
-    role = "tw"
+# =============================================================================
+# Commands: Execution Waves
+# =============================================================================
+
+
+class SetWaveCommand(Command):
+    name = "set-wave"
+    help = "Create or update an execution wave (milestones that run in parallel)"
+    role = "architect"
 
     @classmethod
     def add_arguments(cls, parser: argparse.ArgumentParser) -> None:
-        parser.add_argument("--change", required=True, help="CodeChange ID (CC-M-XXX-YYY)")
-        parser.add_argument("--version", type=int, required=True, help="Current version for CAS")
-        parser.add_argument("--content-file", required=True, help="Path to unified diff file")
+        parser.add_argument("--id", help="Wave ID (omit for create)")
+        parser.add_argument(
+            "--milestones",
+            required=True,
+            help="Comma-separated milestone IDs that run in parallel "
+            "(may be empty to blank a wave)",
+        )
 
     @classmethod
     def run(cls, args: argparse.Namespace) -> None:
         state_dir = get_state_dir()
         plan = load_plan(state_dir)
 
-        _, cc = plan.get_change(args.change)
-        if not cc:
-            all_changes = [c.id for m in plan.milestones for c in m.code_changes]
-            validation_error(
-                "change",
-                "Valid change ID",
-                args.change,
-                f"Valid: {', '.join(all_changes) or 'none'}",
-            )
+        # No CAS: Wave has no version field; waves are coarse, architect-only, and
+        # low-churn. save_plan validates cross-references in memory before writing,
+        # so an overlapping wave (two milestones sharing a file) is rejected without
+        # ever touching disk.
+        milestones = parse_csv(args.milestones)
 
         try:
-            check_version(cc, args.version, args.change)
-        except VersionMismatchError as e:
-            exit_with_version_error(e)
-            return
+            reject_doc_only_in_wave(plan, milestones)
+        except ValueError as e:
+            error_exit(str(e))
 
-        content_path = Path(args.content_file)
-        if not content_path.exists():
-            error_exit(f"Content file not found: {args.content_file}")
-
-        cc.doc_diff = content_path.read_text()
-        bump_version(cc)
-        save_plan(state_dir, plan)
-        print_entity_result(EntityResult(id=cc.id, version=cc.version, operation="updated"))
-
-
-class CreateDocChangeCommand(Command):
-    name = "create-doc-change"
-    help = "Create documentation-only change (README, comments to existing file)"
-    role = "tw"
-
-    @classmethod
-    def add_arguments(cls, parser: argparse.ArgumentParser) -> None:
-        parser.add_argument("--milestone", required=True, help="Parent milestone ID")
-        parser.add_argument("--file", required=True, help="File path (e.g., path/README.md)")
-        parser.add_argument("--content-file", required=True, help="Path to unified diff file")
-
-    @classmethod
-    def run(cls, args: argparse.Namespace) -> None:
-        state_dir = get_state_dir()
-        plan = load_plan(state_dir)
-
-        ms = plan.get_milestone(args.milestone)
-        if not ms:
-            ids = [m.id for m in plan.milestones]
-            validation_error(
-                "milestone",
-                "Valid milestone ID",
-                args.milestone,
-                f"Valid: {', '.join(ids) or 'none'}",
-            )
-
-        content_path = Path(args.content_file)
-        if not content_path.exists():
-            error_exit(f"Content file not found: {args.content_file}")
-
-        num = len(ms.code_changes) + 1
-        ccid = f"CC-{ms.id}-{num:03d}"
-
-        cc = CodeChange(
-            id=ccid,
-            version=1,
-            intent_ref=None,  # Doc-only, no intent
-            file=args.file,
-            diff="",  # Empty - doc only
-            doc_diff=content_path.read_text(),
-            comments="",
-        )
-        ms.code_changes.append(cc)
-        save_plan(state_dir, plan)
-        print_entity_result(EntityResult(id=ccid, version=1, operation="created"))
+        if args.id:
+            # UPDATE path: replace the wave's milestone list (upsert).
+            wave = next((w for w in plan.waves if w.id == args.id), None)
+            if not wave:
+                ids = [w.id for w in plan.waves]
+                validation_error(
+                    "wave.id",
+                    "Valid wave ID",
+                    args.id,
+                    f"Use existing: {', '.join(ids) or 'none'}",
+                )
+            wave.milestones = milestones
+            save_plan(state_dir, plan)
+            # No version: Wave has no CAS field (unlike milestone/intent/decision),
+            # so emitting one would falsely imply an update bumped it.
+            success(f"Updated wave {wave.id}: {', '.join(milestones) or '(empty)'}")
+        else:
+            # CREATE path
+            if not milestones:
+                error_exit("--milestones required for create (empty allowed only on update)")
+            wid = plan.next_wave_id()
+            plan.waves.append(Wave(id=wid, milestones=milestones))
+            save_plan(state_dir, plan)
+            success(f"Created wave {wid}: {', '.join(milestones) or '(empty)'}")
 
 
 # =============================================================================
@@ -1013,7 +798,7 @@ def translate_to_markdown(plan: Plan) -> str:
             lines.append(dg.ascii_render)
             lines.append("```")
         else:
-            lines.append(f"[Diagram pending Technical Writer rendering: {dg.id}]")
+            lines.append(f"[Diagram pending architect rendering: {dg.id}]")
         lines.append("")
 
     # Planning Context
@@ -1086,7 +871,7 @@ def translate_to_markdown(plan: Plan) -> str:
                 lines.append(dg.ascii_render)
                 lines.append("```")
             else:
-                lines.append(f"[Diagram pending Technical Writer rendering: {dg.id}]")
+                lines.append(f"[Diagram pending architect rendering: {dg.id}]")
             lines.append("")
 
     # Milestones
@@ -1097,6 +882,15 @@ def translate_to_markdown(plan: Plan) -> str:
         lines.append(f"### Milestone {ms.number}: {ms.name}")
         lines.append("")
 
+        # Surface the doc-only flag so it survives the plan.json -> plan.md -> plan.json
+        # round trip (the executor re-derives plan.json from plan.md): without it a
+        # doc-only milestone is indistinguishable from a code milestone missing intents.
+        if ms.is_documentation_only:
+            lines.append(
+                "**Documentation-only milestone** (no code; deliverables authored at execution)."
+            )
+            lines.append("")
+
         ms_diagrams = [d for d in plan.diagram_graphs if d.scope == f"milestone:{ms.id}"]
         for dg in ms_diagrams:
             lines.append(f"**{dg.title}**")
@@ -1106,7 +900,7 @@ def translate_to_markdown(plan: Plan) -> str:
                 lines.append(dg.ascii_render)
                 lines.append("```")
             else:
-                lines.append(f"[Diagram pending Technical Writer rendering: {dg.id}]")
+                lines.append(f"[Diagram pending architect rendering: {dg.id}]")
             lines.append("")
 
         if ms.files:
@@ -1148,82 +942,6 @@ def translate_to_markdown(plan: Plan) -> str:
                 lines.append(f"- **{ci.id}** `{ci.file}{func_str}`: {ci.behavior}{refs_str}")
             lines.append("")
 
-        # Code Changes
-        if ms.code_changes:
-            lines.append("#### Code Changes")
-            lines.append("")
-            for cc in ms.code_changes:
-                ref_str = f" - implements {cc.intent_ref}" if cc.intent_ref else ""
-                lines.append(f"**{cc.id}** ({cc.file}){ref_str}")
-                lines.append("")
-
-                # Code diff (may be empty for doc-only changes)
-                if cc.diff:
-                    lines.append("**Code:**")
-                    lines.append("")
-                    lines.append("```diff")
-                    lines.append(cc.diff)
-                    lines.append("```")
-                    lines.append("")
-
-                # Documentation diff
-                if cc.doc_diff:
-                    lines.append("**Documentation:**")
-                    lines.append("")
-                    lines.append("```diff")
-                    lines.append(cc.doc_diff)
-                    lines.append("```")
-                    lines.append("")
-                elif cc.diff:
-                    lines.append("*[Documentation pending TW]*")
-                    lines.append("")
-
-                if cc.comments:
-                    lines.append(f"> **Developer notes**: {cc.comments}")
-                lines.append("")
-
-        # Documentation
-        doc = ms.documentation
-        if doc.module_comment or doc.docstrings or doc.function_blocks or doc.inline_comments:
-            lines.append("#### Documentation")
-            lines.append("")
-            if doc.module_comment:
-                lines.append("**Module Comment**:")
-                lines.append("")
-                lines.append(doc.module_comment)
-                lines.append("")
-            for ds in doc.docstrings:
-                lines.append(f"**{ds.function}**:")
-                lines.append("")
-                lines.append("```")
-                lines.append(ds.docstring)
-                lines.append("```")
-                lines.append("")
-            if doc.function_blocks:
-                lines.append("**Function Blocks**:")
-                lines.append("")
-                for fb in doc.function_blocks:
-                    ref_str = f" (ref: {fb.decision_ref})" if fb.decision_ref else ""
-                    lines.append(f"- `{fb.function}`{ref_str}: {fb.comment}")
-                lines.append("")
-            if doc.inline_comments:
-                lines.append("**Inline Comments**:")
-                lines.append("")
-                for ic in doc.inline_comments:
-                    ref_str = f" (ref: {ic.decision_ref})" if ic.decision_ref else ""
-                    lines.append(f"- `{ic.location}`{ref_str}: {ic.comment}")
-                lines.append("")
-
-    # README Entries
-    if plan.readme_entries:
-        lines.append("## README Entries")
-        lines.append("")
-        for entry in plan.readme_entries:
-            lines.append(f"### {entry.path}/README.md")
-            lines.append("")
-            lines.append(entry.content)
-            lines.append("")
-
     # Waves
     if plan.waves:
         lines.append("## Execution Waves")
@@ -1250,7 +968,7 @@ class ValidateCommand(Command):
         parser.add_argument(
             "--phase",
             required=True,
-            choices=["plan-design", "plan-code", "plan-docs"],
+            choices=["plan-design"],
             help="Phase to validate",
         )
 
@@ -1270,7 +988,7 @@ class ValidateCommand(Command):
         if errors:
             print("<validation_errors>")
             for err in errors:
-                print(f"  <error>{err}</error>")
+                print(f"  <error>{escape(err)}</error>")
             print("</validation_errors>")
             sys.exit(1)
         else:
@@ -1322,29 +1040,6 @@ class ListIntentsCommand(Command):
             print(f"{ci.id}\tv{ci.version}\t{ci.file}\t{ci.behavior[:50]}...")
 
 
-class ListChangesCommand(Command):
-    name = "list-changes"
-    help = "List changes in milestone"
-    role = None
-
-    @classmethod
-    def add_arguments(cls, parser: argparse.ArgumentParser) -> None:
-        parser.add_argument("milestone_id", help="Milestone ID")
-
-    @classmethod
-    def run(cls, args: argparse.Namespace) -> None:
-        state_dir = get_state_dir()
-        plan = load_plan(state_dir)
-
-        ms = plan.get_milestone(args.milestone_id)
-        if not ms:
-            ids = [m.id for m in plan.milestones]
-            error_exit(f"Milestone {args.milestone_id} not found. Valid IDs: {', '.join(ids)}")
-
-        for cc in ms.code_changes:
-            print(f"{cc.id}\tv{cc.version}\t{cc.intent_ref}\t{cc.file}")
-
-
 class ListDecisionsCommand(Command):
     name = "list-decisions"
     help = "List all decisions"
@@ -1376,16 +1071,11 @@ COMMANDS: list[type[Command]] = [
     SetDiagramCommand,
     AddDiagramNodeCommand,
     AddDiagramEdgeCommand,
-    SetChangeCommand,
-    SetDocCommand,
-    SetReadmeCommand,
     SetDiagramRenderCommand,
-    SetDocDiffCommand,
-    CreateDocChangeCommand,
+    SetWaveCommand,
     ValidateCommand,
     ListMilestonesCommand,
     ListIntentsCommand,
-    ListChangesCommand,
     ListDecisionsCommand,
 ]
 
@@ -1431,12 +1121,29 @@ def cli(args: list[str] | None = None):
         methods = discover_methods(plan_commands)
         ctx = plan_commands.PlanContext(state_dir=Path(parsed.state_dir))
 
-        if hasattr(parsed, "input") and parsed.input:
-            requests = json.loads(parsed.input)
-        else:
-            requests = json.load(sys.stdin)
+        try:
+            if hasattr(parsed, "input") and parsed.input:
+                requests = json.loads(parsed.input)
+            else:
+                requests = json.load(sys.stdin)
 
-        results = batch_dispatch(methods, requests, ctx)
+            if not isinstance(requests, list) or not all(isinstance(r, dict) for r in requests):
+                error_exit("batch input must be a JSON array of {method, params} objects")
+
+            # Role enforcement: the per-command role check runs after the batch
+            # early-return and is never reached. Reject any restricted method
+            # up front so a batch payload can't bypass role gates.
+            restricted_methods = {cmd for cmds in ROLE_PERMISSIONS.values() for cmd in cmds}
+            for req in requests:
+                method_name = req.get("method", "")
+                if method_name in restricted_methods:
+                    role_err = check_role(method_name)
+                    if role_err:
+                        error_exit(role_err)
+
+            results = batch_dispatch(methods, requests, ctx)
+        except (ValueError, OSError) as e:
+            error_exit(str(e))
         print(json.dumps(results, indent=2))
         return
 
@@ -1455,7 +1162,12 @@ def cli(args: list[str] | None = None):
         if role_err:
             error_exit(role_err)
 
-    cmd_class.run(parsed)
+    # A mutation rejected by validate_refs (e.g. a file-overlapping wave) raises in
+    # save_plan before writing; surface it as a clean error, not a traceback.
+    try:
+        cmd_class.run(parsed)
+    except (SchemaValidationError, OSError) as e:
+        error_exit(str(e))
 
 
 def main():

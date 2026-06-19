@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import subprocess
 import sys
 from pathlib import Path
@@ -27,6 +28,18 @@ SKILL_MODULES = [
     "skills.planner.orchestrator.planner",
     "skills.prompt_engineer.optimize",
 ]
+
+
+def write_qr(state_dir: Path, phase: str, items: list[dict], *, iteration: int = 1) -> None:
+    """Write qr-{phase}.json into state_dir (shared QR-state test helper).
+
+    Single source for the qr-{phase}.json shape so a schema change is one edit;
+    the four test modules that wrote this file by hand now bridge to here.
+    iteration is keyword-only to keep call sites self-documenting.
+    """
+    (Path(state_dir) / f"qr-{phase}.json").write_text(
+        json.dumps({"phase": phase, "iteration": iteration, "items": items})
+    )
 
 
 def import_all_skills() -> list[tuple[str, Exception]]:

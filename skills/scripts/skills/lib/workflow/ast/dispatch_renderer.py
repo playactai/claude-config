@@ -8,20 +8,15 @@ Separate from ast/renderer.py because:
 3. Future separation: Dispatch nodes may gain additional rendering concerns
    (model selection, parallel constraints) that don't belong in core AST.
 """
-
-import re
-from string import Template
+from xml.sax.saxutils import escape, quoteattr
 
 from skills.lib.workflow.ast.dispatch import (
     RosterDispatchNode,
     SubagentDispatchNode,
     TemplateDispatchNode,
 )
-
-
-def _extract_template_vars(s: str) -> list[str]:
-    """Extract $var names from template string."""
-    return [m.group(1) for m in re.finditer(r"\$(\w+)", s)]
+from skills.lib.workflow.prompts.step import pin_cwd
+from skills.lib.workflow.prompts.subagent import expand_template_pairs
 
 
 def _expand_template_targets(
@@ -29,34 +24,12 @@ def _expand_template_targets(
 ) -> list[dict[str, str]]:
     """Expand template+command for each target with substituted values.
 
-    Substitution happens here, not in render_template_dispatch, so
-    render functions only assemble XML from pre-expanded data.
-
-    Args:
-        template: Prompt template with $var placeholders
-        command: Command template with $var placeholders
-        targets: Variable bindings per target
-
-    Returns:
-        List of dicts with "prompt" and "command" keys, values substituted
-
-    Raises:
-        ValueError: If template contains $var not present in target dict
+    Substitution happens here, not in render_template_dispatch, so render
+    functions only assemble XML from pre-expanded data. Thin wrapper over the
+    shared expand_template_pairs -- see it for the $var contract and the "$$"
+    literal-escape rule (single owner so this and template_dispatch can't drift).
     """
-    result = []
-    for i, t in enumerate(targets):
-        try:
-            prompt = Template(template).substitute(t)
-            cmd = Template(command).substitute(t)
-        except KeyError as e:
-            required = set(_extract_template_vars(template) + _extract_template_vars(command))
-            provided = set(t.keys())
-            raise ValueError(
-                f"Template variable {e} missing in target {i}. "
-                f"Required: {sorted(required)}. Provided: {sorted(provided)}"
-            ) from e
-        result.append({"prompt": prompt, "command": cmd})
-    return result
+    return expand_template_pairs(template, command, targets)
 
 
 def _build_execution_constraint(count: int) -> str:
@@ -128,12 +101,12 @@ def render_subagent_dispatch(node: SubagentDispatchNode) -> str:
             "All agents must start with a prompt injection command (invoke)."
         )
 
-    lines = [f'<subagent_dispatch agent="{agent_type}" mode="script">']
+    lines = [f'<subagent_dispatch agent={quoteattr(agent_type)} mode="script">']
 
     # Always emit explicit model guidance to prevent LLM pattern-matching
     # from prior steps. See _build_model_selection() docstring.
     if node.model:
-        lines.append(f"  <model>{node.model}</model>")
+        lines.append(f"  <model>{escape(node.model)}</model>")
     else:
         lines.append("  <model>DEFAULT (omit model parameter from Task tool)</model>")
 
@@ -143,9 +116,11 @@ def render_subagent_dispatch(node: SubagentDispatchNode) -> str:
             lines.append(f"    {line}" if line else "")
         lines.append("  </prompt>")
 
-    # Wrap invoke in directive to signal immediate execution
+    # Wrap invoke in directive to signal immediate execution.
+    # pin_cwd: absolute cd so the invocation survives a drifted agent cwd
+    # (relative ".claude/skills/scripts" breaks from /tmp or a user-global install).
     lines.append('  <directive action="IMMEDIATELY invoke">')
-    lines.append(f'    <invoke cmd="cd .claude/skills/scripts && {node.command}" />')
+    lines.append(f'    <invoke cmd={quoteattr(pin_cwd(node.command))} />')
     lines.append("  </directive>")
 
     lines.append("</subagent_dispatch>")
@@ -176,7 +151,7 @@ def render_template_dispatch(node: TemplateDispatchNode) -> str:
     expanded = _expand_template_targets(node.template, node.command, node.targets)
     count = len(expanded)
 
-    lines = [f'<parallel_dispatch agent="{node.agent_type}" count="{count}">']
+    lines = [f'<parallel_dispatch agent={quoteattr(node.agent_type)} count="{count}">']
 
     if node.instruction:
         lines.append("  <instruction>")
@@ -199,7 +174,7 @@ def render_template_dispatch(node: TemplateDispatchNode) -> str:
                 lines.append(f"        {prompt_line}" if prompt_line else "")
             lines.append("      </prompt>")
 
-        lines.append(f'      <invoke cmd="cd .claude/skills/scripts && {e["command"]}" />')
+        lines.append(f'      <invoke cmd={quoteattr(pin_cwd(e["command"]))} />')
         lines.append("    </agent>")
     lines.append("  </agents>")
 
@@ -230,7 +205,7 @@ def render_roster_dispatch(node: RosterDispatchNode) -> str:
 
     count = len(node.agents)
 
-    lines = [f'<parallel_dispatch agent="{node.agent_type}" count="{count}">']
+    lines = [f'<parallel_dispatch agent={quoteattr(node.agent_type)} count="{count}">']
 
     if node.instruction:
         lines.append("  <instruction>")
@@ -257,7 +232,7 @@ def render_roster_dispatch(node: RosterDispatchNode) -> str:
         for task_line in agent_prompt.split("\n"):
             lines.append(f"        {task_line}" if task_line else "")
         lines.append("      </task>")
-        lines.append(f'      <invoke cmd="cd .claude/skills/scripts && {node.command}" />')
+        lines.append(f'      <invoke cmd={quoteattr(pin_cwd(node.command))} />')
         lines.append("    </agent>")
     lines.append("  </agents>")
 

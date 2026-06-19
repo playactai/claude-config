@@ -205,80 +205,48 @@ Add flags when:
 Skip tests when: user explicitly stated no tests, OR milestone is documentation-only,
 OR project docs prohibit tests for this component. State skip reason explicitly.
 
-**Code Intent** (you write this):
+**Code Intent** (you write this -- the durable contract):
 
-Describe WHAT changes are needed. Do NOT include exact code or diffs.
-Do NOT read source files -- Developer handles that.
+Code Intent is the binding contract the developer implements at execution. You have
+already read the source during exploration, so write it with real knowledge of the code.
+Do NOT include stored diffs; describe behavior precisely enough to implement faithfully.
 
-Include:
-- Functions/structs to add or modify (names, purposes)
-- Behavior to implement
-- Key decisions (reference Decision Log entries by name)
+Include, per affected file:
+- Functions/structs to add or modify: signatures (params, types, return) + purpose
+- Behavior: control flow, error/edge handling, data shapes
+- The integration seam (where it connects), named
+- A Decision Log reference for every value/threshold/algorithm/tradeoff
+
+The developer implements this just-in-time against the live file and escalates if it is
+under-specified -- so make it complete. There are no plan-time diffs; impl-code QR
+reviews the actual implementation at execution.
 
 Example:
 ```
 **Code Intent**:
-- New file `pool.go`: Pool struct with Open(), Close(), Acquire(), Release()
-- Modify `config.go`: Add PoolConfig struct after existing Config
-- Connection timeout: 500ms (Decision: "95th percentile latency coverage")
-```
-
-**Code Changes** (filled by Developer agent):
-
-After plan is written, spawn Developer to convert Code Intent to unified diffs.
-Developer reads actual files and produces accurate context lines.
-See `.claude/conventions/diff-format.md` for diff specification.
-
-```diff
---- a/path/to/file.py
-+++ b/path/to/file.py
-@@ -123,6 +123,15 @@ def existing_function(ctx):
-   # Context lines (unchanged) serve as location anchors
-   existing_code()
-
-+  # WHY comment explaining rationale - transcribed verbatim by Developer
-+  new_code()
-
-   # More context to anchor the insertion point
-   more_existing_code()
+- New file `pool.go`: `Pool` with `Open(cfg PoolConfig) (*Pool, error)`, `Close() error`,
+  `Acquire(ctx) (*Conn, error)`, `Release(*Conn)`. Acquire blocks until a conn frees or
+  ctx cancels; Release returns it to the idle set.
+- Modify `config.go`: add `PoolConfig` (max size, idle timeout) alongside `Config`.
+- Connection timeout: 500ms (Decision DL-002: "95th percentile latency coverage")
 ```
 
 Documentation-only milestones (ALL files are .md, .rst, .txt, or CLAUDE.md):
-- Code Intent/Changes section states: "Documentation milestone - no code changes."
-- Milestone MUST have `Delegated to:` field (typically `@agent-technical-writer`)
+- No Code Intent (there is no code to implement).
+- Mark the milestone `is_documentation_only`. Execution routes it straight to the
+  exec-docs phase, where the Technical Writer authors the docs -- no developer dispatch.
 
 ### Milestone N: ...
 
-### Milestone [Last]: Documentation
+### Documentation (not a milestone)
 
-**Delegated to**: @agent-technical-writer (mode: post-implementation)
-
-**Source**: `## Invisible Knowledge` section of this plan
-
-**Files**:
-
-- `path/to/CLAUDE.md` (index updates -- in same directory as code)
-- `path/to/README.md` (if Invisible Knowledge section has content -- in same
-  directory as code)
-
-**Requirements**:
-
-Delegate to Technical Writer. For documentation format specification:
-
-<file working-dir=".claude" uri="conventions/documentation.md" />
-
-Key deliverables:
-- CLAUDE.md: Pure navigation index (tabular format)
-- README.md: Invisible knowledge (if IK section non-empty)
-
-**Acceptance Criteria**:
-
-- CLAUDE.md is tabular index only (no prose sections)
-- README.md exists in each directory with invisible knowledge
-- README.md is self-contained (no external references)
-- Architecture diagrams in README.md match plan's Invisible Knowledge section
-
-**Source Material**: `## Invisible Knowledge` section of this plan
+Documentation is NOT a milestone. After implementation, the **exec-docs phase** runs
+automatically: the Technical Writer authors all documentation against the real, committed
+code -- inline comments and docstrings (sourced from the Decision Log and Invisible
+Knowledge), a tabular `CLAUDE.md` index, and a code-adjacent `README.md` wherever the
+Invisible Knowledge section has content. You do not write a documentation milestone; keep
+the Decision Log and Invisible Knowledge rich, since they are the TW's source material.
+Format spec: <file working-dir=".claude" uri="conventions/documentation.md" />
 
 ### Cross-Milestone Integration Tests
 
@@ -300,13 +268,18 @@ The integration tests in M3 verify the full flow that end users would exercise,
 using real dependencies. This creates fast feedback as soon as all components
 exist.
 
-## Milestone Dependencies (if applicable)
+## Execution Waves
 
-```
-M1 ---> M2
-   \
-    --> M3 --> M4
-```
+Milestones execute in ordered waves: every milestone in a wave runs in parallel
+(one developer agent each), and the waves run strictly in sequence. There is no
+separate dependency block -- the executor transcribes these waves verbatim into
+`plan.json.waves` and never infers them from a diagram.
 
-Independent milestones can execute in parallel during /plan-execution.
+- W-001: M-001
+- W-002: M-002, M-003
+- W-003: M-004
+
+Two milestones that touch the same file must NOT share a wave -- their developer
+agents would race-write it. Authored by the architect with
+`set-wave --milestones M-001,M-002`; see `plan-json-schema.md` for the `waves` JSON.
 ````

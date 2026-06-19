@@ -2,23 +2,23 @@
 """
 Interactive Sequential Planner - Orchestrator with parallel QR verification.
 
-14-step planning workflow per INTENT.md:
+6-step planning workflow per INTENT.md:
 
 Flow:
   1. plan-init (orchestrator captures context categories)
   2. context-verify (orchestrator self-checks handover completeness)
-  3. plan-design-work (architect sub-agent)
-  4. plan-design-qr-decompose -> 5. verify(N) -> 6. route
-  7. plan-code-work (developer)
-  8. plan-code-qr-decompose -> 9. verify(N) -> 10. route
-  11. plan-docs-work (technical-writer)
-  12. plan-docs-qr-decompose -> 13. verify(N) -> 14. route -> Plan Approved
+  3. plan-design-work (architect: Code Intent contract + decisions + diagram IR/render)
+  4. plan-design-qr-decompose -> 5. verify(N) -> 6. route -> Plan Approved
+
+Code Intent is the durable contract: at execution the developer regenerates the
+implementation just-in-time per wave against the live file (see executor.py), and
+impl-code QR is the single authoritative code review. There are no plan-time diffs.
 
 QR Block Pattern (4 steps per phase):
-  N   work        1 agent (architect/dev/TW)    Modified plan.json
+  N   work        1 agent (architect)          Modified plan.json
   N+1 decompose   1 agent (QR)                  qr-{phase}.json
   N+2 verify      N agents (parallel, expanded) Each: PASS or FAIL
-  N+3 route       0 agents (orchestrator)       Loop to N or proceed to N+4
+  N+3 route       0 agents (orchestrator)       Loop to N or approve plan
 """
 
 import argparse
@@ -31,19 +31,25 @@ from skills.lib.workflow.constants import (
     QUESTION_RELAY_HANDLER,
     SUB_AGENT_QUESTION_FORMAT,
 )
-from skills.lib.workflow.prompts import subagent_dispatch, template_dispatch
+from skills.lib.workflow.prompts import subagent_dispatch
 from skills.lib.workflow.prompts.step import format_step
 from skills.lib.workflow.types import AgentRole
-from skills.planner.shared.builders import THINKING_EFFICIENCY, format_forbidden
+from skills.planner.shared.builders import (
+    ESCALATE_HANDLER,
+    THINKING_EFFICIENCY,
+    build_fix_mode_dispatch,
+    build_qr_decompose_dispatch,
+    build_qr_verify_dispatch,
+    shell_quote,
+)
 from skills.planner.shared.constraints import (
     ORCHESTRATOR_CONSTRAINT_EXTENDED,
-    format_state_banner,
 )
 from skills.planner.shared.gates import GateResult, build_gate_output
 from skills.planner.shared.qr.cli import add_qr_args
-from skills.planner.shared.qr.types import LoopState, QRState, QRStatus
-from skills.planner.shared.qr.utils import increment_qr_iteration, qr_file_exists
-from skills.planner.shared.resources import PlannerResourceProvider, get_mode_script_path
+from skills.planner.shared.qr.types import LoopState
+from skills.planner.shared.qr.utils import prepare_verify_items, qr_file_exists
+from skills.planner.shared.resources import get_mode_script_path
 
 MODULE_PATH = "skills.planner.orchestrator.planner"
 
@@ -135,7 +141,7 @@ def _save_plan_to_docs(state_dir: str) -> "Path | None":
             print("Warning: plan.md not found in state_dir", file=sys.stderr)
             return None
 
-        plan_data = json.loads(plan_json.read_text())
+        plan_data = json.loads(plan_json.read_text(encoding="utf-8"))
         problem = plan_data.get("overview", {}).get("problem", "")
         slug = _slugify(problem)
 
@@ -156,51 +162,38 @@ def _save_plan_to_docs(state_dir: str) -> "Path | None":
             target = docs_plans / f"{date_prefix}-{slug}-{counter}.md"
             counter += 1
 
-        target.write_text(plan_md.read_text())
+        target.write_text(plan_md.read_text(encoding="utf-8"), encoding="utf-8")
         return target
     except Exception as e:
         print(f"Warning: failed to save plan to docs/plans/: {e}", file=sys.stderr)
         return None
 
 
-_provider = PlannerResourceProvider()
-
 QUESTION_RELAY_INSTRUCTION = SUB_AGENT_QUESTION_FORMAT
 
 
-def get_plan_format() -> str:
-    """Read the plan format template from resources."""
-    return _provider.get_resource("plan-format.md")
-
-
-def _build_fix_mode_output(title, agent, agent_role, script, mode_total_steps, qr, ctx):
+def _build_fix_mode_output(title, agent, script, qr, ctx):
     """Build output for execute step in fix mode."""
     state_dir = ctx["state_dir"]
 
-    action_children = []
-
-    action_children.append(format_state_banner("PLAN-FIX", qr.iteration, "fix"))
-    action_children.append("")
-    action_children.append("FIX MODE: QR found issues.")
-    action_children.append("")
-
-    action_children.append(ORCHESTRATOR_CONSTRAINT_EXTENDED)
-    action_children.append("")
-
     mode_script = get_mode_script_path(script)
-    invoke_cmd = f"uv run python -m {mode_script} --step 1 --state-dir {state_dir}"
+    invoke_cmd = f"uv run python -m {mode_script} --step 1 --state-dir {shell_quote(state_dir)}"
 
-    dispatch_prompt = subagent_dispatch(
+    action_children = build_fix_mode_dispatch(
+        banner_label="PLAN-FIX",
+        iteration=qr.iteration,
+        fix_mode_line="FIX MODE: QR found issues.",
+        constraint=ORCHESTRATOR_CONSTRAINT_EXTENDED,
         agent_type=agent,
-        command=invoke_cmd,
+        invoke_cmd=invoke_cmd,
+        follow_up=(
+            f"{agent.title()} reads QR report and fixes issues.",
+            "After fixes complete, re-run QR for fresh verification.",
+        ),
     )
-    action_children.append(dispatch_prompt)
-    action_children.append("")
-    action_children.append(f"{agent.title()} reads QR report and fixes issues.")
-    action_children.append("After fixes complete, re-run QR for fresh verification.")
 
     next_step = ctx["step"] + 1
-    next_cmd = f"uv run python -m {MODULE_PATH} --step {next_step} --state-dir {state_dir}"
+    next_cmd = f"uv run python -m {MODULE_PATH} --step {next_step} --state-dir {shell_quote(state_dir)}"
 
     return {
         "title": f"{title} - Fix Mode",
@@ -218,36 +211,19 @@ def init_step(title, actions):
     """Step 1: creates state_dir, writes plan.json skeleton."""
 
     def handler(ctx):
-        import json
-
         state_dir = tempfile.mkdtemp(prefix="planner-")
 
-        plan_skeleton = {
-            "schema_version": 2,
-            "overview": {"problem": "", "approach": ""},
-            "planning_context": {
-                "decisions": [],
-                "rejected_alternatives": [],
-                "constraints": [],
-                "risks": [],
-            },
-            "invisible_knowledge": {
-                "system": "",
-                "invariants": [],
-                "tradeoffs": [],
-            },
-            "milestones": [],
-            "waves": [],
-        }
+        from skills.planner.shared.schema import Overview, Plan
+
         plan_path = Path(state_dir) / "plan.json"
-        plan_path.write_text(json.dumps(plan_skeleton, indent=2))
+        plan_path.write_text(Plan(overview=Overview(problem="", approach="")).model_dump_json(indent=2))
 
         print(f"STATE_DIR={state_dir}")
 
         return {
             "title": title,
             "actions": actions,
-            "next": f"uv run python -m {MODULE_PATH} --step 2 --state-dir {state_dir}",
+            "next": f"uv run python -m {MODULE_PATH} --step 2 --state-dir {shell_quote(state_dir)}",
         }
 
     return handler
@@ -266,16 +242,14 @@ def verify_step(title, actions):
         return {
             "title": title,
             "actions": actions,
-            "next": f"uv run python -m {MODULE_PATH} --step 3 --state-dir {state_dir}",
+            "next": f"uv run python -m {MODULE_PATH} --step 3 --state-dir {shell_quote(state_dir)}",
         }
 
     return handler
 
 
-def execute_dispatch_step(
-    title, agent, agent_role, script, mode_total_steps, post_dispatch=None, phase=None
-):
-    """Steps 3, 7, 11: work execution dispatch."""
+def execute_dispatch_step(title, agent, script, post_dispatch=None, phase=None):
+    """Step 3: work execution dispatch."""
 
     def handler(ctx):
         from skills.planner.shared.resources import validate_state_dir_requirement
@@ -287,9 +261,7 @@ def execute_dispatch_step(
         validate_state_dir_requirement(step, state_dir)
 
         if qr.state == LoopState.RETRY:
-            return _build_fix_mode_output(
-                title, agent, agent_role, script, mode_total_steps, qr, ctx
-            )
+            return _build_fix_mode_output(title, agent, script, qr, ctx)
 
         action_children = []
 
@@ -297,7 +269,7 @@ def execute_dispatch_step(
         action_children.append("")
 
         mode_script = get_mode_script_path(script)
-        invoke_cmd = f"uv run python -m {mode_script} --step 1 --state-dir {state_dir}"
+        invoke_cmd = f"uv run python -m {mode_script} --step 1 --state-dir {shell_quote(state_dir)}"
 
         dispatch_prompt = subagent_dispatch(
             agent_type=agent,
@@ -310,7 +282,7 @@ def execute_dispatch_step(
             action_children.extend(post_dispatch)
 
         next_step = step + 1
-        next_cmd = f"uv run python -m {MODULE_PATH} --step {next_step} --state-dir {state_dir}"
+        next_cmd = f"uv run python -m {MODULE_PATH} --step {next_step} --state-dir {shell_quote(state_dir)}"
 
         return {
             "title": title,
@@ -323,7 +295,7 @@ def execute_dispatch_step(
 
 
 def qr_decompose_step(title, phase, script, model=None):
-    """Steps 4, 8, 12: QR decomposition dispatch.
+    """Step 4: QR decomposition dispatch.
 
     Dispatches single QR agent to decompose artifact into verification items.
     Agent outputs qr-{phase}.json.
@@ -345,34 +317,16 @@ def qr_decompose_step(title, phase, script, model=None):
                     f"QR items for {phase} already defined.",
                     "Proceeding to verification of existing items.",
                 ],
-                "next": f"uv run python -m {MODULE_PATH} --step {verify_step} --state-dir {state_dir}",
+                "next": f"uv run python -m {MODULE_PATH} --step {verify_step} --state-dir {shell_quote(state_dir)}",
             }
 
-        action_children = []
-
-        qr_name = f"QR-{phase.upper()}-DECOMPOSE"
-        action_children.append(format_state_banner(qr_name, qr.iteration, "decompose"))
-        action_children.append("")
-
-        action_children.append(ORCHESTRATOR_CONSTRAINT_EXTENDED)
-        action_children.append("")
-
         mode_script = get_mode_script_path(script)
-        invoke_cmd = f"uv run python -m {mode_script} --step 1 --state-dir {state_dir}"
-
-        dispatch_prompt = subagent_dispatch(
-            agent_type="quality-reviewer",
-            command=invoke_cmd,
-            model=model,
+        action_children = build_qr_decompose_dispatch(
+            mode_script, phase, state_dir, qr.iteration, ORCHESTRATOR_CONSTRAINT_EXTENDED, model=model
         )
-        action_children.append(dispatch_prompt)
-        action_children.append("")
-
-        action_children.append("Expected output: qr-{phase}.json written to STATE_DIR")
-        action_children.append("Orchestrator generates verification dispatch from this file.")
 
         next_step = step + 1
-        next_cmd = f"uv run python -m {MODULE_PATH} --step {next_step} --state-dir {state_dir}"
+        next_cmd = f"uv run python -m {MODULE_PATH} --step {next_step} --state-dir {shell_quote(state_dir)}"
 
         return {
             "title": title,
@@ -384,13 +338,8 @@ def qr_decompose_step(title, phase, script, model=None):
     return handler
 
 
-def _format_qr_item_flags(item_ids: list[str]) -> str:
-    """Format item IDs as repeated --qr-item flags."""
-    return " ".join(f"--qr-item {id}" for id in item_ids)
-
-
 def qr_verify_step(title, phase):
-    """Steps 5, 9, 13: Parallel QR verification with group-aware dispatch.
+    """Step 5: Parallel QR verification with group-aware dispatch.
 
     Reads qr-{phase}.json and generates expanded dispatch.
     Decompose agent outputs item data. Orchestrator transforms this data
@@ -403,99 +352,36 @@ def qr_verify_step(title, phase):
 
     def handler(ctx):
         from skills.planner.shared.qr.phases import get_phase_config
-        from skills.planner.shared.qr.utils import (
-            by_blocking_severity,
-            by_status,
-            load_qr_state,
-            query_items,
-        )
 
         state_dir = ctx["state_dir"]
         step = ctx["step"]
         qr = ctx["qr"]
 
-        qr_state = load_qr_state(state_dir, phase)
-        if not qr_state or "items" not in qr_state:
+        items, _ = prepare_verify_items(state_dir, phase, qr, qr_state=ctx["qr_state"])
+        if items is None:
             return {"error": f"qr-{phase}.json not found or malformed in {state_dir}"}
-
-        if qr.state == LoopState.RETRY:
-            increment_qr_iteration(state_dir, phase)
-
-        # Dispatch only items at blocking severity for current iteration.
-        iteration = qr_state.get("iteration", 1)
-        items = query_items(qr_state, by_status("TODO", "FAIL"), by_blocking_severity(iteration))
         if not items:
             next_step = step + 1
             return {
                 "title": title,
                 "actions": ["All items already verified. Proceeding with pass."],
-                "if_pass": f"uv run python -m {MODULE_PATH} --step {next_step} --state-dir {state_dir} --qr-status pass",
-                "if_fail": f"uv run python -m {MODULE_PATH} --step {next_step} --state-dir {state_dir} --qr-status pass",
+                "if_pass": f"uv run python -m {MODULE_PATH} --step {next_step} --state-dir {shell_quote(state_dir)} --qr-status pass",
+                "if_fail": f"uv run python -m {MODULE_PATH} --step {next_step} --state-dir {shell_quote(state_dir)} --qr-status pass",
             }
 
         config = get_phase_config(phase)
         verify_script = config["verify_script"]
 
-        # Group items by group_id for batch verification.
-        groups = {}
-        for item in items:
-            gid = item.get("group_id") or item["id"]
-            groups.setdefault(gid, []).append(item)
-
-        targets = [
-            {
-                "group_id": gid,
-                "item_ids": ",".join(i["id"] for i in group_items),
-                "qr_item_flags": _format_qr_item_flags([i["id"] for i in group_items]),
-                "item_count": str(len(group_items)),
-                "checks_summary": "; ".join(i.get("check", "")[:40] for i in group_items[:3]),
-            }
-            for gid, group_items in groups.items()
-        ]
-
-        tmpl = f"""Verify QR group: $group_id ($item_count items)
-Items: $item_ids
-Checks: $checks_summary
-
-Start: uv run python -m {verify_script} --step 1 --state-dir {state_dir} $qr_item_flags"""
-
-        command = f"uv run python -m {verify_script} --step 1 --state-dir {state_dir} $qr_item_flags"
-
-        dispatch_text = template_dispatch(
-            agent_type="quality-reviewer",
-            template=tmpl,
-            targets=targets,
-            command=command,
-            instruction=f"Verify {len(groups)} groups ({len(items)} items) in parallel.",
+        # Build the full verify action block (dispatch + PHASE 1/PHASE 2 aggregation
+        # prose) -- shared with executor.py via build_qr_verify_dispatch, which owns
+        # the cap scheme, vg-NNN labels, shell-quoting, the pinned Start: command, and
+        # the aggregation prose. Only the constraint differs between orchestrators.
+        action_children = build_qr_verify_dispatch(
+            verify_script, phase, state_dir, items, ORCHESTRATOR_CONSTRAINT_EXTENDED
         )
 
-        action_children = [
-            ORCHESTRATOR_CONSTRAINT_EXTENDED,
-            "",
-            "=== PHASE 1: DISPATCH (delegate to sub-agents) ===",
-            "",
-            f"VERIFY: {len(items)} items",
-            "",
-            dispatch_text,
-            "",
-            "=== PHASE 2: AGGREGATE (your action after all agents return) ===",
-            "",
-            f"After ALL {len(groups)} agents return, tally results mechanically:",
-            "  ALL agents returned PASS  ->  invoke next step with --qr-status pass",
-            "  ANY agent returned FAIL   ->  invoke next step with --qr-status fail",
-            "",
-            format_forbidden(
-                "Interpreting results beyond PASS/FAIL tallying",
-                "Claiming 'diminishing returns' or 'comprehensive enough'",
-                "Reading plan.json or any state files",
-                "Writing, rendering, or summarizing the plan",
-                "Skipping the next step command",
-                "Proceeding to a later step without QR PASS",
-            ),
-        ]
-
         next_step = step + 1
-        base_cmd = f"uv run python -m {MODULE_PATH} --step {next_step} --state-dir {state_dir}"
+        base_cmd = f"uv run python -m {MODULE_PATH} --step {next_step} --state-dir {shell_quote(state_dir)}"
 
         return {
             "title": title,
@@ -508,39 +394,11 @@ Start: uv run python -m {verify_script} --step 1 --state-dir {state_dir} $qr_ite
     return handler
 
 
-def _all_milestones_doc_only(state_dir: str) -> bool:
-    """Return True when every milestone in plan.json is documentation-only.
-
-    Used by step 6 (plan-design gate) to skip plan-code (steps 7-10) for
-    pure documentation plans. Routing through plan-code runs QR-Code checks
-    (context lines, format rules, test coverage) against prose, which never
-    converges and produces infinite fix loops.
-
-    Returns False on any read/parse failure or when milestones list is empty
-    so behaviour stays conservative (goes through plan-code) when in doubt.
-    """
-    import json
-
-    try:
-        plan_path = Path(state_dir) / "plan.json"
-        plan_data = json.loads(plan_path.read_text())
-        milestones = plan_data.get("milestones", [])
-        if not milestones:
-            return False
-        return all(m.get("is_documentation_only", False) for m in milestones)
-    except (OSError, json.JSONDecodeError):
-        return False
-
-
 def qr_route_step(title, phase, work_step, pass_step, pass_message, fix_target=None):
-    """Steps 6, 10, 14: Route based on aggregated QR results.
+    """Step 6: Route based on aggregated QR results.
 
-    PASS: delete qr file, proceed to pass_step
+    PASS: delete qr file, approve the plan (pass_step=None -> terminal pass)
     FAIL: loop to work_step (fix mode detected via qr-{phase}.json inspection)
-
-    Step 6 has doc-only fast-path: when all milestones are is_documentation_only,
-    a PASS routes to step 11 (plan-docs-work) instead of step 7 (plan-code-work)
-    because code phase QR never converges on prose.
     """
 
     def handler(ctx):
@@ -548,26 +406,20 @@ def qr_route_step(title, phase, work_step, pass_step, pass_message, fix_target=N
         state_dir = ctx.get("state_dir", "")
         step = ctx["step"]
 
-        effective_pass_step = pass_step
-        effective_pass_message = pass_message
-        if step == 6 and state_dir and _all_milestones_doc_only(state_dir):
-            effective_pass_step = 11
-            effective_pass_message = (
-                "All milestones are documentation-only. "
-                "Skipping plan-code phase. Proceed to step 11 (plan-docs-work)."
-            )
-
         return build_gate_output(
             module_path=MODULE_PATH,
-            script_name="planner",
             qr_name=title,
             qr=qr,
             step=step,
             work_step=work_step,
-            pass_step=effective_pass_step,
-            pass_message=effective_pass_message,
+            pass_step=pass_step,
+            pass_message=pass_message,
             fix_target=fix_target,
             state_dir=state_dir,
+            phase=phase,
+            accept_findings=ctx.get("accept_findings", False),
+            qr_state=ctx["qr_state"],
+            plan=ctx.get("plan"),
         )
 
     handler.phase = phase
@@ -575,7 +427,7 @@ def qr_route_step(title, phase, work_step, pass_step, pass_message, fix_target=N
 
 
 # =============================================================================
-# Step Definitions (1-14)
+# Step Definitions (1-6)
 # =============================================================================
 
 STEPS = {
@@ -630,16 +482,14 @@ STEPS = {
             "[ ] 5. Someone unfamiliar would understand why we're building this",
             "[ ] 6. Reference documentation paths captured or explicit 'none'",
             "",
-            "IF ANY CHECK FAILS: gather missing context via AskUserQuestion or exploration.",
+            f"IF ANY CHECK FAILS: gather missing context via {ESCALATE_HANDLER} or exploration.",
         ],
     ),
     # Plan-design phase (steps 3-6)
     3: execute_dispatch_step(
         title="plan-design-work",
         agent="architect",
-        agent_role="architect",
         script="architect/plan_design.py",
-        mode_total_steps=6,
         phase="plan-design",
         post_dispatch=[
             QUESTION_RELAY_HANDLER,
@@ -648,7 +498,7 @@ STEPS = {
     4: qr_decompose_step(
         title="plan-design-qr-decompose",
         phase="plan-design",
-        script="quality_reviewer/plan_design_qr_decompose.py",
+        script="quality_reviewer/qr_decompose.py",
         model="opus",
     ),
     5: qr_verify_step(
@@ -659,79 +509,26 @@ STEPS = {
         title="plan-design-qr-route",
         phase="plan-design",
         work_step=3,
-        pass_step=7,
-        pass_message="Proceed to step 7 (plan-code-work).",
-    ),
-    # Plan-code phase (steps 7-10)
-    7: execute_dispatch_step(
-        title="plan-code-work",
-        agent="developer",
-        agent_role="developer",
-        script="developer/plan_code.py",
-        mode_total_steps=4,
-        phase="plan-code",
-        post_dispatch=[
-            QUESTION_RELAY_HANDLER,
-        ],
-    ),
-    8: qr_decompose_step(
-        title="plan-code-qr-decompose",
-        phase="plan-code",
-        script="quality_reviewer/plan_code_qr_decompose.py",
-        model="opus",
-    ),
-    9: qr_verify_step(
-        title="plan-code-qr-verify",
-        phase="plan-code",
-    ),
-    10: qr_route_step(
-        title="plan-code-qr-route",
-        phase="plan-code",
-        work_step=7,
-        pass_step=11,
-        pass_message="Proceed to step 11 (plan-docs-work).",
-        fix_target=AgentRole.DEVELOPER,
-    ),
-    # Plan-docs phase (steps 11-14)
-    11: execute_dispatch_step(
-        title="plan-docs-work",
-        agent="technical-writer",
-        agent_role="tw",
-        script="technical_writer/plan_docs.py",
-        mode_total_steps=6,
-        phase="plan-docs",
-        post_dispatch=[
-            QUESTION_RELAY_HANDLER,
-        ],
-    ),
-    12: qr_decompose_step(
-        title="plan-docs-qr-decompose",
-        phase="plan-docs",
-        script="quality_reviewer/plan_docs_qr_decompose.py",
-        model="opus",
-    ),
-    13: qr_verify_step(
-        title="plan-docs-qr-verify",
-        phase="plan-docs",
-    ),
-    14: qr_route_step(
-        title="plan-docs-qr-route",
-        phase="plan-docs",
-        work_step=11,
         pass_step=None,
         pass_message="PLAN APPROVED. Ready for execution.",
-        fix_target=AgentRole.TECHNICAL_WRITER,
+        fix_target=AgentRole.ARCHITECT,
     ),
 }
 
 
-def get_step_guidance(step: int, qr_status, state_dir) -> dict | str:
+def get_step_guidance(
+    step: int, qr_status, state_dir, accept_findings=False, plan=None, qr_states=None
+) -> dict | str | GateResult:
     """Returns guidance for a step.
 
     Iteration and fix mode derived from qr-{phase}.json file state.
     Phase derived from handler attribute set by step factory.
+    accept_findings is the user's ceiling override, consumed only by the route step.
+    plan is the validate_state parse threaded from main, reused by the route gate.
+    qr_states is the validate_state qr dict threaded from main so the gate
+    path avoids a second load_qr_state.
     """
-    from skills.planner.shared.qr.utils import get_qr_iteration, has_qr_failures
+    from skills.planner.shared.qr.utils import resolve_qr_for_step
 
     handler = STEPS.get(step)
     if not handler:
@@ -740,25 +537,27 @@ def get_step_guidance(step: int, qr_status, state_dir) -> dict | str:
     # Phase stored as handler attribute by step factory.
     # None for non-QR steps (1, 2).
     phase = getattr(handler, "phase", None)
-    iteration = get_qr_iteration(state_dir, phase) if state_dir and phase else 1
-
-    status = QRStatus(qr_status) if qr_status else None
-    is_fix_mode = state_dir and phase and has_qr_failures(state_dir, phase)
-    state = LoopState.RETRY if is_fix_mode else LoopState.INITIAL
-    qr = QRState(iteration=iteration, state=state, status=status)
+    qr_state, qr = resolve_qr_for_step(qr_states, state_dir, phase, qr_status)
 
     ctx = {
         "step": step,
         "qr": qr,
         "state_dir": state_dir,
+        "accept_findings": accept_findings,
+        "qr_state": qr_state,
+        "plan": plan,
     }
 
     return handler(ctx)
 
 
-def format_output(step: int, qr_status, state_dir) -> str | GateResult:
+def format_output(
+    step: int, qr_status, state_dir, accept_findings=False, plan=None, qr_states=None
+) -> str | GateResult:
     """Format output for display."""
-    guidance = get_step_guidance(step, qr_status, state_dir=state_dir)
+    guidance = get_step_guidance(
+        step, qr_status, state_dir=state_dir, accept_findings=accept_findings, plan=plan, qr_states=qr_states
+    )
 
     if isinstance(guidance, GateResult):
         return guidance
@@ -790,8 +589,8 @@ def format_output(step: int, qr_status, state_dir) -> str | GateResult:
 def main():
     """CLI entry point for planner orchestration."""
     parser = argparse.ArgumentParser(
-        description="Interactive Sequential Planner (14-step orchestration workflow)",
-        epilog="Step 1: init | Step 2: context-verify | Steps 3-14: work + QR phases",
+        description="Interactive Sequential Planner (6-step orchestration workflow)",
+        epilog="Step 1: init | Step 2: context-verify | Steps 3-6: plan-design work + QR",
     )
 
     parser.add_argument("--step", type=int, required=True)
@@ -799,6 +598,12 @@ def main():
         "--state-dir", type=str, default=None, help="State directory path (for retry mode)"
     )
     add_qr_args(parser)
+    parser.add_argument(
+        "--accept-findings",
+        action="store_true",
+        help="User override at the QR iteration ceiling: approve the plan as-is and finalize "
+        "(render plan.md + save to docs/plans/) despite unresolved findings",
+    )
 
     args = parser.parse_args()
 
@@ -807,25 +612,37 @@ def main():
     if args.step < 1:
         sys.exit("Error: step must be >= 1")
 
-    # Validate state before running step (skip for step 1 which creates state)
+    # Validate state before running step (skip for step 1 which creates state).
+    # Capture the parse so the route gate reuses it instead of re-reading plan.json.
+    plan = None
+    qr_states = None
     if args.step > 1 and args.state_dir:
         from skills.planner.shared.schema import SchemaValidationError, validate_state
 
         try:
-            validate_state(args.state_dir)
+            plan, qr_states = validate_state(args.state_dir)
         except SchemaValidationError as e:
             sys.exit(f"Schema validation failed: {e}")
+        if plan is None:
+            sys.exit(f"Error: plan.json not found in {args.state_dir} (required for step {args.step})")
 
     # Route steps require --qr-status; provide helpful output if missing
     if args.step in PLANNER_GATE_STEPS and not args.qr_status:
-        gate_names = {6: "plan-design-qr-route", 10: "plan-code-qr-route", 14: "plan-docs-qr-route"}
+        gate_names = {6: "plan-design-qr-route"}
         print(f"PLANNER - Step {args.step}/{PLANNER_TOTAL_STEPS}: {gate_names[args.step]}")
         print()
         print("This is a route step. Re-invoke with --qr-status pass or --qr-status fail")
         print("based on the aggregated QR output from the previous step.")
         sys.exit(0)
 
-    result = format_output(args.step, args.qr_status, state_dir=args.state_dir)
+    result = format_output(
+        args.step,
+        args.qr_status,
+        state_dir=args.state_dir,
+        accept_findings=args.accept_findings,
+        plan=plan,
+        qr_states=qr_states,
+    )
 
     if isinstance(result, GateResult):
         # Why translate on terminal_pass: plan.json is the IR (modified by

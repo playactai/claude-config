@@ -12,6 +12,7 @@ Available conventions:
 """
 
 from fnmatch import fnmatch
+from functools import cache
 from pathlib import Path
 
 from skills.lib.io import read_text_or_exit
@@ -19,6 +20,7 @@ from skills.lib.io import read_text_or_exit
 _registry_cache: dict | None = None
 
 
+@cache
 def get_convention(name: str) -> str:
     """Load convention from centralized store.
 
@@ -55,13 +57,21 @@ def _parse_list_item(content: str) -> str:
     return content[1:].strip().strip("\"'")
 
 
-def _parse_phase_item(content: str) -> tuple[str, list]:
-    """Parse phase_specific phase header.
+def _parse_phase_item(content: str, current_role: str, current_key: str) -> tuple[str, list]:
+    """Parse phase_specific / mode_specific phase header.
 
-    Returns:
-        (phase_name, empty_list)
+    Raises ValueError for unsupported inline flow-style values so a grant
+    isn't silently dropped (matching _parse_indent_2_keys behavior).
     """
-    phase_name = content.split(":")[0].strip()
+    phase_name, _, inline = content.partition(":")
+    phase_name = phase_name.strip()
+    inline = inline.strip()
+    if inline and inline not in ("[]", "{}"):
+        raise ValueError(
+            f"Flow-style value not supported for phase {phase_name!r} "
+            f"under {current_key!r} / role {current_role!r}: "
+            f"use block-style indented lines (got {inline!r})"
+        )
     return phase_name, []
 
 
@@ -83,14 +93,25 @@ def _parse_indent_2_keys(content: str, current_role: str, result: dict) -> tuple
         (current_key, current_phase=None)
     """
     key = content.split(":")[0].strip()
+    if key not in ("receives", "phase_specific", "mode_specific", "rationale"):
+        raise ValueError(
+            f"Unrecognized REGISTRY.yaml key {key!r} under role {current_role!r}"
+        )
+    if key == "rationale":
+        result[current_role][key] = content.split(":", 1)[1].strip().strip("\"'")
+        return key, None
 
-    if content.endswith("[]") or key in ("receives",):
-        result[current_role][key] = []
-    elif key in ("phase_specific", "mode_specific"):
-        result[current_role][key] = {}
-    elif key == "rationale":
-        value = content.split(":", 1)[1].strip().strip("\"'")
-        result[current_role][key] = value
+    # receives / phase_specific / mode_specific are block-style containers: their
+    # items live on indented lines below. Any non-empty inline value (a flow-style
+    # list "[a, b]" or map "{x: y}") cannot be represented by this subset parser
+    # and would be silently dropped -- fail closed instead of losing a grant.
+    inline = content.split(":", 1)[1].strip()
+    if inline and inline not in ("[]", "{}"):
+        raise ValueError(
+            f"Flow-style value not supported for {key!r} under role {current_role!r}: "
+            f"use block-style indented lines (got {inline!r})"
+        )
+    result[current_role][key] = [] if key == "receives" else {}
 
     return key, None
 
@@ -101,7 +122,10 @@ def _parse_indent_4_items(
     """Handle list items and phase/mode headers (indent 4).
 
     Returns:
-        current_phase (updated if phase/mode header found, else unchanged)
+        current_phase if a phase/mode header was parsed, None for consumed list items
+
+    Raises:
+        ValueError: If the line doesn't match any indent-4 pattern
     """
     if current_key == "receives" and content.startswith("-"):
         value = _parse_list_item(content)
@@ -109,23 +133,29 @@ def _parse_indent_4_items(
         return None
 
     if current_key == "phase_specific" and ":" in content:
-        phase_name, phase_list = _parse_phase_item(content)
+        phase_name, phase_list = _parse_phase_item(content, current_role, current_key)
         result[current_role][current_key][phase_name] = phase_list
         return phase_name
 
     if current_key == "mode_specific" and ":" in content:
         # mode_specific uses same structure as phase_specific
-        mode_name, mode_list = _parse_phase_item(content)
+        mode_name, mode_list = _parse_phase_item(content, current_role, current_key)
         result[current_role][current_key][mode_name] = mode_list
         return mode_name
 
-    return None
+    raise ValueError(
+        f"Unparseable REGISTRY.yaml line (indent 4): {content!r}"
+    )
 
 
 def _parse_indent_6_phase_items(
     content: str, current_role: str, current_key: str, current_phase: str | None, result: dict
 ) -> None:
-    """Handle phase-specific and mode-specific list items (indent 6)."""
+    """Handle phase-specific and mode-specific list items (indent 6).
+
+    Raises:
+        ValueError: If the line doesn't match any indent-6 pattern
+    """
     if (
         current_key in ("phase_specific", "mode_specific")
         and current_phase
@@ -133,6 +163,10 @@ def _parse_indent_6_phase_items(
     ):
         value = _parse_list_item(content)
         result[current_role][current_key][current_phase].append(value)
+    else:
+        raise ValueError(
+            f"Unparseable REGISTRY.yaml line (indent 6): {content!r}"
+        )
 
 
 def _validate_parsed_structure(result: dict) -> None:
@@ -162,42 +196,46 @@ def _validate_parsed_structure(result: dict) -> None:
                     raise ValueError(f"Role '{role}' mode_specific.{mode} must be list")
 
 
-def _parse_yaml_simple(text: str) -> dict:
-    """Simple YAML parser for registry (subset of YAML needed for our structure)."""
-    try:
-        import yaml  # pyright: ignore[reportMissingModuleSource]
+def _parse_registry(text: str) -> dict:
+    """Parse the role-convention registry.
 
-        result = yaml.safe_load(text)
-        _validate_parsed_structure(result)
-        return result
-    except ImportError:
-        result = {}
-        current_role = None
-        current_key = None
-        current_phase = None
+    A purpose-built indentation parser for the small REGISTRY.yaml subset
+    (roles -> receives / phase_specific / mode_specific / rationale). pyyaml is
+    not a project dependency, so this is the single parser used both at runtime
+    and by the CI drift-guard (validate_conventions.py) -- there is no second
+    code path to drift against.
+    """
+    result: dict = {}
+    current_role = None
+    current_key = None
+    current_phase = None
 
-        for line in text.split("\n"):
-            if not line.strip() or line.strip().startswith("#"):
-                continue
+    for line in text.split("\n"):
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#") or stripped in ("---", "..."):
+            continue
 
-            indent = len(line) - len(line.lstrip())
-            content = line.strip()
+        indent = len(line) - len(line.lstrip())
+        content = stripped
 
-            if indent == 0 and ":" in content and not content.startswith("-"):
-                current_role, current_key, current_phase = _parse_indent_0_role(content, result)
-            elif indent == 2 and current_role and ":" in content:
-                current_key, current_phase = _parse_indent_2_keys(content, current_role, result)
-            elif indent == 4 and current_role and current_key:
-                phase_update = _parse_indent_4_items(content, current_role, current_key, result)
-                if phase_update is not None:
-                    current_phase = phase_update
-            elif indent == 6 and current_role and current_key:
-                _parse_indent_6_phase_items(
-                    content, current_role, current_key, current_phase, result
-                )
+        if indent == 0 and ":" in content and not content.startswith("-"):
+            current_role, current_key, current_phase = _parse_indent_0_role(content, result)
+        elif indent == 2 and current_role and ":" in content:
+            current_key, current_phase = _parse_indent_2_keys(content, current_role, result)
+        elif indent == 4 and current_role and current_key:
+            phase_update = _parse_indent_4_items(content, current_role, current_key, result)
+            if phase_update is not None:
+                current_phase = phase_update
+        elif indent == 6 and current_role and current_key:
+            _parse_indent_6_phase_items(content, current_role, current_key, current_phase, result)
+        else:
+            # No recognized indent/context matched. Raising (not skipping) keeps the
+            # CI drift-guard fail-closed: a stray-indented or orphaned line that would
+            # otherwise silently drop a role's convention grant is a hard error.
+            raise ValueError(f"Unparseable REGISTRY.yaml line (indent {indent}): {content!r}")
 
-        _validate_parsed_structure(result)
-        return result
+    _validate_parsed_structure(result)
+    return result
 
 
 def get_registry() -> dict:
@@ -205,7 +243,7 @@ def get_registry() -> dict:
     global _registry_cache
     if _registry_cache is None:
         registry_path = Path(__file__).resolve().parents[4] / "conventions" / "REGISTRY.yaml"
-        _registry_cache = _parse_yaml_simple(registry_path.read_text())
+        _registry_cache = _parse_registry(registry_path.read_text(encoding="utf-8"))
     return _registry_cache
 
 

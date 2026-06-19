@@ -1,6 +1,6 @@
 """Shared utilities for QR decomposition scripts.
 
-Mechanical utilities and truly-generic prompts (identical across all 5 phases).
+Mechanical utilities and truly-generic prompts (identical across all 3 phases).
 Phase-SPECIFIC cognitive prompts (steps 1-3, 5) belong in per-phase scripts.
 
 WHY "truly-generic": GAP_ANALYSIS_PROMPT, ATOMICITY_RULES, COVERAGE_VALIDATION_PROMPT
@@ -12,8 +12,8 @@ only required utilities. No forced inheritance hierarchy.
 
 CRITICAL INVARIANT - Phase-Severity Alignment:
 Each phase uses severity categories matching agent capabilities:
-  - plan-docs: KNOWLEDGE categories only (TW cannot fix code issues)
-  - plan-code: STRUCTURE + COSMETIC (Dev can fix code)
+  - impl-docs: KNOWLEDGE categories only (TW cannot fix code issues)
+  - impl-code: STRUCTURE + COSMETIC (Dev can fix code)
   - plan-design: DIAGRAM + subset of KNOWLEDGE
 Violating this causes unrecoverable QR loops.
 
@@ -24,10 +24,17 @@ Called via: python3 -m {module_path} --step N --state-dir {dir}
 """
 
 import json
+from collections.abc import Callable
 from pathlib import Path
 
-from skills.planner.shared.qr.utils import load_qr_state
-from skills.planner.shared.resources import get_context_path, render_context_file
+from skills.lib.workflow.prompts import pin_cwd
+from skills.planner.shared.builders import shell_quote
+from skills.planner.shared.qr.utils import load_qr_state, load_validated_qr_state
+from skills.planner.shared.resources import render_phase_context
+
+
+def _reinvoke_cmd(module_path: str, step: int, phase: str, state_dir: str) -> str:
+    return f"uv run python -m {module_path} --step {step} --phase {phase} --state-dir {shell_quote(state_dir)}"
 
 # =============================================================================
 # UTILITIES (mechanical operations)
@@ -42,10 +49,12 @@ def render_item_list(items: list[dict], label: str = "ungrouped_items") -> str:
     """
     if not items:
         return f"{label}: 0 items"
+    from skills.planner.shared.qr.utils import _fix_field_safe
+
     lines = [f"{label}: {len(items)} items"]
     for i in items:
         scope = i.get("scope", "*")
-        check = i.get("check", "")[:80]
+        check = _fix_field_safe(i.get("check", ""))[:80]
         lines.append(f"  {i['id']} [scope={scope}]: {check}")
     return "\n".join(lines)
 
@@ -55,8 +64,12 @@ def load_ungrouped_todo_items(state_dir: str, phase: str) -> list[dict]:
 
     WHY filter: Grouping operates only on unassigned TODO items.
     Completed or already-grouped items retain their state.
+
+    Also runs QRFile/QRItem validation (mirroring the verify subprocess's
+    _load_validated_qr_state) so a verify-authored control-char-injected
+    check/finding loaded by the decompose subprocess fails closed here.
     """
-    qr_state = load_qr_state(state_dir, phase)
+    qr_state = load_validated_qr_state(state_dir, phase)
     if not qr_state:
         return []
     return [
@@ -70,24 +83,19 @@ def format_assign_cmd(state_dir: str, phase: str, prefix: str) -> str:
     """Format CLI command template for group assignment.
 
     WHY CLI: Group assignments use the qr CLI tool for state mutation.
+
+    pin_cwd: this command is meant to be copy-run by the agent, so it carries an
+    absolute cd -- a bare `uv run python -m skills...` fails from a drifted cwd.
     """
-    return f"""OUTPUT:
-  uv run python -m skills.planner.cli.qr --state-dir {state_dir} --qr-phase {phase} \\
-    assign-group <item_id> --group-id {prefix}<name>"""
-
-
-def write_qr_state(state_dir: str, phase: str, items: list[dict]) -> None:
-    """Write qr-{phase}.json with iteration=1.
-
-    WHY iteration=1: Decompose runs once per phase (enforced by orchestrator skip logic).
-    Iteration counter tracks verification cycles, not decompose invocations.
-    """
-    qr_state = {"phase": phase, "iteration": 1, "items": items}
-    Path(state_dir, f"qr-{phase}.json").write_text(json.dumps(qr_state, indent=2))
+    cmd = pin_cwd(
+        f"uv run python -m skills.planner.cli.qr --state-dir {shell_quote(state_dir)} --qr-phase {phase} "
+        f"assign-group <item_id> --group-id {prefix}<name>"
+    )
+    return f"OUTPUT:\n  {cmd}"
 
 
 # =============================================================================
-# SHARED PROMPTS (truly identical across all 5 phases)
+# SHARED PROMPTS (truly identical across all 3 phases)
 # =============================================================================
 
 GAP_ANALYSIS_PROMPT = """\
@@ -175,6 +183,48 @@ After writing, proceed to grouping phase."""
 # =============================================================================
 
 
+def render_code_milestone_scope(state_dir: str, phase: str) -> str:
+    """Explicit in-scope code-milestone ids for the impl-code decompose agent.
+
+    Structural backstop for the prose "exclude documentation-only" nudge: the
+    agent is handed the literal id list from Plan.code_milestones() so a doc-only
+    milestone's acceptance_criteria can't be enumerated as unsatisfiable impl-code
+    QR items. Returns "" for non-impl-code phases (plan-design enumerates
+    everything; impl-docs targets doc-only milestones) and whenever plan.json is
+    absent or unparseable -- the static prose then stands alone, as before
+    (graceful degrade, like render_context_file's missing_ok).
+    """
+    if phase != "impl-code" or not state_dir:
+        return ""
+    # Local import + tolerant load mirror plan_completeness_errors: do NOT use
+    # cli.plan.load_plan (it error_exit()s, which would abort a prompt build).
+    from skills.planner.shared.schema import Plan
+
+    path = Path(state_dir) / "plan.json"
+    if not path.exists():
+        return ""
+    try:
+        plan = Plan.model_validate(json.loads(path.read_text(encoding="utf-8")))
+    except Exception:
+        return ""
+    ids = ", ".join(ms.id for ms in plan.code_milestones()) or "(none)"
+    return (
+        "CODE MILESTONES IN SCOPE (enumerate items ONLY for these; "
+        "documentation-only\n"
+        "milestones produce no code and are verified in impl-docs, not here):\n"
+        f"  {ids}"
+    )
+
+
+def no_scope(state_dir: str, phase: str) -> str:
+    """Default scope provider: no extra in-scope enumeration.
+
+    Phases other than impl-code register this so dispatch_step always holds a
+    callable scope_provider (uniform slot) -- no `if provider` special-casing.
+    """
+    return ""
+
+
 def dispatch_step(
     step: int,
     phase: str,
@@ -182,16 +232,17 @@ def dispatch_step(
     phase_prompts: dict[int, str],
     grouping_config: dict,
     state_dir: str = "",
+    scope_provider: Callable[[str, str], str] = no_scope,
 ) -> dict:
     """Route step to appropriate handler.
 
-    WHY this function: Eliminates duplicate if-elif control flow across 5 phase scripts.
+    WHY this function: Eliminates duplicate if-elif control flow across the phase scripts.
     Each script provides phase-specific content (phase_prompts, grouping_config),
     this function handles the common routing logic.
 
     Args:
         step: Current step number (1-13)
-        phase: Phase name (plan-docs, plan-code, etc.)
+        phase: Phase name (plan-design, impl-code, impl-docs)
         module_path: Module path for next step command
         phase_prompts: Dict mapping step numbers to phase-specific prompt strings
                       Required keys: 1, 2, 3, 5
@@ -201,14 +252,19 @@ def dispatch_step(
     Returns:
         Dict with title, actions, next keys
     """
-    state_dir_arg = f" --state-dir {state_dir}" if state_dir else ""
+    state_dir_arg = f" --state-dir {shell_quote(state_dir)}" if state_dir else ""
+    phase_arg = f" --phase {phase}"
+    # Explicit code-milestone scope for impl-code (structural doc-only exclusion);
+    # "" for other phases / missing plan, so the conditional injections below add
+    # nothing.
+    code_scope = scope_provider(state_dir, phase) if step in (1, 3) else ""
 
     def next_cmd(s):
-        return f"uv run python -m {module_path} --step {s}{state_dir_arg}"
+        return f"uv run python -m {module_path} --step {s}{phase_arg}{state_dir_arg}"
 
     # Step 1: Absorb context (phase-specific)
     if step == 1:
-        context_display = render_context_file(get_context_path(state_dir)) if state_dir else ""
+        context_display = render_phase_context(state_dir, phase) if state_dir else ""
         return {
             "title": f"QR Decomposition Step 1: Absorb Context ({phase})",
             "actions": [
@@ -216,6 +272,7 @@ def dispatch_step(
                 "",
                 phase_prompts[1],
                 "",
+                *([code_scope, ""] if code_scope else []),
                 "PLANNING CONTEXT:",
                 context_display,
                 "",
@@ -255,8 +312,9 @@ def dispatch_step(
                 "",
                 phase_prompts[3],
                 "",
+                *([code_scope, ""] if code_scope else []),
                 "OUTPUT: Structured list of plan elements.",
-                "  - Use IDs where available (DL-001, M-001, CC-001)",
+                "  - Use IDs where available (DL-001, M-001, CI-001)",
                 "  - Note counts (e.g., '3 decisions, 5 milestones')",
                 "",
                 "This enumeration becomes a completeness checklist in Step 7.",
@@ -414,11 +472,9 @@ def step_9_structural_grouping(state_dir: str, phase: str, module_path: str) -> 
             "   For items with scope='*' and no parent_id:",
             "   - Set group_id = 'umbrella'",
             "",
-            "Execute via CLI:",
-            f"  uv run python -m skills.planner.cli.qr --state-dir {state_dir} --qr-phase {phase} \\",
-            "    assign-group <item_id> --group-id <group_id>",
+            format_assign_cmd(state_dir, phase, ""),
         ],
-        "next": f"uv run python -m {module_path} --step 10 --state-dir {state_dir}",
+        "next": _reinvoke_cmd(module_path, 10, phase, state_dir),
     }
 
 
@@ -463,7 +519,7 @@ def step_10_component_grouping(
             "",
             f"If no component groups: # No component groups. {len(ungrouped)} items to Phase 2.",
         ],
-        "next": f"uv run python -m {module_path} --step 11 --state-dir {state_dir}",
+        "next": _reinvoke_cmd(module_path, 11, phase, state_dir),
     }
 
 
@@ -503,7 +559,7 @@ def step_11_concern_grouping(
             "",
             format_assign_cmd(state_dir, phase, "concern-"),
         ],
-        "next": f"uv run python -m {module_path} --step 12 --state-dir {state_dir}",
+        "next": _reinvoke_cmd(module_path, 12, phase, state_dir),
     }
 
 
@@ -537,7 +593,7 @@ def step_12_affinity_grouping(state_dir: str, phase: str, module_path: str) -> d
             "",
             "Remaining ungrouped items become singletons.",
         ],
-        "next": f"uv run python -m {module_path} --step 13 --state-dir {state_dir}",
+        "next": _reinvoke_cmd(module_path, 13, phase, state_dir),
     }
 
 

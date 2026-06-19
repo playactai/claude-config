@@ -4,11 +4,17 @@ Authoritative source for: context.json, plan.json, qr-{phase}.json schemas.
 Pydantic is a required dependency (pydantic>=2.0 in pyproject.toml).
 """
 
+import itertools
 import json
+import os
+import sys
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, field_validator
+
+from skills.planner.shared.qr.phases import get_all_phases
 
 # QR item defaults for defensive access when reading malformed data
 QA_ITEM_DEFAULTS = {
@@ -23,13 +29,38 @@ QA_ITEM_DEFAULTS = {
     "severity": "SHOULD",  # Default for backwards compat with existing qr-{phase}.json files
 }
 
-# Canonical field names for QR items
-QA_ITEM_REQUIRED_FIELDS = frozenset({"id", "scope", "check", "status", "version"})
-QA_ITEM_OPTIONAL_FIELDS = frozenset({"finding", "parent_id", "group_id", "severity"})
-QA_ITEM_ALL_FIELDS = QA_ITEM_REQUIRED_FIELDS | QA_ITEM_OPTIONAL_FIELDS
-
 # Valid severity values (per conventions/severity.md)
 VALID_SEVERITIES = frozenset({"MUST", "SHOULD", "COULD"})
+
+# jq filters that route on Milestone.is_documentation_only. Single source so the
+# verify guidance (content.py) and the TW execute prompt (exec_docs_execute.py)
+# cannot drift from the field name or from Plan.code_milestones()'s `!= true` split.
+DOC_ONLY_SELECTOR = ".milestones[] | select(.is_documentation_only == true)"
+CODE_ONLY_SELECTOR = ".milestones[] | select(.is_documentation_only != true)"
+DOC_ONLY_DELIVERABLES_FILTER = f"{DOC_ONLY_SELECTOR} | {{files, acceptance_criteria}}"
+
+# Out-of-set tokens decompose agents occasionally emit meaning "maximum/blocking".
+_SEVERITY_SYNONYMS = {"BLOCKER": "MUST", "CRITICAL": "MUST"}
+
+
+def canonicalize_severity(v: object) -> str | None:
+    """Map a raw severity token to a canonical tier, or None if unrecognized.
+
+    Recognizes MUST/SHOULD/COULD (case-insensitive) plus the documented
+    high-severity synonyms (BLOCKER/CRITICAL -> MUST, preserving blocking
+    force). Returns None for genuinely-unknown tokens so callers pick policy:
+    schema/routing default None -> SHOULD (lenient ingest, never aborts the
+    run); the interactive update-item CLI rejects None (typo feedback).
+    """
+    if v is None:
+        return None
+    s = str(v).strip().upper()
+    if not s:
+        return None
+    if s in VALID_SEVERITIES:
+        return s
+    return _SEVERITY_SYNONYMS.get(s)
+
 
 PYDANTIC_AVAILABLE = True
 
@@ -70,9 +101,7 @@ if True:
         version: int = 1  # CAS optimistic locking: increment on update
         decision: str
         reasoning: str = Field(alias="reasoning_chain")  # premise -> implication -> conclusion
-
-        class Config:
-            populate_by_name = True
+        model_config = ConfigDict(populate_by_name=True)
 
     class RejectedAlternative(BaseModel):
         """Alternative considered but rejected.
@@ -104,9 +133,7 @@ if True:
         rejected_alternatives: list[RejectedAlternative] = Field(default_factory=list)
         constraints: list[str] = Field(default_factory=list)  # INTENT.md line 67: string[]
         risks: list[Risk] = Field(default_factory=list, alias="known_risks")
-
-        class Config:
-            populate_by_name = True
+        model_config = ConfigDict(populate_by_name=True)
 
     class InvisibleKnowledge(BaseModel):
         """Knowledge for future LLM sessions."""
@@ -151,66 +178,6 @@ if True:
         behavior: str
         decision_refs: list[str] = Field(default_factory=list)  # DL-XXX cross-references
 
-    class CodeChange(BaseModel):
-        """Concrete code change implementing an intent."""
-
-        id: str  # CC-M-001-001 format
-        version: int = 1  # CAS optimistic locking: increment on update
-        intent_ref: str | None = None  # CI-XXX or null for doc-only changes (READMEs)
-        file: str
-        diff: str = ""  # Code changes - Developer fills (empty for doc-only)
-        doc_diff: str = ""  # Documentation overlay - TW fills
-        comments: str = ""  # WHY comments explaining the change
-
-    class Docstring(BaseModel):
-        """Function docstring spec."""
-
-        function: str
-        docstring: str
-
-    class FunctionBlock(BaseModel):
-        """Function-level explanation block (Tier 2).
-
-        Covers design rationale, architecture context, system interaction
-        -- not just algorithms. Convention: documentation.md Tier 2.
-        """
-
-        function: str  # function name
-        comment: str
-        decision_ref: str | None = None
-        source: str | None = None  # invisible_knowledge provenance for QR completeness checks
-
-    class InlineComment(BaseModel):
-        """Inline WHY comment (Tier 1)."""
-
-        location: str  # function:line format
-        comment: str
-        decision_ref: str | None = None  # Optional DL-XXX cross-reference
-        source: str | None = None
-
-    class Documentation(BaseModel):
-        """Documentation enrichment for a milestone.
-
-        DEPRECATED: Use CodeChange.doc_diff instead. This metadata approach
-        disconnects documentation from code locations. Kept for backwards
-        compatibility with existing plans.
-        """
-
-        module_comment: str | None = None
-        docstrings: list[Docstring] = Field(default_factory=list)
-        function_blocks: list[FunctionBlock] = Field(default_factory=list)
-        inline_comments: list[InlineComment] = Field(default_factory=list)
-
-    class ReadmeEntry(BaseModel):
-        """Cross-cutting README content for a directory.
-
-        DEPRECATED: Use CodeChange with empty diff and doc_diff for README.
-        Kept for backwards compatibility with existing plans.
-        """
-
-        path: str  # directory path for README.md
-        content: str
-
     class Milestone(BaseModel):
         """Single implementation milestone."""
 
@@ -224,8 +191,6 @@ if True:
         acceptance_criteria: list[str] = Field(default_factory=list)
         tests: list[str] = Field(default_factory=list)  # Free-form test descriptions
         code_intents: list[CodeIntent] = Field(default_factory=list)
-        code_changes: list[CodeChange] = Field(default_factory=list)
-        documentation: Documentation = Field(default_factory=Documentation)
         is_documentation_only: bool = False
         delegated_to: str | None = None  # Agent name for delegation tracking
 
@@ -250,9 +215,8 @@ if True:
 
         plan_id: str = Field(default_factory=lambda: str(__import__("uuid").uuid4()))
         created_at: str = Field(
-            default_factory=lambda: __import__("datetime").datetime.utcnow().isoformat()
+            default_factory=lambda: datetime.now(UTC).isoformat()
         )
-        frozen_at: str | None = None  # Timestamp when plan execution began
 
         overview: Overview
         planning_context: PlanningContext = Field(default_factory=PlanningContext)
@@ -260,7 +224,6 @@ if True:
         milestones: list[Milestone] = Field(default_factory=list)
         waves: list[Wave] = Field(default_factory=list)
         diagram_graphs: list[DiagramGraph] = Field(default_factory=list)
-        readme_entries: list[ReadmeEntry] = Field(default_factory=list)
 
         def get_milestone(self, mid: str) -> Milestone | None:
             for ms in self.milestones:
@@ -281,12 +244,56 @@ if True:
                     return dl
             return None
 
-        def get_change(self, change_id: str):
-            for ms in self.milestones:
-                for cc in ms.code_changes:
-                    if cc.id == change_id:
-                        return ms, cc
-            return None, None
+        def code_milestones(self) -> list[Milestone]:
+            """Milestones that produce code (not is_documentation_only).
+
+            Consumed by impl-code decompose (render_code_milestone_scope injects
+            the explicit in-scope id list so the agent enumerates only these).
+            Verify enforces the same subset via its `jq select(.is_documentation_only
+            != true)` macro filter, and the executor needs no call because the
+            wave invariant (validate_completeness forbids a doc-only milestone in
+            any wave) already excludes them from developer dispatch.
+            """
+            return [ms for ms in self.milestones if not ms.is_documentation_only]
+
+        @staticmethod
+        def _next_numeric_id(existing_ids, prefix: str) -> str:
+            """Max-based 'PREFIX-NNN', skipping non-canonical/non-ASCII-digit suffixes.
+
+            Collision-safe after a pruned/hand-authored gap (see next_wave_id docstring).
+            """
+            nums = []
+            for eid in existing_ids:
+                head, _, suffix = eid.rpartition("-")
+                if head == prefix and suffix.isascii() and suffix.isdigit():
+                    nums.append(int(suffix))
+            return f"{prefix}-{max(nums, default=0) + 1:03d}"
+
+        def next_wave_id(self) -> str:
+            """Next contiguous W-NNN id, skipping non-canonical existing ids.
+
+            max()-based (not len()+1) because waves can be pruned (a doc-only
+            toggle drops an emptied wave), so len()+1 could collide with a
+            surviving id. A hand-authored/transcribed id like 'W1' or 'W-1a' is
+            skipped rather than crashing int(w.id.split('-')[1]). The isascii()
+            guard precedes isdigit() because str.isdigit() also accepts Unicode
+            numerics (e.g. '²', '½', '๓') that int() then rejects with
+            ValueError; restricting to ASCII keeps such a suffix skipped, not
+            crashing.
+            """
+            return self._next_numeric_id((w.id for w in self.waves), "W")
+
+        def next_milestone_id(self) -> str:
+            return self._next_numeric_id((m.id for m in self.milestones), "M")
+
+        def next_decision_id(self) -> str:
+            return self._next_numeric_id((d.id for d in self.planning_context.decisions), "DL")
+
+        def next_diagram_id(self) -> str:
+            return self._next_numeric_id((g.id for g in self.diagram_graphs), "DIAG")
+
+        def next_intent_id(self, ms) -> str:
+            return self._next_numeric_id((ci.id for ci in ms.code_intents), f"CI-{ms.id}")
 
         def validate_diagram_edges(self, diagram_id: str) -> list[str]:
             """Validate edges for a specific diagram."""
@@ -308,33 +315,76 @@ if True:
             Returns error list (empty = valid). Prevents dangling references
             that would break navigation/traceability.
             """
+            def _dup_id_errors(ids, label: str) -> list[str]:
+                seen: set[str] = set()
+                errors: list[str] = []
+                for i in ids:
+                    if i in seen:
+                        errors.append(f"duplicate {label} id '{i}'")
+                    seen.add(i)
+                return errors
+
             errors = []
             decision_ids = {dl.id for dl in self.planning_context.decisions}
+            milestone_ids = {ms.id for ms in self.milestones}
+
+            errors += _dup_id_errors((ms.id for ms in self.milestones), "milestone")
+            errors += _dup_id_errors((dl.id for dl in self.planning_context.decisions), "decision")
+            errors += _dup_id_errors((ci.id for ms in self.milestones for ci in ms.code_intents), "intent")
+            errors += _dup_id_errors((dg.id for dg in self.diagram_graphs), "diagram")
+
+            # Per-wave invariants in a single pass (id uniqueness, milestone refs,
+            # intra-wave file overlap). Each milestone's file set is the union of its
+            # declared files AND its code intents' target files, lexically normalized
+            # AND case-folded once so the overlap check compares physical files, not
+            # spellings -- a case-insensitive checkout (macOS/Windows) resolves
+            # 'src/App.py' and 'src/app.py' to one file, so they must collide here too.
+            # Intents are folded in because the executor dispatches one developer per
+            # milestone, and that developer writes every file across the milestone's
+            # code_intents[]: a missing or stale Milestone.files must not let two
+            # milestones whose intent targets collide co-schedule in one wave (their two
+            # developers would then race on the shared file mid-write).
+            milestone_files = {
+                ms.id: {
+                    os.path.normpath(f).casefold()
+                    for f in (*ms.files, *(ci.file for ci in ms.code_intents))
+                    if f
+                }
+                for ms in self.milestones
+            }
+            errors += _dup_id_errors((w.id for w in self.waves), "wave")
+            for w in self.waves:
+                # Waves are first-class milestone cross-references (executor IR): a
+                # wave listing a nonexistent milestone would silently drop it from
+                # execution.
+                for mid in w.milestones:
+                    if mid not in milestone_ids:
+                        errors.append(f"wave {w.id} references unknown milestone '{mid}'")
+
+                # Two milestones in one wave run as concurrent developer agents; if
+                # they touch the same file they corrupt it mid-write.
+                # Compare the normalized file sets built above (declared files plus
+                # intent targets) so 'src/a.py' and './src/a.py' cannot evade the
+                # check. Dedupe to distinct resolvable ids: a milestone listed twice
+                # is a coverage issue (caught by validate_completeness), not a
+                # self-overlap, and each pair is reported once. Dangling refs are
+                # reported above.
+                resolved = list(
+                    dict.fromkeys(mid for mid in w.milestones if mid in milestone_files)
+                )
+                for a, b in itertools.combinations(resolved, 2):
+                    shared = milestone_files[a] & milestone_files[b]
+                    if shared:
+                        errors.append(
+                            f"wave {w.id} co-schedules {a} and {b} which share "
+                            f"file(s): {', '.join(sorted(shared))}"
+                        )
 
             for ms in self.milestones:
-                intent_ids = {ci.id for ci in ms.code_intents}
-                for cc in ms.code_changes:
-                    if cc.intent_ref and cc.intent_ref not in intent_ids:
-                        errors.append(
-                            f"code_change.intent_ref '{cc.intent_ref}' not in "
-                            f"milestone {ms.id} code_intents"
-                        )
                 for ci in ms.code_intents:
                     for dref in ci.decision_refs:
                         if dref not in decision_ids:
                             errors.append(f"{ci.id}.decision_refs '{dref}' not in decisions")
-                for ic in ms.documentation.inline_comments:
-                    if ic.decision_ref and ic.decision_ref not in decision_ids:
-                        errors.append(
-                            f"milestone {ms.id} inline_comment decision_ref "
-                            f"'{ic.decision_ref}' not in decisions"
-                        )
-                for fb in ms.documentation.function_blocks:
-                    if fb.decision_ref and fb.decision_ref not in decision_ids:
-                        errors.append(
-                            f"milestone {ms.id} function_block decision_ref "
-                            f"'{fb.decision_ref}' not in decisions"
-                        )
 
             for ra in self.planning_context.rejected_alternatives:
                 if ra.decision_ref not in decision_ids:
@@ -359,47 +409,89 @@ if True:
 
             return errors
 
+        def validate_structural_executability(self) -> list[str]:
+            """Wave/intent topology the executor requires (phase-independent).
+
+            The structural invariant the executor enforces before dispatch: at
+            least one milestone, the doc-only/code-intent exclusivity, and wave
+            coverage (every code milestone in exactly one wave, no doc-only
+            milestone in any wave). Excludes the plan-design prose check
+            (overview.problem), which is not an executability concern -- so the
+            executor calls this directly instead of borrowing the foreign
+            "plan-design" phase name from validate_completeness.
+            """
+            errors = []
+            if not self.milestones:
+                errors.append("at least one milestone required")
+            for ms in self.milestones:
+                # Documentation-only milestones carry no code_intents; the
+                # Technical Writer authors their docs at exec time (impl-docs).
+                # The relationship is exclusive both ways so routing stays
+                # unambiguous: doc-only => no code to implement; code => intent.
+                if ms.is_documentation_only:
+                    if ms.code_intents:
+                        errors.append(
+                            f"milestone {ms.id} is documentation-only but has code_intents"
+                        )
+                elif not ms.code_intents:
+                    errors.append(f"milestone {ms.id} needs at least one code_intent")
+
+            # Waves drive the executor's parallel developer dispatch, which covers
+            # code milestones only; doc-only milestones route to exec-docs instead.
+            # Require every code milestone in exactly one wave and no doc-only
+            # milestone in any wave, so execution neither drops nor mis-routes one.
+            # Completeness-only (not validate_refs): the planner saves partial plans
+            # mid-build, where waves are authored after milestones.
+            code_ids = {ms.id for ms in self.milestones if not ms.is_documentation_only}
+            doc_only_ids = {ms.id for ms in self.milestones if ms.is_documentation_only}
+            wave_counts: dict[str, int] = {}
+            for w in self.waves:
+                for mid in w.milestones:
+                    wave_counts[mid] = wave_counts.get(mid, 0) + 1
+            for mid in sorted(code_ids):
+                count = wave_counts.get(mid, 0)
+                if count == 0:
+                    errors.append(f"milestone {mid} is not assigned to any wave")
+                elif count > 1:
+                    errors.append(f"milestone {mid} appears in multiple waves")
+            for mid in sorted(doc_only_ids):
+                if wave_counts.get(mid, 0) > 0:
+                    errors.append(
+                        f"documentation-only milestone {mid} must not appear in a "
+                        f"wave (routes to exec-docs)"
+                    )
+            return errors
+
         def validate_completeness(self, phase: str) -> list[str]:
-            """Phase-specific completeness validation."""
+            """Phase-specific completeness validation.
+
+            For plan-design this is the prose check (overview.problem) plus the
+            phase-independent structural invariant in
+            validate_structural_executability(). Other phases have no rule and
+            return []. Error ordering is unchanged from the inlined version:
+            overview.problem first, then the structural errors.
+            """
             errors = []
             if phase == "plan-design":
                 if not self.overview.problem:
                     errors.append("overview.problem required")
-                if not self.milestones:
-                    errors.append("at least one milestone required")
-                for ms in self.milestones:
-                    if not ms.code_intents:
-                        errors.append(f"milestone {ms.id} needs at least one code_intent")
-            elif phase == "plan-code":
-                for ms in self.milestones:
-                    intent_ids = {ci.id for ci in ms.code_intents}
-                    change_refs = {cc.intent_ref for cc in ms.code_changes}
-                    missing = intent_ids - change_refs
-                    if missing:
-                        errors.append(
-                            f"milestone {ms.id} missing code_changes for: "
-                            f"{', '.join(sorted(missing))}"
-                        )
-            elif phase == "plan-docs":
-                for ms in self.milestones:
-                    for cc in ms.code_changes:
-                        # Every code_change with diff should have doc_diff
-                        if cc.diff and not cc.doc_diff:
-                            errors.append(f"{cc.id}: has code diff but no doc_diff")
-                        # doc_diff must be valid unified diff format if present
-                        if cc.doc_diff and not cc.doc_diff.strip().startswith(
-                            ("---", "@@", "diff")
-                        ):
-                            errors.append(f"{cc.id}: doc_diff must be valid unified diff format")
-                        # At least one must be non-empty
-                        if not cc.diff and not cc.doc_diff:
-                            errors.append(f"{cc.id}: must have diff or doc_diff (both empty)")
+                errors.extend(self.validate_structural_executability())
             return errors
 
 
 # =============================================================================
 # QR Schema (qr-{phase}.json)
 # =============================================================================
+
+# Every character that can break a line: the C0 controls (0x00-0x1F, a superset of
+# str.splitlines() line breaks), plus DEL (0x7F) and the Unicode line separators
+# NEL (0x85), LS (0x2028), PS (0x2029).  Any of them in a field rendered into a
+# PLAINTEXT agent prompt can forge a column-0 instruction line.  Identity fields
+# reject them outright (QRItem._reject_control_chars); free-text sinks neutralize
+# them while keeping a legitimate newline (qr/utils._fix_field_safe).  Single owner
+# so the validator and neutralizer cannot drift.
+LINE_FORGING_ORDS = frozenset(range(0x20)) | {0x7F, 0x85, 0x2028, 0x2029}
+
 
 if True:
 
@@ -416,36 +508,56 @@ if True:
         group_id: str | None = None
         severity: Literal["MUST", "SHOULD", "COULD"] = "SHOULD"
 
+        @field_validator("severity", mode="before")
+        @classmethod
+        def _normalize_severity(cls, v: object) -> str:
+            """Coerce severity on ingest; never aborts the run.
+
+            Delegates to canonicalize_severity (MUST/SHOULD/COULD plus the
+            high-severity synonyms BLOCKER/CRITICAL -> MUST). A strict Literal
+            that aborted validate_state -- and with it the whole
+            planner/executor run -- would be more brittle than the behaviour it
+            guards, so a genuinely-unknown token defaults to SHOULD rather than
+            raising.
+            """
+            return canonicalize_severity(v) or "SHOULD"
+
+        @field_validator("id", "scope", mode="after")
+        @classmethod
+        def _reject_control_chars(cls, v: str, info: ValidationInfo) -> str:
+            """Reject line-forging control/separator characters in id/scope.
+
+            A decompose-authored newline (or any line break -- see
+            LINE_FORGING_ORDS, incl. the Unicode separators NEL/LS/PS) here forges a
+            line at column 0 of a PLAINTEXT agent prompt.  id reaches the parallel
+            QR-verify dispatch (build_qr_verify_dispatch -> item_ids / qr_item_flags),
+            where a forged '--- Agent N ---' line hijacks the verify fan-out; scope
+            reaches the single-agent decompose/fix item listings (e.g. decompose's
+            '{id} [scope={scope}]'), where it forges a fake item row.  id is also a
+            lookup key (find_item / --qr-item), so it must be rejected, not silently
+            rewritten.  check and finding are free-text fields neutralized at every
+            sink (qr/utils._fix_field_safe and format_qr_item_for_verification);
+            rejecting them here would regress legitimate multi-line content.
+            validate_state runs this at step>1 entry, before any prompt renders, so
+            a malformed item fails the run closed.
+            """
+            if any(ord(c) in LINE_FORGING_ORDS for c in v):
+                raise ValueError(
+                    f"{info.field_name} must be single-line plain text "
+                    "(contains a control character)"
+                )
+            return v
+
     class QRFile(BaseModel):
         """qr-{phase}.json file structure."""
 
         phase: str
         iteration: int = 1
+        # Fingerprint of the recorded FAIL set at the last RETRY iteration bump.
+        # Idempotency key so a transient verify re-render doesn't double-count one
+        # fix cycle (see prepare_verify_items / increment_qr_iteration).
+        iteration_sig: str | None = None
         items: list[QRItem] = Field(default_factory=list)
-
-
-# =============================================================================
-# QR Schema Helpers (moved from shared/qr/schema.py)
-# =============================================================================
-
-QA_ITEM_SCHEMA_TEMPLATE = """{
-  "id": "{id_example}",
-  "scope": "*" or "file:path:lines",
-  "check": "Description of what was checked",
-  "status": "TODO",
-  "version": 1,
-  "finding": null
-}"""
-
-
-def get_qa_state_schema_example(phase: str, id_prefix: str = "qa") -> str:
-    """Generate schema example for prompts."""
-    return f'''{{
-  "phase": "{phase}",
-  "items": [
-    {QA_ITEM_SCHEMA_TEMPLATE.format(id_example=f"{id_prefix}-001")}
-  ]
-}}'''
 
 
 # =============================================================================
@@ -463,42 +575,125 @@ class SchemaValidationError(Exception):
 def _plan_post_validate(plan: Plan) -> list[str]:
     return plan.validate_refs()
 
+
 _schema_registry: dict = {
     "context.json": (Context, None),
     "plan.json": (Plan, _plan_post_validate),
 }
 
 
-def validate_state(state_dir: str) -> None:
-    """Validate all state files in state_dir.
+def validate_state(state_dir: str) -> tuple[Plan | None, dict[str, QRFile]]:
+    """Validate all state files in state_dir; return the parsed plan.json and qr dicts.
 
     Raises SchemaValidationError on first validation failure.
     Call at start of every planner/executor step and after CLI mutations.
+
+    Returns the validated Plan when plan.json is present, so a caller that needs
+    the plan (the executor's structural-executability gate) reuses this parse
+    instead of re-reading the file; returns None when plan.json is absent.
+    Callers that only validate may ignore the return value.
+
+    Also returns a dict of phase -> raw qr-{phase}.json dict, already parsed
+    and validated, so the orchestrator's gate path avoids a second load.
     """
     state_path = Path(state_dir)
+    plan: Plan | None = None
 
     for filename, (model, post_validate) in _schema_registry.items():
         path = state_path / filename
         if not path.exists():
             continue
         try:
-            data = json.loads(path.read_text())
+            data = json.loads(path.read_text(encoding="utf-8"))
             obj = model.model_validate(data)
             if post_validate:
                 errors = post_validate(obj)
                 if errors:
                     raise SchemaValidationError(f"{filename}: {errors}")
+            if filename == "plan.json":
+                plan = obj
         except SchemaValidationError:
             raise
         except Exception as e:
             raise SchemaValidationError(f"{filename}: {e}") from e
 
-    for path in state_path.glob("qr-*.json"):
+    # Validate only the canonical qr-{phase}.json files. A decompose agent can
+    # leave non-canonical scratch files (e.g. qr-items.json, qr-items-draft.json)
+    # in the state dir; a bare `qr-*.json` glob would validate those as QRFile
+    # dicts, and a list-shaped scratch file fails QRFile validation
+    # ("Input should be a valid dictionary ... input_type=list").
+    # Restricting to the known phases ignores any non-canonical file by construction.
+    qr_states: dict[str, QRFile] = {}
+    for phase in get_all_phases():
+        path = state_path / f"qr-{phase}.json"
+        if not path.exists():
+            continue
         try:
-            data = json.loads(path.read_text())
-            QRFile.model_validate(data)
+            data = json.loads(path.read_text(encoding="utf-8"))
+            qr_file = QRFile.model_validate(data)
+            qr_states[phase] = qr_file
+        except json.JSONDecodeError:
+            # Truncated/partial canonical file from a non-atomic decompose Write, or
+            # raw control chars (json rejects both). Remove the corrupt file so the
+            # next decompose recreates it; a bare existence check would skip it and
+            # the verify→decompose route-back loop would cycle indefinitely. A
+            # *parseable* but schema-invalid file (e.g. a forged item) is instead
+            # rejected by model_validate -> SchemaValidationError -- the security
+            # boundary before the verify fan-out renders it.
+            try:
+                path.unlink(missing_ok=True)
+            except OSError as e:
+                print(
+                    f"WARNING: Failed to remove corrupt QR file {path}: {e}",
+                    file=sys.stderr,
+                )
+                pass
+            continue
         except Exception as e:
             raise SchemaValidationError(f"{path.name}: {e}") from e
+
+    return plan, qr_states
+
+
+def plan_completeness_errors(
+    state_dir: str,
+    phase: str,
+    suppress_if_no_milestones: bool = False,
+    plan: Plan | None = None,
+) -> list[str]:
+    """Load plan.json and return its validate_completeness errors ([] when N/A).
+
+    Shared by the QR gate (which vetoes a QR-pass on a structurally incomplete
+    plan) and the architect router (which surfaces the same gaps to the
+    re-dispatched architect), so the two read the contract from one place.
+    Tolerant of a missing/unparseable plan.json -- validate_state already gates
+    schema validity at step entry, so this layers only the phase completeness
+    check; returns [] for phases without a completeness rule (impl-code/docs).
+
+    The gate veto and the executor's step>1 guard call this to fail CLOSED: an
+    empty/partial plan ("at least one milestone required") is a real completeness
+    error they must reject. Only the architect router opts into
+    suppress_if_no_milestones=True, because at step 1 an empty skeleton is
+    genuine first-time execution (not a repairable gap) and it prints
+    "First-time execution" rather than surfacing spurious completeness errors.
+
+    Pass `plan` when the caller already parsed plan.json (the gate threads its
+    validate_state parse down) to skip the redundant disk read+parse; when None,
+    this loads plan.json itself, tolerating a missing/unparseable file as above.
+    """
+    if not (state_dir and phase):
+        return []
+    if plan is None:
+        path = Path(state_dir) / "plan.json"
+        if not path.exists():
+            return []
+        try:
+            plan = Plan.model_validate(json.loads(path.read_text(encoding="utf-8")))
+        except Exception:
+            return []
+    if suppress_if_no_milestones and not plan.milestones:
+        return []
+    return plan.validate_completeness(phase)
 
 
 # =============================================================================
@@ -507,13 +702,8 @@ def validate_state(state_dir: str) -> None:
 
 __all__ = [
     "PYDANTIC_AVAILABLE",
-    "QA_ITEM_ALL_FIELDS",
     # QR constants
     "QA_ITEM_DEFAULTS",
-    "QA_ITEM_OPTIONAL_FIELDS",
-    "QA_ITEM_REQUIRED_FIELDS",
-    "QA_ITEM_SCHEMA_TEMPLATE",
-    "CodeChange",
     "CodeIntent",
     # Models
     "Context",
@@ -521,10 +711,6 @@ __all__ = [
     "DiagramEdge",
     "DiagramGraph",
     "DiagramNode",
-    "Docstring",
-    "Documentation",
-    "FunctionBlock",
-    "InlineComment",
     "InvisibleKnowledge",
     "Milestone",
     "Overview",
@@ -532,11 +718,11 @@ __all__ = [
     "PlanningContext",
     "QRFile",
     "QRItem",
-    "ReadmeEntry",
     "RejectedAlternative",
     "Risk",
     "SchemaValidationError",
     "Wave",
-    "get_qa_state_schema_example",
+    "canonicalize_severity",
+    "plan_completeness_errors",
     "validate_state",
 ]

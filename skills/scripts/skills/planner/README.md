@@ -21,7 +21,7 @@ All state mutations (except initial context.json) happen via Python CLI commands
 
 | File              | Schema         | Created     | Mutated By     | Lifecycle              |
 | ----------------- | -------------- | ----------- | -------------- | ---------------------- |
-| `plan.json`       | Pydantic v2    | Step 1 init | CLI commands   | mutable -> frozen      |
+| `plan.json`       | Pydantic v2    | Step 1 init | CLI commands   | mutable                |
 | `context.json`    | Loose JSON     | Step 2      | LLM Write tool | frozen after step 2    |
 | `qr-{phase}.json` | QA item schema | QR dispatch | LLM during QR  | ephemeral per QR cycle |
 
@@ -29,39 +29,34 @@ All state mutations (except initial context.json) happen via Python CLI commands
 
 ```
 Plan
-  schema_version: 2
-  plan_id: UUID
-  created_at: timestamp
-  frozen_at: Optional[timestamp]
+  plan_id: UUID                      (auto)
+  created_at: ISO-8601 timestamp     (auto)
 
   overview:
-    title, problem, approach
+    problem, approach
 
   planning_context:
-    decision_log[]: id (DL-XXX), decision, reasoning_chain, timestamp
+    decisions[] (input alias: decision_log): id (DL-XXX), version, decision, reasoning   (reasoning <- reasoning_chain)
     rejected_alternatives[]: id (RA-XXX), alternative, rejection_reason, decision_ref
-    constraints[]: id (C-XXX), type, description, source
-    known_risks[]: id (R-XXX), risk, mitigation, anchor?, decision_ref?
+    constraints[]: plain strings (no IDs/types)
+    risks[]: id (R-XXX), risk, mitigation, anchor?, decision_ref?   (input alias: known_risks)
 
   invisible_knowledge:
-    architecture: {diagram_ascii, description}
-    data_flow: {diagram_ascii, description}
-    structure_rationale, invariants[], tradeoffs[]
+    system, invariants[], tradeoffs[]   (diagrams live in diagram_graphs, not here)
 
   milestones[]:
-    id (M-XXX), number, name, files[], flags[], requirements[], acceptance_criteria[]
-    tests: files[], type?, backing?, scenarios{normal[], edge[], error[]}, skip_reason?
-    code_intents[]: id (CI-XXX), file, function?, behavior, decision_refs[], params{}
-    code_changes[]: id (CC-XXX), intent_ref, file, diff, context_lines, why_comments[]
-    documentation: module_comment?, docstrings[], algorithm_blocks[], inline_comments[]
+    id (M-XXX), version, number, name, files[], flags[], requirements[], acceptance_criteria[]
+    tests[]: flat list of free-form descriptions
+    code_intents[]: id (CI-XXX), version, file, function?, behavior, decision_refs[]
     is_documentation_only, delegated_to?
 
-  milestone_dependencies:
-    diagram_ascii
-    waves[]: wave number, milestones[]
+  waves[]: id (W-XXX), milestones[]   (top-level; no separate milestone_dependencies block)
+  diagram_graphs[]: id (DIAG-XXX), type, scope, title, nodes[], edges[], ascii_render?
 ```
 
-Reference integrity: code_change.intent_ref -> code_intent.id, decision_refs -> decision_log.id
+Reference integrity: code_intent.decision_refs -> decisions[].id.
+Authoritative schema: `resources/plan-json-schema.md` (mirrors `shared/schema.py`).
+No `schema_version` field -- state files are ephemeral (one planning session).
 
 ### context.json Schema
 
@@ -82,12 +77,12 @@ User-provided context captured during planning:
 
 ### qr-{phase}.json Schema
 
-Phases: `qr-plan-design`, `qr-plan-code`, `qr-plan-docs`, `qr-impl-code`, `qr-impl-docs`
+Phases: `qr-plan-design`, `qr-impl-code`, `qr-impl-docs`
 
 ```json
 {
-  "schema_version": "1.0",
   "phase": "plan-design",
+  "iteration": 1,
   "items": [
     {
       "id": "qa-001",
@@ -102,67 +97,64 @@ Phases: `qr-plan-design`, `qr-plan-code`, `qr-plan-docs`, `qr-impl-code`, `qr-im
 
 ## Workflow Phases and Mutations
 
-### Planner Workflow (11 steps)
+### Planner Workflow (6 steps)
 
-| Step | Name                | Pattern Function          | Mutates              | Agent        |
-| ---- | ------------------- | ------------------------- | -------------------- | ------------ |
-| 1    | plan-init           | `init_step()`             | Creates plan.json    | Orchestrator |
-| 2    | context-verify      | `verify_step()`           | Creates context.json | Orchestrator |
-| 3    | plan-design-execute | `execute_dispatch_step()` | plan.json            | Architect    |
-| 4    | plan-design-qr      | `qr_dispatch_step()`      | qr-plan-design.json  | QR           |
-| 5    | plan-design-qr-gate | `qr_gate_step()`          | -                    | Orchestrator |
-| 6    | plan-code-execute   | `execute_dispatch_step()` | plan.json            | Developer    |
-| 7    | plan-code-qr        | `qr_dispatch_step()`      | qr-plan-code.json    | QR           |
-| 8    | plan-code-qr-gate   | `qr_gate_step()`          | -                    | Orchestrator |
-| 9    | plan-docs-execute   | `execute_dispatch_step()` | plan.json            | TW           |
-| 10   | plan-docs-qr        | `qr_dispatch_step()`      | qr-plan-docs.json    | QR           |
-| 11   | plan-docs-qr-gate   | `qr_gate_step()`          | Sets frozen_at       | Orchestrator |
+| Step | Name                    | Pattern Function          | Mutates              | Agent        |
+| ---- | ----------------------- | ------------------------- | -------------------- | ------------ |
+| 1    | plan-init               | `init_step()`             | Creates plan.json    | Orchestrator |
+| 2    | context-verify          | `verify_step()`           | Creates context.json | Orchestrator |
+| 3    | plan-design-work        | `execute_dispatch_step()` | plan.json            | Architect    |
+| 4    | plan-design-qr-decompose| `qr_decompose_step()`     | qr-plan-design.json  | QR           |
+| 5    | plan-design-qr-verify   | `qr_verify_step()`        | qr-plan-design.json  | QR           |
+| 6    | plan-design-qr-route    | `qr_route_step()`         | Renders plan.md (PASS) | Orchestrator |
+
+Terminal on PASS at step 6: **PLAN APPROVED**.
 
 **Mutation details**:
 
-- Step 3 (Architect): Populates planning_context, milestones[], code_intents[], invisible_knowledge
-- Step 6 (Developer): Populates code_changes[] per milestone
-- Step 9 (TW): Populates documentation[] per milestone, creates plan.md
+- Step 3 (Architect): Populates planning_context, milestones[], code_intents[], invisible_knowledge, renders diagram ASCII via `cli.plan set-diagram-render`
 
-### Executor Workflow (9 steps)
+Code Intent (`code_intents[]`) is the binding behavioral contract. There are no plan-time unified diffs. At execution the developer regenerates implementation just-in-time per wave against the live file from Code Intent.
+
+### Executor Workflow (10 steps)
 
 | Step | Name              | Mutates           | Agent        |
 | ---- | ----------------- | ----------------- | ------------ |
 | 1    | init              | -                 | Orchestrator |
 | 2    | load-verify       | -                 | Orchestrator |
 | 3    | impl-execute      | Codebase files    | Developer    |
-| 4    | impl-code-qr      | qr-impl-code.json | QR           |
-| 5    | impl-code-qr-gate | -                 | Orchestrator |
-| 6    | impl-docs-execute | Codebase docs     | TW           |
-| 7    | impl-docs-qr      | qr-impl-docs.json | QR           |
-| 8    | impl-docs-qr-gate | -                 | Orchestrator |
-| 9    | reconcile         | -                 | QR           |
+| 4    | impl-code-qr-decompose | qr-impl-code.json | QR      |
+| 5    | impl-code-qr-verify   | qr-impl-code.json | QR      |
+| 6    | impl-code-qr-gate | -                 | Orchestrator |
+| 7    | impl-docs-execute | Codebase docs     | TW           |
+| 8    | impl-docs-qr-decompose | qr-impl-docs.json | QR     |
+| 9    | impl-docs-qr-verify   | qr-impl-docs.json | QR     |
+| 10   | impl-docs-qr-gate | -                 | Orchestrator |
+
+impl-code QR is the single authoritative code review. exec-docs (impl-docs phase) authors ALL documentation directly in the real implemented source (inline comments, docstrings from Decision Log + Invisible Knowledge, plus CLAUDE.md and README).
 
 ## Components
 
 ```
 orchestrator/
-  planner.py      11-step planning workflow
-  executor.py     9-step execution workflow
+  planner.py      6-step planning workflow
+  executor.py     10-step execution workflow
 
 architect/
-  plan_design.py  Plan creation (exploration, milestones, code_intents)
+  plan_design.py  Plan creation (exploration, milestones, code_intents, diagram render)
 
 developer/
-  plan_code.py    Code Intent -> Code Changes (unified diffs)
-  exec_implement.py  Wave-aware implementation
+  exec_implement.py  Wave-aware implementation (just-in-time from code_intents)
 
 technical_writer/
-  plan_docs.py    Documentation planning (WHY comments, temporal cleanup)
-  exec_docs.py    Post-implementation docs (CLAUDE.md, README.md)
+  exec_docs.py    Post-implementation docs (inline comments, docstrings, CLAUDE.md, README)
 
 quality_reviewer/
-  plan_design_qr.py   Plan completeness validation
-  plan_code_qr.py     Code diff validation
-  plan_docs_qr.py     Documentation quality
-  impl_code_qr.py     Post-impl code review
-  impl_docs_qr.py     Post-impl doc review
-  exec_reconcile.py   Plan vs implementation reconciliation
+  qr_decompose.py              QR decompose runner (--phase plan-design|impl-code|impl-docs)
+  qr_verify.py                 QR verify runner (--phase ...)
+  qr_verify_base.py            VerifyBase ABC + verify_main
+  prompts/content.py           Per-phase decompose prompts + verifier classes
+  prompts/decompose.py         Shared 13-step decompose flow (dispatch_step)
 
 shared/
   resources.py    Path derivation, context loading
@@ -198,6 +190,10 @@ Blocking severity by iteration:
 | 3         | MUST, SHOULD        |
 | 4+        | MUST only           |
 
+Each orchestrator runs QR as a 4-step block per phase — work → decompose → verify
+(N parallel) → gate. The planner has one QR phase (plan-design); the executor has
+two (impl-code, impl-docs).
+
 ## Step Handler Architecture
 
 Closures capture static config, handlers receive dynamic state:
@@ -210,9 +206,10 @@ def execute_dispatch_step(title, agent, script, ...):
 
 STEPS = {
     1: init_step("plan-init", ...),
-    3: execute_dispatch_step("plan-design-execute", agent="architect", ...),
-    4: qr_dispatch_step("plan-design-qr", ...),
-    5: qr_gate_step("plan-design-qr-gate", ...),
+    3: execute_dispatch_step("plan-design-work", agent="architect", ...),
+    4: qr_decompose_step("plan-design-qr-decompose", ...),
+    5: qr_verify_step("plan-design-qr-verify", ...),
+    6: qr_route_step("plan-design-qr-route", ...),
 }
 ```
 
@@ -230,11 +227,13 @@ STEPS = {
 
 **No temp directory cleanup**: OS handles /tmp cleanup on reboot.
 
+**Fix-mode routing**: routers call `route_work_phase()` (`shared/routing.py`) to detect fix
+mode from `qr-{phase}.json` state — no `--qr-fail` flag is threaded.
+
 ## Invariants
 
 1. Every skill entry point defines exactly ONE Workflow
 2. discover_workflows() finds all Workflows without import errors
 3. plan.json is self-contained for execution
-4. Frozen plan.json is immutable (frozen_at timestamp means no writes)
-5. qr-{phase}.json files are ephemeral (exist only during QR cycle)
-6. QR iteration blocking: iter 1-2 all; iter 3 MUST/SHOULD; iter 4+ MUST only
+4. qr-{phase}.json files are ephemeral (exist only during QR cycle)
+5. QR iteration blocking: iter 1-2 all; iter 3 MUST/SHOULD; iter 4+ MUST only

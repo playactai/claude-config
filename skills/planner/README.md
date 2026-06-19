@@ -10,45 +10,38 @@ these problems early.
 ## Planning Workflow
 
 ```
-  Planning ----+
-      |        |
-      v        |
-     QR -------+  [fail: restart planning]
+  plan-init → context-verify → plan-design-work (Architect)
       |
       v
-     TW -------+
-      |        |
-      v        |
-   QR-Docs ----+  [fail: restart TW]
+  plan-design-qr-decompose → plan-design-qr-verify
       |
       v
-   APPROVED
+  plan-design-qr-route ----+
+      |                    |
+      v                    |
+   APPROVED         [fail: restart plan-design-work]
 ```
 
 | Step                    | Actions                                                                    |
 | ----------------------- | -------------------------------------------------------------------------- |
 | Context & Scope         | Confirm path, define scope, identify approaches, list constraints          |
-| Decision & Architecture | Evaluate approaches, select with reasoning, diagram, break into milestones |
-| Refinement              | Document risks, add uncertainty flags, specify paths and criteria          |
-| Final Verification      | Verify completeness, check specs, write to file                            |
-| QR-Completeness         | Verify Decision Log complete, policy defaults confirmed, plan structure    |
-| QR-Code                 | Read codebase, verify diff context, apply RULE 0/1/2 to proposed code      |
-| Technical Writer        | Scrub temporal comments, add WHY comments, enrich rationale                |
-| QR-Docs                 | Verify no temporal contamination, comments explain WHY not WHAT            |
+| Decision & Architecture | Evaluate approaches, select with reasoning, diagram (rendered by architect), break into milestones |
+| Code Intents            | Author `code_intents[]` — the binding behavioral contract per milestone    |
+| QR-Design               | Verify Decision Log complete, plan structure, code intents are sufficient  |
 
-So, why all the feedback loops? QR-Completeness and QR-Code run before TW to
-catch structural issues early. QR-Docs runs after TW to validate documentation
-quality. Doc issues restart only TW; structure issues restart planning. The loop
-runs until both pass.
+The architect renders the dependency diagram ASCII via `cli.plan set-diagram-render`.
+Code Intent is the durable contract: no plan-time unified diffs are produced.
+At execution, the developer regenerates implementation just-in-time per wave against
+the live file from Code Intent.
 
 ## Execution Workflow
 
 ```
-  Plan --> Milestones --> QR --> Docs --> Retrospective
-               ^          |
-               +- [fail] -+
+  Plan --> Milestones --> impl-code QR --> exec-docs --> impl-docs QR
+               ^               |
+               +--- [fail] ----+
 
-  * Reconciliation phase precedes Milestones when resuming partial work
+  * impl-code QR is the single authoritative code review
 ```
 
 After planning completes and context clears (`/clear`), execution proceeds:
@@ -56,30 +49,19 @@ After planning completes and context clears (`/clear`), execution proceeds:
 | Step                   | Purpose                                                         |
 | ---------------------- | --------------------------------------------------------------- |
 | Execution Planning     | Analyze plan, detect reconciliation signals, output strategy    |
-| Reconciliation         | (conditional) Validate existing code against plan               |
-| Milestone Execution    | Delegate to agents, run tests; repeat until all complete        |
-| Post-Implementation QR | Quality review of implemented code                              |
+| Milestone Execution    | Delegate to developers; just-in-time impl per wave from Code Intent |
+| Post-Implementation QR | Authoritative code review of implemented code                   |
 | Issue Resolution       | (conditional) Present issues, collect decisions, delegate fixes |
-| Documentation          | Technical writer updates CLAUDE.md/README.md                    |
-| Retrospective          | Present execution summary                                       |
+| exec-docs              | Technical writer authors ALL docs in real source (inline comments, docstrings from Decision Log + Invisible Knowledge, CLAUDE.md, README) |
+| impl-docs QR           | Quality review of authored documentation                        |
 
-I designed the coordinator to never write code directly -- it delegates to
-developers. Separating coordination from implementation produces cleaner
-results. The coordinator:
+The coordinator never writes code directly — it delegates to developers.
+The developer adds no comments; all documentation authorship belongs to exec-docs.
 
 - Parallelizes independent work across up to 4 developers per milestone
-- Runs quality review after all milestones complete
+- Runs impl-code QR after all milestones complete
 - Loops through issue resolution until QR passes
-- Invokes technical writer only after QR passes
-
-**Reconciliation** handles resume scenarios. When the user request contains
-signals like "already implemented", "resume", or "partially complete", the
-workflow validates existing code against plan requirements before executing
-remaining milestones. Building on unverified code means rework.
-
-**Issue Resolution** presents each QR finding individually with options (Fix /
-Skip / Alternative). Fixes delegate to developers or technical writers, then QR
-runs again. This cycle repeats until QR passes.
+- Invokes exec-docs only after QR passes
 
 ## Invisible Knowledge
 
@@ -100,7 +82,7 @@ Simpler schema means less for LLMs to get wrong when writing decisions.
 
 ### Why per-phase qr-<phase>.json instead of single qa.json
 
-Separate qr-<phase>.json files (qr-plan-structure.json, qr-plan-code.json, qr-plan-docs.json, qr-impl-code.json, qr-impl-docs.json) prevent cross-phase contamination. With a single qa.json:
+Separate qr-<phase>.json files (qr-plan-design.json, qr-impl-code.json, qr-impl-docs.json) prevent cross-phase contamination. With a single qa.json:
 
 - Plan QR items mix with implementation QR items (confusing for fixers)
 - Verification scope unclear (which phase is this item checking?)
@@ -112,6 +94,6 @@ Per-phase files allow independent verification cycles with clear boundaries. Eac
 
 Key fields in plan.json:
 
-- milestones[].documentation.function_blocks[] (Tier 2 function-level rationale)
-- milestones[].documentation.inline_comments[] (Tier 1 WHY comments)
-- readme_entries[] (cross-cutting architecture spanning milestones)
+- milestones[].code_intents[] — binding behavioral contract (CI-XXX ids, behavior, decision_refs)
+- planning_context.decision_log[] — decisions referenced by code_intents at execution
+- invisible_knowledge — architecture/data-flow diagrams and rationale (sourced by exec-docs)

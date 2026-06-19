@@ -18,6 +18,7 @@ import shlex
 import sys
 from enum import Enum
 from pathlib import Path
+from xml.sax.saxutils import quoteattr
 
 from skills.lib.workflow.ast import (
     CurrentActionNode,
@@ -35,6 +36,7 @@ from skills.lib.workflow.core import (
     StepDef,
     Workflow,
 )
+from skills.lib.workflow.prompts.step import pin_cwd
 
 
 class DocumentAvailability(Enum):
@@ -54,6 +56,19 @@ class DocumentAvailability(Enum):
 # Module paths for -m invocation
 MODULE_PATH = "skills.refactor.refactor"
 EXPLORE_MODULE_PATH = "skills.refactor.explore"
+
+
+def _invoke_tag(cmd: str) -> str:
+    """Render a well-formed <invoke> directive for the refactor workflow.
+
+    pin_cwd prefixes an absolute ``cd`` into SKILLS_DIR so a sub-agent whose cwd
+    has drifted still resolves the ``skills`` package (matches dispatch_renderer.py;
+    a relative working-dir attr fails with "No module named 'skills'"). quoteattr
+    then escapes the whole command so a --scope path containing XML metacharacters
+    (&, <, ") cannot break out of the attribute and malform the directive. Matches
+    the escaping render_invoke_after already applies to InvokeAfterNode commands.
+    """
+    return f"<invoke cmd={quoteattr(pin_cwd(cmd))} />"
 
 # Default number of code smell categories to explore per analysis run
 DEFAULT_CATEGORY_COUNT = 10
@@ -232,25 +247,31 @@ def build_explore_dispatch(
         for t in selected
     )
 
-    # Scope propagation to explore agents
-    scope_arg = f" --scope {shlex.quote(scope)}" if scope else ""
+    # Scope propagation to explore agents. Double every $ so the safe_substitute
+    # that render_template_dispatch runs over `command` below treats a $-bearing
+    # scope token (e.g. "src/$mode") as a literal instead of interpolating it as
+    # a $ref/$mode template var. The real placeholders are the bare
+    # $ref/$mode concatenated separately into `command`; safe_substitute turns
+    # $$ back into a single $, and shlex's single-quotes still shield it at the
+    # shell layer when the agent runs the invoke.
+    scope_arg = f" --scope {shlex.quote(scope)}".replace("$", "$$") if scope else ""
 
-    # Template prompt with $var placeholders
+    # Template prompt with $var placeholders. The command lives in `command`
+    # below (rendered once as an escaped <invoke> by render_template_dispatch),
+    # not inline here -- a hand-built <invoke> in the prose double-wrapped and
+    # interpolated $scope unescaped.
     template = (
-        """Explore the codebase for this code smell.
-
-CATEGORY: $name
-MODE: $mode
-
-Start: <invoke working-dir=".claude/skills/scripts" cmd="uv run python -m """
-        + EXPLORE_MODULE_PATH
-        + """ --step 1 --category $ref --mode $mode"""
-        + scope_arg
-        + """" />"""
+        "Explore the codebase for this code smell.\n"
+        "\n"
+        "CATEGORY: $name\n"
+        "MODE: $mode\n"
+        "\n"
+        "Run the invoke command below to begin."
     )
 
-    # Command template (also has $var placeholders)
-    command = f'<invoke working-dir=".claude/skills/scripts" cmd="uv run python -m {EXPLORE_MODULE_PATH} --step 1 --category $ref --mode $mode{scope_arg}" />'
+    # Bare command (with $var placeholders); render_template_dispatch wraps it in
+    # a single quoteattr-escaped, cwd-pinned <invoke>.
+    command = f"uv run python -m {EXPLORE_MODULE_PATH} --step 1 --category $ref --mode $mode{scope_arg}"
 
     node = TemplateDispatchNode(
         agent_type="general-purpose",
@@ -268,7 +289,7 @@ def format_expected_output(sections: dict[str, str]) -> str:
     """Render expected output block."""
     lines = ["<expected_output>"]
     for name, content in sections.items():
-        lines.append(f'  <section name="{name}">')
+        lines.append(f'  <section name={quoteattr(name)}>')
         for line in content.split("\n"):
             lines.append(f"    {line}" if line else "")
         lines.append("  </section>")
@@ -1163,10 +1184,10 @@ DO NOT modify commands. DO NOT skip steps. DO NOT interpret.
 
     invoke_after = f"""<invoke_after>
   <if_custom>
-    <invoke working-dir=".claude/skills/scripts" cmd="uv run python -m {MODULE_PATH} --step 2 --mode custom{scope_arg}" />
+    {_invoke_tag(f"uv run python -m {MODULE_PATH} --step 2 --mode custom{scope_arg}")}
   </if_custom>
   <if_not_custom>
-    <invoke working-dir=".claude/skills/scripts" cmd="uv run python -m {MODULE_PATH} --step 2 --n {n} --mode $MODE{scope_arg}" />
+    {_invoke_tag(f"uv run python -m {MODULE_PATH} --step 2 --n {n} --mode $MODE{scope_arg}")}
   </if_not_custom>
 </invoke_after>"""
     parts.append(invoke_after)
@@ -1360,10 +1381,10 @@ def format_step_3_verification(info: dict, scope: str | None = None, retry: int 
         # Still have retry budget
         invoke_after = f"""<invoke_after>
   <if_revise>
-    <invoke working-dir=".claude/skills/scripts" cmd="uv run python -m {MODULE_PATH} --step 3 --mode custom{scope_arg} --retry 1" />
+    {_invoke_tag(f"uv run python -m {MODULE_PATH} --step 3 --mode custom{scope_arg} --retry 1")}
   </if_revise>
   <if_pass>
-    <invoke working-dir=".claude/skills/scripts" cmd="uv run python -m {MODULE_PATH} --step 4 --mode custom{scope_arg}" />
+    {_invoke_tag(f"uv run python -m {MODULE_PATH} --step 4 --mode custom{scope_arg}")}
   </if_pass>
 </invoke_after>"""
     else:
@@ -1389,7 +1410,9 @@ def format_step_4_dispatch_custom(info: dict, scope: str | None = None) -> str:
 
     scope_display = scope or "entire codebase"
     scope_arg = f" --scope {shlex.quote(scope)}" if scope else ""
-    invoke_cmd = f'<invoke working-dir=".claude/skills/scripts" cmd="uv run python -m {EXPLORE_MODULE_PATH} --step 1 --category $CATEGORY_REF --mode code{scope_arg}" />'
+    invoke_cmd = _invoke_tag(
+        f"uv run python -m {EXPLORE_MODULE_PATH} --step 1 --category $CATEGORY_REF --mode code{scope_arg}"
+    )
 
     actions = [
         "DISPATCH explore agents for verified categories.",

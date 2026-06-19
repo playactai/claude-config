@@ -6,15 +6,15 @@ This file specifies only: which phase key to use.
 
 Dispatches to:
 - exec_implement_execute.py: First-time implementation (4 steps)
-- exec_implement_qr_fix.py: Post-QR fix workflow (3 steps)
+- quality_reviewer/exec_qr_fix.py (--phase impl-code): Post-QR fix workflow (3 steps)
 
 Selection based on QR state detection:
 - No qr-impl-code.json or no FAIL items -> execute
 - FAIL items present -> qr_fix
 """
 
-from skills.planner.shared.qr.utils import get_qr_iteration, has_qr_failures
-from skills.planner.shared.routing import route_work_phase
+from skills.planner.shared.resources import STATE_DIR_ARG_REQUIRED
+from skills.planner.shared.routing import build_route_dispatch
 
 PHASE_KEY = "impl-code"
 
@@ -22,67 +22,15 @@ PHASE_KEY = "impl-code"
 def get_step_guidance(step: int, module_path: str | None = None, **kwargs) -> dict:
     """Router: dispatch to execute or fix based on state.
 
-    Routing logic lives in shared/routing.py (ONE place).
-    This file specifies only: which phase key to use.
+    Routing logic -- including the missing-state_dir fail-closed policy -- lives in
+    shared/routing.py (ONE place). This file specifies only: which phase key to use.
     """
     if step != 1:
         return {
             "error": "Router only handles step 1. Subsequent steps handled by dispatched script."
         }
 
-    state_dir = kwargs.get("state_dir")
-
-    # If no state_dir provided, default to execute mode
-    if not state_dir:
-        target = "skills.planner.developer.exec_implement_execute"
-        return {
-            "title": "Exec Implement - Routing to Execute Mode",
-            "actions": [
-                "No state directory provided.",
-                "Dispatching to EXECUTE workflow.",
-            ],
-            "dispatch_to": target,
-            "next": f"uv run python -m {target} --step 1",
-        }
-
-    # Check fix mode via file state inspection
-    if has_qr_failures(state_dir, PHASE_KEY):
-        iteration = get_qr_iteration(state_dir, PHASE_KEY)
-        target = "skills.planner.developer.exec_implement_qr_fix"
-        return {
-            "title": "Exec Implement - Routing to Fix Mode",
-            "actions": [
-                f"QR failures detected (iteration {iteration})",
-                "Dispatching to FIX workflow.",
-            ],
-            "dispatch_to": target,
-            "next": f"uv run python -m {target} --step 1 --state-dir {state_dir}",
-        }
-
-    # Use routing module for state-based detection
-    result = route_work_phase(state_dir, PHASE_KEY)
-
-    if result["has_failures"]:
-        iteration = get_qr_iteration(state_dir, PHASE_KEY)
-        return {
-            "title": "Exec Implement - Routing to Fix Mode",
-            "actions": [
-                f"QR state detected: {result['failed_count']} failed items (iteration {iteration})",
-                "Dispatching to FIX workflow.",
-            ],
-            "dispatch_to": result["target_module"],
-            "next": f"uv run python -m {result['target_module']} --step 1 --state-dir {state_dir}",
-        }
-    else:
-        return {
-            "title": "Exec Implement - Routing to Execute Mode",
-            "actions": [
-                "First-time execution or no QR failures.",
-                "Dispatching to EXECUTE workflow.",
-            ],
-            "dispatch_to": result["target_module"],
-            "next": f"uv run python -m {result['target_module']} --step 1 --state-dir {state_dir}",
-        }
+    return build_route_dispatch(kwargs.get("state_dir"), PHASE_KEY, "Exec Implement")
 
 
 if __name__ == "__main__":
@@ -93,6 +41,6 @@ if __name__ == "__main__":
         get_step_guidance,
         "Exec-Implement: Router for developer implementation workflows",
         extra_args=[
-            (["--state-dir"], {"type": str, "help": "State directory path"}),
+            STATE_DIR_ARG_REQUIRED,
         ],
     )

@@ -91,7 +91,7 @@ batch all removals together when possible.
 
 ## RULE 0 (ABSOLUTE): Clean Codebase on Exit
 
-Remove ALL debug artifacts before submitting analysis. Violation: -$2000 penalty.
+Remove ALL debug artifacts before submitting analysis -- the codebase you exit must be identical to the one you entered, minus the bug.
 
 <cleanup_checklist>
 Before ANY report:
@@ -119,7 +119,7 @@ Why correct: Complete cleanup cycle - every addition has corresponding deletion.
    - State transitions that should/shouldn't occur
    - Entry/exit points to instrument
 
-4. **Gather evidence**: Add 10+ debug statements, create isolated test files, run with 3+ different inputs. Calculate and record intermediate results at each step.
+4. **Gather evidence**: Instrument the suspect path -- add debug statements, isolate a reproduction, and run varied inputs in proportion to the bug's complexity (a shallow logic error needs a few; a race or memory bug needs entry/exit and thread/timing detail on every transition). Calculate and record intermediate results at each step.
 
 5. **Verify evidence**: Before forming any hypothesis, ask OPEN verification questions (not yes/no):
    - "What value did variable X have at line Y?" (NOT "Was X equal to 5?")
@@ -184,16 +184,9 @@ int main() {
 }
 ````
 
-## Minimum Evidence Requirements
+## Evidence Sufficiency
 
-Before forming ANY hypothesis, verify you have:
-
-| Requirement           | Minimum               | Verification Question (OPEN format)                     |
-| --------------------- | --------------------- | ------------------------------------------------------- |
-| Debug statements      | 10+                   | "What specific value did statement N reveal?"           |
-| Test inputs           | 3+                    | "How did behavior differ between input A and B?"        |
-| Entry/exit logs       | All suspect functions | "What state existed at entry/exit of function F?"       |
-| Isolated reproduction | 1 test file           | "What happens when the bug runs outside main codebase?" |
+Before forming ANY hypothesis, gather evidence proportional to the bug's complexity -- enough to **observe** (not infer) the failing path. Quantity is not the bar; coverage of the failing path is. A shallow logic error needs a few well-placed prints; a race condition needs thread ids and ordering on every transition; a memory bug needs entry/exit state on each suspect function and an isolated reproduction. For each suspect location ask the observable as an OPEN question ("What value did X have at line Y?", not "Was X 5?").
 
 **Specific Verification Criteria:**
 

@@ -3,7 +3,6 @@
 Handles loading of resource files and path resolution.
 """
 
-import json
 from pathlib import Path
 
 from skills.lib.io import read_text_or_exit
@@ -81,8 +80,8 @@ __all__ = [
     "get_mode_script_path",
     "get_qa_schema",
     "get_resource",
-    "load_context_block",
     "render_context_file",
+    "render_phase_context",
     "validate_state_dir_requirement",
 ]
 
@@ -151,12 +150,12 @@ def get_mode_script_path(script_name: str) -> str:
     Scripts are organized by agent: qr/, dev/, tw/
 
     Args:
-        script_name: Script path relative to planner/ (e.g., "qr/plan-docs.py")
+        script_name: Script path relative to planner/ (e.g., "developer/exec_implement.py")
 
     Returns:
-        Module path for python3 -m (e.g., "skills.planner.qr.plan_docs")
+        Module path for python3 -m (e.g., "skills.planner.developer.exec_implement")
     """
-    # Convert path to module: "qr/plan-docs.py" -> "qr.plan_docs"
+    # Convert path to module: "quality_reviewer/qr_decompose.py" -> "quality_reviewer.qr_decompose"
     module = script_name.replace("/", ".").replace("-", "_").removesuffix(".py")
     return f"skills.planner.{module}"
 
@@ -198,58 +197,46 @@ def get_qa_schema() -> str:
     return get_resource("qa-schema.md")
 
 
-def load_context_block(context_file: str | None) -> list[str]:
-    """Load planning context from JSON file and return as action lines.
-
-    Returns list[str] instead of structured type because sub-agent consumes
-    context as prompt text (action lines), not as data structure for branching.
-    Simpler contract: helpers produce action blocks, workflow engine assembles.
-
-    Silently swallows errors (graceful fallback rationale): missing context.json
-    means orchestrator skipped step 2 or user invoked sub-agent standalone for
-    testing. Sub-agent should function without context (degraded mode) rather
-    than crash. Empty context block = no additional context, proceed with task.
-
-    Args:
-        context_file: Path to context.json, or None
-
-    Returns:
-        List of action lines with context wrapped in XML, or empty list
-    """
-    if not context_file:
-        return []
-    try:
-        context = json.loads(Path(context_file).read_text())
-        # Context prepended to actions (not separate block) to ensure LLM reads
-        # context BEFORE task instructions. Prompt order = attention priority.
-        # XML tags allow sub-agent to distinguish context from instructions.
-        return [
-            "<planning_context>",
-            # indent=2 balances human readability (debuggability) with token
-            # efficiency. Single-line JSON would save ~50 tokens but makes
-            # step-through debugging painful. Indent=4 wastes tokens for
-            # marginal readability gain. indent=2 is the Goldilocks zone.
-            json.dumps(context, indent=2),
-            "</planning_context>",
-            "",
-        ]
-    except (FileNotFoundError, json.JSONDecodeError):
-        return []  # Graceful fallback
-
-
-def render_context_file(context_file: str | Path) -> str:
+def render_context_file(context_file: str | Path, *, missing_ok: bool = False) -> str:
     """Load and format context.json for sub-agent consumption.
 
     WHY logical name: LLM sees "context.json" (semantic) not
     "/tmp/planner_xyz/context.json" (implementation detail).
+
+    missing_ok: when True, a missing context.json degrades to a placeholder
+    note instead of raising. Execution-phase QR (impl-code/impl-docs) runs in a
+    state dir the executor populated with plan.json but no context.json, so its
+    absence there is expected, not an error. Plan-phase callers keep the default
+    (strict): the planner writes context.json in step 2, so a missing file there
+    is a real dispatch-ordering bug worth surfacing loudly. See
+    qr.phases.is_execution_phase, which callers pass through to this flag.
     """
     from skills.lib.workflow.prompts import format_file_content
 
     try:
-        content = Path(context_file).read_text()
+        content = Path(context_file).read_text(encoding="utf-8")
     except FileNotFoundError as e:
+        if missing_ok:
+            return format_file_content(
+                "context.json",
+                "(No planning context.json in this execution state directory. "
+                "Plan-phase context is not carried into execution; verify against "
+                "plan.json -- the source of truth for acceptance criteria.)",
+            )
         raise FileNotFoundError(
             f"Context file not found: {context_file}. "
             "Orchestrator must create context.json before sub-agent dispatch."
         ) from e
     return format_file_content("context.json", content)
+
+
+def render_phase_context(state_dir: str, phase: str) -> str:
+    """Render context.json for a phase, degrading gracefully for execution phases.
+
+    impl-* state dirs carry no context.json (the executor writes plan.json only), so
+    missing_ok follows is_execution_phase; plan phases stay strict. Single owner of the
+    'which phases tolerate a missing context.json' rule.
+    """
+    from skills.planner.shared.qr.phases import is_execution_phase
+
+    return render_context_file(get_context_path(state_dir), missing_ok=is_execution_phase(phase))

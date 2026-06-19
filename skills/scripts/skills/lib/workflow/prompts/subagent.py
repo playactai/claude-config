@@ -9,6 +9,7 @@ Three dispatch patterns:
 """
 
 import shlex
+from collections.abc import Sequence
 from pathlib import Path
 from string import Template
 
@@ -198,6 +199,52 @@ def subagent_dispatch(
     )
 
 
+def expand_template_pairs(
+    template: str, command: str, targets: Sequence[dict[str, str]]
+) -> list[dict[str, str]]:
+    """Substitute a prompt+command template for each target, with validation.
+
+    Shared validate-and-substitute core of template_dispatch and
+    dispatch_renderer._expand_template_targets -- keep both callers thin; do NOT
+    reintroduce a second copy of this logic (the twin is what audit Issue 6 was).
+    Returns one {"prompt", "command"} dict per target; empty targets -> [].
+
+    Raises:
+        ValueError: if the template/command references a $var that NO target
+            declares -- a typo (e.g. $item_ids for $item_id) or an unescaped
+            literal "$" (write an intended literal "$" as "$$"). Also raised when
+            a $var that SOME target provides is absent from another target -- a
+            per-target inconsistency that would silently emit a literal "$var".
+    """
+    if not targets:
+        return []
+    managed = set().union(*(set(t) for t in targets))
+    # Template parsing and identifier extraction are loop-invariant (template and
+    # command never change per target), so build them once instead of N parses.
+    prompt_tmpl = Template(template)
+    cmd_tmpl = Template(command)
+    referenced = set(prompt_tmpl.get_identifiers()) | set(cmd_tmpl.get_identifiers())
+    unmanaged = referenced - managed
+    if unmanaged:
+        raise ValueError(
+            f"template references undeclared variable(s) {sorted(unmanaged)} that no "
+            f"target provides; write an intended literal '$' as '$$'"
+        )
+    pairs = []
+    for i, t in enumerate(targets):
+        prompt = prompt_tmpl.safe_substitute(t)
+        cmd = cmd_tmpl.safe_substitute(t)
+        missing = (referenced & managed) - set(t)
+        if missing:
+            raise ValueError(
+                f"Template variable(s) {sorted('$' + m for m in missing)} not "
+                f"substituted in target {i}: managed by sibling targets but "
+                f"absent here. Provided keys: {sorted(t.keys())}"
+            )
+        pairs.append({"prompt": prompt, "command": cmd})
+    return pairs
+
+
 def template_dispatch(
     agent_type: str,
     template: str,
@@ -223,16 +270,12 @@ def template_dispatch(
         Complete dispatch prompt with expanded agent entries
 
     Raises:
-        KeyError: If template contains $var not present in target dict
+        ValueError: propagated from expand_template_pairs -- the template/command
+            references a $var no target declares (a typo or an unescaped literal
+            "$"; write a literal "$" as "$$"), or a $var some target provides is
+            absent from another target.
     """
-    expanded = []
-    for t in targets:
-        expanded.append(
-            {
-                "prompt": Template(template).substitute(t),
-                "command": Template(command).substitute(t),
-            }
-        )
+    expanded = expand_template_pairs(template, command, targets)
 
     count = len(expanded)
     model_display = model if model else "default (omit parameter)"

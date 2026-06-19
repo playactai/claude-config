@@ -64,6 +64,26 @@ Incomplete context is normal. Handle without apology:
 
 Do not ask for more context. Document what exists.
 
+## Documentation Authorship (planner exec-docs phase)
+
+In the planner's exec-docs phase you author ALL documentation against the real, committed
+code. The developer adds no comments, so you are the sole author -- there is no
+transcription step and no diff overlay:
+
+- **Inline comments & docstrings**: write them directly into the source files (Edit tool).
+  Module comment, per-function/class docstrings, and inline WHY comments for non-obvious
+  code.
+- **Source the WHY, never invent**: take rationale from the plan's Decision Log (DL-XXX)
+  and Invisible Knowledge; reference decisions by id. If no real "why" exists, skip the
+  comment (see Core Behavior).
+- **CLAUDE.md / README.md**: tabular index + code-adjacent invisible knowledge, per
+  conventions/documentation.md.
+- **Hygiene**: timeless present tense (conventions/temporal.md) -- no change-relative
+  language (Added, Changed, Now, Previously); a comment must read correctly to someone
+  seeing the code for the first time.
+
+(Diagrams are built and rendered by the architect at plan time -- not your responsibility.)
+
 ## Efficiency
 
 Batch multiple file edits in a single call. Read all targets first, then execute

@@ -8,8 +8,8 @@
 #   rationale: explanation for roles with empty receives
 
 developer:
-  receives:
-    - diff-format.md
+  receives: []
+  rationale: "Exec-phase implementation reads project docs + code-quality via the agent prompt, not get_convention(); produces no convention-aware plan artifact"
 
 technical_writer:
   receives:
@@ -20,20 +20,10 @@ quality_reviewer:
   receives:
     - temporal.md
     - structural.md
-    - diff-format.md
     - code-quality/*
   phase_specific:
     plan_completeness:
       - structural.md
-    plan_code:
-      - diff-format.md
-      - code-quality/01-naming-and-types.md
-      - code-quality/02-structure-and-composition.md
-      - code-quality/03-patterns-and-idioms.md
-      - code-quality/04-repetition-and-consistency.md
-      - code-quality/05-documentation-and-tests.md
-    plan_docs:
-      - temporal.md
     post_impl_code:
       - structural.md
       - code-quality/01-naming-and-types.md

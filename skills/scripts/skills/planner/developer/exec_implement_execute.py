@@ -8,11 +8,13 @@
   4. Wave Iteration (next wave or return to orchestrator)
 
 This is the EXECUTE script for first-time implementation.
-For QR fix mode, see exec_implement_qr_fix.py.
+For QR fix mode, see quality_reviewer/exec_qr_fix.py (--phase impl-code).
 Router (exec_implement.py) dispatches to appropriate script.
 """
 
+from skills.planner.shared.builders import ESCALATE_HANDLER, shell_quote
 from skills.planner.shared.constraints import format_state_banner
+from skills.planner.shared.resources import validate_state_dir_requirement
 
 STEPS = {
     1: "Implementation Planning",
@@ -26,7 +28,8 @@ def get_step_guidance(step: int, module_path: str | None = None, **kwargs) -> di
     """Return guidance for the given step."""
     MODULE_PATH = module_path or "skills.planner.developer.exec_implement_execute"
     state_dir = kwargs.get("state_dir", "")
-    state_dir_arg = f" --state-dir {state_dir}" if state_dir else ""
+    validate_state_dir_requirement(step, state_dir or None)
+    state_dir_arg = f" --state-dir {shell_quote(state_dir)}" if state_dir else ""
 
     if step == 1:
         banner = format_state_banner("IMPLEMENTATION", 1, "work")
@@ -47,11 +50,16 @@ def get_step_guidance(step: int, module_path: str | None = None, **kwargs) -> di
                 "",
                 "FOR EACH WAVE:",
                 "  1. Dispatch developer agents for ALL milestones in wave",
+                "     (skip is_documentation_only milestones -- exec-docs handles those)",
                 "  2. Each prompt must include:",
                 "     - Plan file path",
                 "     - Milestone number and name",
                 "     - Files to create/modify",
                 "     - Acceptance criteria",
+                "     - Code Intent: the milestone's code_intents[] (file, function,",
+                "       behavior, decision_refs) -- the durable contract. Implement the",
+                "       behavior JIT against the CURRENT file (read it first) to satisfy the",
+                "       acceptance criteria. No plan-time diffs exist; nothing to re-anchor.",
                 "  3. Wait for ALL agents in wave to complete",
                 "  4. Run tests: pytest / tsc / go test -race",
                 "  5. Proceed to next wave",
@@ -75,6 +83,10 @@ def get_step_guidance(step: int, module_path: str | None = None, **kwargs) -> di
                 "  - MILESTONE: specific milestone to implement",
                 "  - FILES: exact paths to create/modify",
                 "  - ACCEPTANCE: criteria from plan",
+                "  - CODE_INTENT: the milestone's code_intents[] from plan.json -- the",
+                "    durable contract (file, function, behavior, decision_refs). Implement",
+                "    these behaviors against the CURRENT file; impl-code QR reviews exactly",
+                "    what ships. There are no precomputed diffs and nothing to re-anchor.",
             ],
             "next": f"uv run python -m {MODULE_PATH} --step 3{state_dir_arg}",
         }
@@ -93,7 +105,7 @@ def get_step_guidance(step: int, module_path: str | None = None, **kwargs) -> di
                 "If tests fail:",
                 "  - Clear problem + solution: Task(developer) immediately",
                 "  - Difficult/unclear: Task(debugger) to diagnose first",
-                "  - Uncertain: AskUserQuestion with options",
+                f"  - Uncertain: {ESCALATE_HANDLER} with options",
             ],
             "next": f"uv run python -m {MODULE_PATH} --step 4{state_dir_arg}",
         }

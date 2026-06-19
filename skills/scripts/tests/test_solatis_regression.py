@@ -6,7 +6,8 @@ the upstream repo. Keep tests narrow: one observable symptom each.
 Covered issues:
 - #19: StepHeaderNode.step must be int (not str) in incoherence.format_incoherence_output
 - #22: mode_main() must not KeyError on guidance dicts that only contain "error"
-- #23: Planner step 6 routes doc-only plans to step 11, skipping plan-code QR loop
+- #23: Planner step 6 PASS approves the plan (terminal); doc-only milestones are
+       handled at execution by exec-docs (no plan-time fast-path)
 """
 
 from __future__ import annotations
@@ -146,14 +147,37 @@ def test_issue_22_mode_main_unit():
 
 
 # ---------------------------------------------------------------------------
-# Issue #23: Step 6 gate bypasses plan-code for pure-documentation plans.
+# Issue #23 (post rigid-diff redesign): plan-design is the only planning phase.
+# Step 6 PASS approves the plan (terminal -- no plan-code/plan-docs to route to).
+# Documentation-only milestones are handled at execution by exec-docs, not by a
+# plan-time fast-path.
 # ---------------------------------------------------------------------------
 
 
 def _write_plan(state_dir: Path, milestones: list[dict]) -> None:
-    """Write a minimal plan.json skeleton with the given milestones."""
+    """Write a completeness-valid plan.json with the given milestones.
+
+    Each milestone dict may omit number/name/files; sensible defaults fill them.
+    Every code milestone gets a default code_intent (unless supplied) and its own
+    single-milestone wave, so the plan satisfies the step-6 gate -- which now
+    enforces the same wave-coverage + intent completeness the executor does, not
+    just qr state.
+    """
+    norm = []
+    for i, ms in enumerate(milestones, 1):
+        m = {"number": i, "name": ms.get("name", f"M{i}"), "files": ms.get("files", ["a.py"]), **ms}
+        if not m.get("is_documentation_only") and not m.get("code_intents"):
+            m["code_intents"] = [{"id": f"CI-{m.get('id', i)}", "file": m["files"][0], "behavior": "x"}]
+        norm.append(m)
+    # One wave per code milestone: covers every code milestone exactly once, and a
+    # single milestone per wave cannot trip the intra-wave file-overlap guard.
+    waves = [
+        {"id": f"W-{i:03d}", "milestones": [m["id"]]}
+        for i, m in enumerate(
+            (m for m in norm if m.get("id") and not m.get("is_documentation_only")), 1
+        )
+    ]
     plan = {
-        "schema_version": 2,
         "overview": {"problem": "x", "approach": "y"},
         "planning_context": {
             "decisions": [],
@@ -162,88 +186,32 @@ def _write_plan(state_dir: Path, milestones: list[dict]) -> None:
             "risks": [],
         },
         "invisible_knowledge": {"system": "", "invariants": [], "tradeoffs": []},
-        "milestones": milestones,
-        "waves": [],
+        "milestones": norm,
+        "waves": waves,
     }
     (state_dir / "plan.json").write_text(json.dumps(plan))
 
 
-def test_issue_23_all_doc_only_detected(tmp_path):
-    """_all_milestones_doc_only returns True only when every milestone is doc-only."""
-    from skills.planner.orchestrator.planner import _all_milestones_doc_only
-
-    _write_plan(
-        tmp_path,
-        [
-            {"id": "M-001", "is_documentation_only": True},
-            {"id": "M-002", "is_documentation_only": True},
-        ],
-    )
-    assert _all_milestones_doc_only(str(tmp_path)) is True
-
-    _write_plan(
-        tmp_path,
-        [
-            {"id": "M-001", "is_documentation_only": True},
-            {"id": "M-002", "is_documentation_only": False},
-        ],
-    )
-    assert _all_milestones_doc_only(str(tmp_path)) is False
-
-    # Empty milestones -> conservative False (keep normal flow)
-    _write_plan(tmp_path, [])
-    assert _all_milestones_doc_only(str(tmp_path)) is False
-
-
-def test_issue_23_missing_flag_defaults_to_code_path(tmp_path):
-    """Milestones without the flag are treated as code (not doc-only)."""
-    from skills.planner.orchestrator.planner import _all_milestones_doc_only
-
-    _write_plan(tmp_path, [{"id": "M-001"}])
-    assert _all_milestones_doc_only(str(tmp_path)) is False
-
-
-def test_issue_23_missing_plan_json_is_safe(tmp_path):
-    """Missing or malformed plan.json must not raise; returns False."""
-    from skills.planner.orchestrator.planner import _all_milestones_doc_only
-
-    assert _all_milestones_doc_only(str(tmp_path)) is False
-
-    (tmp_path / "plan.json").write_text("not json {{")
-    assert _all_milestones_doc_only(str(tmp_path)) is False
-
-
-def test_issue_23_step6_routes_doc_only_to_step_11(tmp_path):
-    """PASS at step 6 with doc-only plan -> next command points at step 11."""
+def test_issue_23_step6_pass_is_terminal(tmp_path):
+    """PASS at step 6 approves the plan: terminal, with no route to a later step."""
     from skills.planner.orchestrator.planner import format_output
 
-    _write_plan(
-        tmp_path,
-        [
-            {"id": "M-001", "is_documentation_only": True},
-        ],
-    )
-
-    result = format_output(step=6, qr_status="pass", state_dir=str(tmp_path))
-    # format_output returns GateResult for gate steps
-    output = result.output if isinstance(result, GateResult) else result
-    assert "--step 11" in output
-    assert "plan-docs" in output.lower() or "step 11" in output
-
-
-def test_issue_23_step6_routes_code_plan_to_step_7(tmp_path):
-    """PASS at step 6 with at least one code milestone -> routes to step 7."""
-    from skills.planner.orchestrator.planner import format_output
-
-    _write_plan(
-        tmp_path,
-        [
-            {"id": "M-001", "is_documentation_only": True},
-            {"id": "M-002", "is_documentation_only": False},
-        ],
+    _write_plan(tmp_path, [{"id": "M-001", "is_documentation_only": False}])
+    (tmp_path / "qr-plan-design.json").write_text(
+        json.dumps({"phase": "plan-design", "iteration": 1, "items": []})
     )
 
     result = format_output(step=6, qr_status="pass", state_dir=str(tmp_path))
     output = result.output if isinstance(result, GateResult) else result
-    assert "--step 7" in output
+    assert "PLAN APPROVED" in output
+    assert "--step 7" not in output
     assert "--step 11" not in output
+
+
+def test_issue_23_executor_skips_doc_only_in_impl_code(tmp_path):
+    """Doc-only milestones are skipped in impl-code; exec-docs authors their docs."""
+    from skills.planner.orchestrator import executor
+
+    out = executor.format_output(2, str(tmp_path), None, False)
+    assert "is_documentation_only" in out
+    assert "documentation phase" in out.lower()

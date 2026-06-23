@@ -50,7 +50,7 @@ from skills.planner.shared.constants import (
 from skills.planner.shared.constraints import (
     ORCHESTRATOR_CONSTRAINT,
 )
-from skills.planner.shared.gates import build_gate_output
+from skills.planner.shared.gates import _render_iteration_limit_banner, build_gate_output
 from skills.planner.shared.qr.cli import add_qr_args
 from skills.planner.shared.qr.constants import QR_ITERATION_LIMIT
 from skills.planner.shared.qr.phases import get_phase_config
@@ -68,6 +68,7 @@ from skills.planner.shared.verify_state import (
     verify_failures,
     verify_has_failures,
     verify_is_complete,
+    verify_path,
 )
 
 if TYPE_CHECKING:
@@ -185,10 +186,12 @@ def format_step_2(qr: QRState, state_dir: str) -> str:
             ),
         )
     elif verify_has_failures(state_dir):
-        # Final Verification failed and routed back here (the gate reset code/doc
-        # QR state, so qr-impl-code.json is clean -> this branch, not RETRY). Fix
-        # the failing suite/lint/type; the full pipeline (code QR -> docs -> doc QR
-        # -> verify) then re-runs to re-review the fix for new bugs.
+        # Reset code/doc QR so the post-verify fix gets a fresh review (the gate is
+        # a pure renderer -- the reset side-effect lives here, in the step the gate
+        # routes TO). After reset, qr-impl-code.json is clean -> this branch runs,
+        # not RETRY. Fix the failing suite/lint/type; the full pipeline (code QR ->
+        # docs -> doc QR -> verify) then re-runs to re-review the fix for new bugs.
+        reset_qr_for_reverify(state_dir)
         # Intentionally thinner than the RETRY (code-QR) fix path: it carries the
         # failing-check detail inline but no mode-script scaffolding -- a red final
         # suite needs the failures, not per-milestone fix context.
@@ -463,28 +466,22 @@ def _build_verify_iteration_escalation(state_dir: str, vf: "VerifyFile") -> str:
         f"uv run python -m {MODULE_PATH} --step 12 --state-dir {shell_quote(state_dir)}"
     )
     title = "Final Verification Gate -- Iteration Limit Reached"
-    parts = [
-        format_gate_result(passed=False),
-        "",
-        f"FINAL VERIFICATION REACHED THE ITERATION LIMIT ({QR_ITERATION_LIMIT}).",
-        "",
+    detail_lines = [
         f"Still failing after {vf.iteration} verify cycles:",
         "",
         format_verify_failures_for_fix(vf),
-        "",
-        "ESCALATE TO USER -- the workflow will NOT loop again on its own.",
-        f"User authority is absolute (INTENT.md). Use {ESCALATE_HANDLER} to ask how to proceed:",
-        "",
+    ]
+    accept_block = [
         f"  Accept (finalize despite the red suite -- report it honestly):\n    {accept_cmd}",
         "  Abort: stop here. Do NOT invoke a next step; report the failures to the user.",
-        "",
-        format_forbidden(
-            "Looping back to the fixer automatically",
-            "Proceeding without an explicit user decision",
-            "Hiding or downgrading the unresolved failures",
-        ),
     ]
-    return f"{title}\n{'=' * len(title)}\n\n" + "\n".join(parts)
+    return _render_iteration_limit_banner(
+        title=title,
+        limit_line=f"FINAL VERIFICATION REACHED THE ITERATION LIMIT ({QR_ITERATION_LIMIT}).",
+        detail_lines=detail_lines,
+        accept_block=accept_block,
+        forbidden_third_item="Hiding or downgrading the unresolved failures",
+    )
 
 
 def format_step_11_verify_gate(state_dir: str) -> str:
@@ -530,9 +527,8 @@ def format_step_11_verify_gate(state_dir: str) -> str:
     if vf.iteration >= QR_ITERATION_LIMIT:
         return _build_verify_iteration_escalation(state_dir, vf)
 
-    # Below the ceiling: reset code/doc QR so the fix gets a FRESH review, then
-    # route back to Implementation (step 2 renders verify-fix mode).
-    reset_qr_for_reverify(state_dir)
+    # Below the ceiling: route back to Implementation (step 2 renders verify-fix
+    # mode with the QR reset side-effect). The gate is a pure renderer.
     parts = [
         format_gate_result(passed=False),
         "",
@@ -697,6 +693,11 @@ def main():
     # Validate state_dir for steps 2+
     if args.step > 1 and not state_dir:
         sys.exit(f"Error: --state-dir required for step {args.step}")
+
+    # Clear stale verify.json on step 1 (reused state-dir path) so the current
+    # session's step 10/11 is the sole writer of the session's verdict.
+    if args.step == 1 and state_dir:
+        verify_path(state_dir).unlink(missing_ok=True)
 
     # plan is threaded into format_output so the QR gate (steps 5/9) reuses this
     # parse instead of re-reading plan.json. None for step 1 (no plan yet).

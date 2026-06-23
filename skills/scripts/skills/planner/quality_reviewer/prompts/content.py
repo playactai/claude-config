@@ -806,6 +806,41 @@ class ImplDocsVerify(VerifyBase):
                 ],
             ),
             (
+                # Before the temporal rule (and why/what): a STALE_COMMENTS check whose
+                # text mentions 'temporal' as a contrast must not first-match the broad
+                # temporal predicate. 'stale' is specific; 'temporal' is a single token
+                # that appears in contrast contexts -- order rules by specificity.
+                lambda c: "stale" in c,
+                [
+                    "STALE COMMENTS VERIFICATION:",
+                    "  Read each comment/docstring against the CURRENT code it describes.",
+                    "  - FAIL when the comment describes behavior the code no longer has",
+                    "    (e.g. an old return type, a removed parameter, changed control flow).",
+                    "  - Distinct from temporal contamination (change-relative wording) and",
+                    "    baseline reference (mention of removed code): here the code exists,",
+                    "    the comment is simply inaccurate now.",
+                    "",
+                ],
+            ),
+            (
+                # Before the temporal rule: a FALSE_RATIONALE check names a rationale
+                # (~why) and would otherwise be shadowed by the WHY-NOT-WHAT block
+                # (first-match). Also before temporal so the 'rationale' token does not
+                # accidentally match temporal prose.
+                lambda c: "false" in c and "rationale" in c,
+                [
+                    "FALSE RATIONALE VERIFICATION:",
+                    "  For each comment that states a reason/trade-off/design choice,",
+                    "  confirm the stated WHY is actually true of the code and consistent",
+                    "  with the decision log.",
+                    "  - FAIL a rationale the code contradicts (e.g. 'uses polling because",
+                    "    webhooks are unreliable' while the code is event-driven).",
+                    "  - Differs from WHY-NOT-WHAT (missing or mis-shaped reasoning):",
+                    "    this flags reasoning that is present but FALSE.",
+                    "",
+                ],
+            ),
+            (
                 lambda c: "temporal" in c,
                 self._temporal_contamination_guidance,
             ),
@@ -849,37 +884,6 @@ class ImplDocsVerify(VerifyBase):
                     "  and confirm every acceptance criterion is satisfied by the authored docs.",
                     "  - A milestone with NO acceptance_criteria is vacuously satisfied (PASS).",
                     "  - FAIL a criterion only with concrete evidence it is unmet.",
-                    "",
-                ],
-            ),
-            (
-                # Before the why/what rule so a STALE_COMMENTS check routes here,
-                # not to the generic WHY-NOT-WHAT block (first-match).
-                lambda c: "stale" in c,
-                [
-                    "STALE COMMENTS VERIFICATION:",
-                    "  Read each comment/docstring against the CURRENT code it describes.",
-                    "  - FAIL when the comment describes behavior the code no longer has",
-                    "    (e.g. an old return type, a removed parameter, changed control flow).",
-                    "  - Distinct from temporal contamination (change-relative wording) and",
-                    "    baseline reference (mention of removed code): here the code exists,",
-                    "    the comment is simply inaccurate now.",
-                    "",
-                ],
-            ),
-            (
-                # Before why/what: a FALSE_RATIONALE check names a rationale (~why) and
-                # would otherwise be shadowed by the WHY-NOT-WHAT block (first-match).
-                lambda c: "false" in c and "rationale" in c,
-                [
-                    "FALSE RATIONALE VERIFICATION:",
-                    "  For each comment that states a reason/trade-off/design choice,",
-                    "  confirm the stated WHY is actually true of the code and consistent",
-                    "  with the decision log.",
-                    "  - FAIL a rationale the code contradicts (e.g. 'uses polling because",
-                    "    webhooks are unreliable' while the code is event-driven).",
-                    "  - Differs from WHY-NOT-WHAT (missing or mis-shaped reasoning):",
-                    "    this flags reasoning that is present but FALSE.",
                     "",
                 ],
             ),

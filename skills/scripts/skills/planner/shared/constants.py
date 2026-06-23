@@ -15,7 +15,7 @@ from skills.lib.workflow.types import AgentRole
 PLANNER_TOTAL_STEPS = 6
 PLANNER_GATE_STEPS = frozenset({6})  # QR route step (gate)
 
-# Executor: QR phase for each step (steps 1, 10 have no QR phase)
+# Executor: QR phase for each step (steps 1, 10, 11, 12 have no QR phase)
 EXECUTOR_STEP_PHASES: dict[int, str] = {
     2: "impl-code",
     3: "impl-code",

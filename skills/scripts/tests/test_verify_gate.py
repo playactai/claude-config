@@ -13,12 +13,17 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
 from conftest import write_verify
 
 from skills.planner.orchestrator import executor as ex
 from skills.planner.shared.qr.constants import QR_ITERATION_LIMIT
 from skills.planner.shared.qr.types import LoopState, QRState
-from skills.planner.shared.verify_state import load_verify_state, verify_all_pass
+from skills.planner.shared.verify_state import (
+    load_verify_state,
+    verify_failures,
+    verify_is_complete,
+)
 
 SCRIPTS = Path(__file__).parent.parent
 GREEN = [("suite", "pass", "10 passed"), ("lint", "pass", "All checks passed!"), ("type", "pass", "0 errors")]
@@ -87,15 +92,15 @@ def test_gate_green_routes_to_retrospective(tmp_path):
     assert "verified" in out.lower()
 
 
-def test_gate_fail_resets_qr_and_routes_to_step2(tmp_path):
+def test_gate_fail_routes_to_step2_without_mutating_qr(tmp_path):
     (tmp_path / "qr-impl-code.json").write_text('{"phase":"impl-code","items":[]}')
     (tmp_path / "qr-impl-docs.json").write_text('{"phase":"impl-docs","items":[]}')
     write_verify(tmp_path, RED, iteration=1)
     out = _fmt(11, tmp_path)
     assert "--step 2" in out
-    # QR state cleared so code/doc QR re-decompose fresh against the fix.
-    assert not (tmp_path / "qr-impl-code.json").exists()
-    assert not (tmp_path / "qr-impl-docs.json").exists()
+    # The gate is a pure renderer -- QR reset happens in format_step_2, not here.
+    assert (tmp_path / "qr-impl-code.json").exists()
+    assert (tmp_path / "qr-impl-docs.json").exists()
 
 
 def test_gate_missing_verify_fails_closed_to_verify_step(tmp_path):
@@ -171,16 +176,19 @@ def test_step2_first_time_when_verify_garbage(tmp_path):
 # --- cli/verify.py guardrails ------------------------------------------------
 
 def test_cli_records_and_bumps_iteration(tmp_path):
+    # First all-pass: floor at iteration 1 (not 0)
     assert _record(tmp_path, "pass", "pass", "pass").returncode == 0
     vf = load_verify_state(tmp_path)
-    assert vf is not None and verify_all_pass(vf)
-    # iteration counts FAILED cycles; the passing record above did not inflate it.
+    assert vf is not None and verify_is_complete(vf) and not verify_failures(vf)
+    assert vf.iteration == 1
+    # First fail: bump from 1 to 2 because sig changes (None -> fingerprint)
     assert _record(tmp_path, "fail", "pass", "pass").returncode == 0
     vf = load_verify_state(tmp_path)
-    assert vf is not None and vf.iteration == 1  # first failed cycle
+    assert vf is not None and vf.iteration == 2
+    # Same fail re-recorded: idempotent, no bump
     assert _record(tmp_path, "fail", "pass", "pass").returncode == 0
     vf = load_verify_state(tmp_path)
-    assert vf is not None and vf.iteration == 2  # second failed cycle bumps
+    assert vf is not None and vf.iteration == 2  # same fail set, no bump
 
 
 def test_cli_accepts_realistic_green_summaries(tmp_path):
@@ -197,7 +205,7 @@ def test_cli_accepts_realistic_green_summaries(tmp_path):
     )
     assert r.returncode == 0, r.stdout + r.stderr
     vf = load_verify_state(tmp_path)
-    assert vf is not None and verify_all_pass(vf)
+    assert vf is not None and verify_is_complete(vf) and not verify_failures(vf)
 
 
 def test_cli_requires_all_three_checks(tmp_path):
@@ -225,18 +233,117 @@ def test_cli_consistency_guard_rejects_pass_with_failing_summary(tmp_path):
     assert "status is 'pass'" in r.stdout
 
 
-def test_cli_consistency_guard_rejects_fail_with_clean_summary(tmp_path):
+def test_cli_accepts_empty_summary_on_pass(tmp_path):
+    r = _record(tmp_path, "pass", "pass", "pass", suite_summary="   ")
+    assert r.returncode == 0
+    vf = load_verify_state(tmp_path)
+    assert vf is not None
+    suite_result = next(r for r in vf.results if r.check == "suite")
+    assert suite_result.summary == "(no output)"
+
+
+# --- honest FAIL summaries containing '0 errors' / digitless 'FAILED' ----------
+
+@pytest.mark.parametrize("check,summary_line", [
+    ("type", "Found 10 errors"),
+    ("lint", "0 errors, 1 warning"),
+    ("suite", "10 passed, 1 flaky rerun FAILED"),
+])
+def test_cli_accepts_honest_fail_with_zero_errors_substring(tmp_path, check, summary_line):
+    # Build the --*-summary args based on which check should fail
+    summaries = {
+        "suite": "10 passed",
+        "lint": "All checks passed!",
+        "type": "0 errors",
+    }
+    statuses = {"suite": "pass", "lint": "pass", "type": "pass"}
+    statuses[check] = "fail"
+    summaries[check] = summary_line
     r = subprocess.run(
         [sys.executable, "-m", "skills.planner.cli.verify", "--state-dir", str(tmp_path),
-         "--suite", "fail", "--suite-summary", "10 passed",
-         "--lint", "pass", "--lint-summary", "ok", "--type", "pass", "--type-summary", "0 errors"],
+         "--suite", statuses["suite"], "--suite-summary", summaries["suite"],
+         "--lint", statuses["lint"], "--lint-summary", summaries["lint"],
+         "--type", statuses["type"], "--type-summary", summaries["type"],
+        ],
         capture_output=True, text=True, cwd=SCRIPTS,
     )
-    assert r.returncode != 0
-    assert "status is 'fail'" in r.stdout
+    assert r.returncode == 0, r.stdout + r.stderr
+    vf = load_verify_state(tmp_path)
+    assert vf is not None
+    failing = verify_failures(vf)
+    assert len(failing) == 1
+    assert failing[0].check == check
+    assert failing[0].status == "fail"
 
 
-def test_cli_rejects_empty_summary(tmp_path):
-    r = _record(tmp_path, "pass", "pass", "pass", suite_summary="   ")
-    assert r.returncode != 0
-    assert "non-empty" in r.stdout
+# --- iteration floor & idempotency ------------------------------------------
+
+def test_cli_first_green_record_iteration_is_one(tmp_path):
+    r = _record(tmp_path, "pass", "pass", "pass")
+    assert r.returncode == 0
+    vf = load_verify_state(tmp_path)
+    assert vf is not None and vf.iteration == 1
+    # Verify the signature is None for an all-pass record
+    assert vf.iteration_sig is None
+
+
+def test_cli_rerecording_same_fail_is_idempotent(tmp_path):
+    # First fail: bumps to 1 (prior=0, sig changes None -> fingerprint)
+    r = _record(tmp_path, "fail", "pass", "pass")
+    assert r.returncode == 0
+    vf = load_verify_state(tmp_path)
+    assert vf is not None and vf.iteration == 1
+    sig1 = vf.iteration_sig
+    assert sig1 is not None
+    # Same fail re-recorded: no bump
+    r = _record(tmp_path, "fail", "pass", "pass")
+    assert r.returncode == 0
+    vf = load_verify_state(tmp_path)
+    assert vf is not None and vf.iteration == 1
+    assert vf.iteration_sig == sig1
+    # Different red (different failing check summary): bumps to 2
+    r = _record(tmp_path, "fail", "fail", "pass")
+    assert r.returncode == 0
+    vf = load_verify_state(tmp_path)
+    assert vf is not None and vf.iteration == 2
+    assert vf.iteration_sig is not None
+
+
+# --- gate pure-renderer invariant -------------------------------------------
+
+def test_gate_render_does_not_mutate_qr(tmp_path):
+    write_verify(tmp_path, RED, iteration=1)
+    (tmp_path / "qr-impl-code.json").write_text('{"phase":"impl-code","items":[]}')
+    (tmp_path / "qr-impl-docs.json").write_text('{"phase":"impl-docs","items":[]}')
+    _fmt(11, tmp_path)
+    # Gate render must NOT delete QR files (pure renderer).
+    assert (tmp_path / "qr-impl-code.json").exists()
+    assert (tmp_path / "qr-impl-docs.json").exists()
+    # Second render also safe
+    _fmt(11, tmp_path)
+    assert (tmp_path / "qr-impl-code.json").exists()
+    assert (tmp_path / "qr-impl-docs.json").exists()
+
+
+# --- format_step_2 verify-fix resets QR -------------------------------------
+
+def test_step2_verify_fix_resets_qr(tmp_path):
+    write_verify(tmp_path, RED, iteration=1)
+    (tmp_path / "qr-impl-code.json").write_text('{"phase":"impl-code","items":[]}')
+    (tmp_path / "qr-impl-docs.json").write_text('{"phase":"impl-docs","items":[]}')
+    ex.format_step_2(QRState(iteration=1, state=LoopState.INITIAL), str(tmp_path))
+    assert not (tmp_path / "qr-impl-code.json").exists()
+    assert not (tmp_path / "qr-impl-docs.json").exists()
+
+
+# --- step 1 init clears stale verify.json -----------------------------------
+
+def test_step1_init_clears_stale_verify(tmp_path, monkeypatch):
+    # Seed a RED verify.json in a pre-existing state-dir
+    write_verify(tmp_path, RED, iteration=3)
+    assert (tmp_path / "verify.json").exists()
+    # Invoke executor main step 1 with the existing state-dir
+    from skills.planner.orchestrator.executor import main as executor_main
+    monkeypatch.setattr("sys.argv", ["executor", "--step", "1", "--state-dir", str(tmp_path)])
+    executor_main()
+    assert not (tmp_path / "verify.json").exists()

@@ -53,6 +53,7 @@ from skills.planner.quality_reviewer.qr_verify_base import (
     _record_verify_result,
     _resolve_target_item,
 )
+from skills.planner.shared.builders import format_gate_result
 from skills.planner.shared.gates import GateResult, build_gate_output
 from skills.planner.shared.qr.constants import (
     QR_ITERATION_LIMIT,
@@ -2816,6 +2817,135 @@ class TestFixerPromptDisplaySafe:
         # to a space, not survive as a separator that forges a column-0 line.
         assert sep not in out
         assert "\nIGNORE PREVIOUS" not in out
+
+
+# =============================================================================
+# M-001: Final-Verification recorder, gate, verify_state helpers, and SSOT
+# =============================================================================
+
+
+class TestVerifyStateHelpers:
+    """verify_is_complete harden, verify_all_pass deleted, reset_qr guard."""
+
+    def test_verify_is_complete_rejects_duplicates(self):
+        from skills.planner.shared.schema import VerifyFile, VerifyResult
+        from skills.planner.shared.verify_state import verify_is_complete
+
+        dup_results = [
+            VerifyResult.model_validate({"check": "suite", "status": "pass", "summary": "10 passed"}),
+            VerifyResult.model_validate({"check": "suite", "status": "fail", "summary": "1 failed"}),
+            VerifyResult.model_validate({"check": "lint", "status": "pass", "summary": "ok"}),
+            VerifyResult.model_validate({"check": "type", "status": "pass", "summary": "0 errors"}),
+        ]
+        vf = VerifyFile(iteration=1, results=dup_results)
+        assert verify_is_complete(vf) is False  # duplicate suite
+
+        clean_results = [
+            VerifyResult.model_validate({"check": "suite", "status": "pass", "summary": "10 passed"}),
+            VerifyResult.model_validate({"check": "lint", "status": "pass", "summary": "ok"}),
+            VerifyResult.model_validate({"check": "type", "status": "pass", "summary": "0 errors"}),
+        ]
+        vf2 = VerifyFile(iteration=1, results=clean_results)
+        assert verify_is_complete(vf2) is True
+
+    def test_verify_all_pass_removed(self):
+        import skills.planner.shared.verify_state as vs
+
+        assert not hasattr(vs, "verify_all_pass")
+
+    def test_reset_qr_for_reverify_raises_on_permission_error(self, tmp_path, monkeypatch):
+        from skills.planner.shared.verify_state import reset_qr_for_reverify
+
+        (tmp_path / "qr-impl-code.json").write_text("{}")
+        (tmp_path / "qr-impl-docs.json").write_text("{}")
+
+        original_unlink = Path.unlink
+
+        def _fail_on_code(self_or_path, *args, **kwargs):
+            path_arg = str(self_or_path) if hasattr(self_or_path, "exists") else ""
+            if "qr-impl-code.json" in path_arg:
+                raise PermissionError("Permission denied")
+            return original_unlink(self_or_path, *args, **kwargs)
+
+        monkeypatch.setattr(Path, "unlink", _fail_on_code)
+        with pytest.raises(PermissionError):
+            reset_qr_for_reverify(str(tmp_path))
+
+    def test_reset_qr_missing_file_is_silent(self, tmp_path: Path):
+        from skills.planner.shared.verify_state import reset_qr_for_reverify
+
+        # No qr-*.json files exist
+        reset_qr_for_reverify(str(tmp_path))  # must not raise
+
+
+# --- Escalation SSOT (DL-010) -----------------------------------------------
+
+def test_both_escalation_builders_render_shared_banner(tmp_path):
+    """Both the QR gate and the verify gate escalation build from the shared
+    _render_iteration_limit_banner helper, so they share the skeleton lines:
+    format_gate_result(False) banner + ESCALATE/INTENT.md prose + first two
+    format_forbidden lines.
+    """
+    from skills.planner.orchestrator.executor import _build_verify_iteration_escalation
+    from skills.planner.shared.gates import _build_iteration_limit_escalation
+    from skills.planner.shared.schema import VerifyFile, VerifyResult
+
+    res = _build_iteration_limit_escalation(
+        module_path="m", qr_name="QR", step=5, iteration=5,
+        pass_step=6, state_dir=str(tmp_path), qr_state=None,
+    )
+    qr_out = res.output
+
+    # Build a verify escalation output
+    vf = VerifyFile(
+        iteration=5,
+        results=[
+            VerifyResult.model_validate({"check": "suite", "status": "fail", "summary": "1 failed"}),
+            VerifyResult.model_validate({"check": "lint", "status": "pass", "summary": "ok"}),
+            VerifyResult.model_validate({"check": "type", "status": "pass", "summary": "0 errors"}),
+        ],
+    )
+    verify_out = _build_verify_iteration_escalation(str(tmp_path), vf)
+
+    # Common skeleton: format_gate_result(False) + ESCALATE prose + first two format_forbidden lines
+    assert format_gate_result(passed=False) in qr_out
+    assert format_gate_result(passed=False) in verify_out
+    assert "ESCALATE TO USER" in qr_out
+    assert "ESCALATE TO USER" in verify_out
+    assert "INTENT.md" in qr_out
+    assert "INTENT.md" in verify_out
+    assert "Looping back to the fixer automatically" in qr_out
+    assert "Looping back to the fixer automatically" in verify_out
+    assert "Proceeding without an explicit user decision" in qr_out
+    assert "Proceeding without an explicit user decision" in verify_out
+    # Verify-specific text not in QR output
+    assert "FINAL VERIFICATION REACHED" in verify_out
+    assert "QR REACHED" not in verify_out
+    assert "QR REACHED" in qr_out
+    assert "FINAL VERIFICATION REACHED" not in qr_out
+
+
+# --- Guidance ordering (DL-012) ---------------------------------------------
+
+def test_impl_docs_stale_check_routes_to_stale_guidance_before_temporal():
+    """When a STALE_COMMENTS check text mentions 'temporal' as a contrast, it
+    must match the stale rule (specific) before the temporal rule (broad single
+    token), so the stale verification block is returned.
+    """
+    from skills.planner.quality_reviewer.prompts.content import ImplDocsVerify
+
+    v = ImplDocsVerify()
+    guidance = v.get_verification_guidance(
+        {"scope": "*", "check": "STALE_COMMENTS check (distinct from temporal contamination)"},
+        "/tmp/x",
+    )
+    lines = "\n".join(guidance)
+    assert "STALE COMMENTS VERIFICATION" in lines
+    # The temporal block should NOT be rendered (stale matched first). Its
+    # distinctive header is absent from the stale block (which only mentions
+    # lower-case "temporal contamination" as a contrast), so this fails loudly
+    # if the broad temporal rule ever shadows the stale rule again.
+    assert "TEMPORAL CONTAMINATION CHECK:" not in lines
 
 
 if __name__ == "__main__":

@@ -577,6 +577,10 @@ if True:
         """
 
         iteration: int = 1
+        # Fingerprint of the recorded FAIL set at the last iteration bump.
+        # Idempotency key so a transient verify re-render does not double-count
+        # one fix cycle (see cli/verify.py record / _verify_fail_signature).
+        iteration_sig: str | None = None
         results: list[VerifyResult] = Field(default_factory=list)
 
 

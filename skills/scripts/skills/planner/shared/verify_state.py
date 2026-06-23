@@ -9,7 +9,6 @@ unparseable file counts as "not green", never as a pass).
 
 from __future__ import annotations
 
-import contextlib
 from pathlib import Path
 
 from skills.planner.shared.qr.utils import _fix_field_safe
@@ -41,16 +40,11 @@ def load_verify_state(state_dir: str) -> VerifyFile | None:
 
 def verify_is_complete(vf: VerifyFile) -> bool:
     """True only when all three checks (suite/lint/type) are recorded exactly once."""
-    return {r.check for r in vf.results} == set(VERIFY_CHECKS)
+    return len(vf.results) == len(VERIFY_CHECKS) and {r.check for r in vf.results} == set(VERIFY_CHECKS)
 
 
 def verify_failures(vf: VerifyFile) -> list[VerifyResult]:
     return [r for r in vf.results if r.status == "fail"]
-
-
-def verify_all_pass(vf: VerifyFile) -> bool:
-    """True when the record is complete AND every check passed."""
-    return verify_is_complete(vf) and not verify_failures(vf)
 
 
 def verify_has_failures(state_dir: str) -> bool:
@@ -88,5 +82,4 @@ def reset_qr_for_reverify(state_dir: str) -> None:
     the loop.
     """
     for phase in ("impl-code", "impl-docs"):
-        with contextlib.suppress(OSError):
-            (Path(state_dir) / f"qr-{phase}.json").unlink(missing_ok=True)
+        (Path(state_dir) / f"qr-{phase}.json").unlink(missing_ok=True)

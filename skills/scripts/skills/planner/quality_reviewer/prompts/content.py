@@ -273,6 +273,7 @@ SEVERITY ASSIGNMENT (per conventions/severity.md, impl-code scope):
   COULD (iterations 1-2) - COSMETIC:
     - TOOLCHAIN_CATCHABLE: errors the compiler/linter would flag
     - DEAD_CODE: unused functions, impossible branches
+    - DEAD_PARAMS: function parameters never referenced in the body
     - FORMATTER_FIXABLE: style issues"""
 
 
@@ -362,6 +363,11 @@ SEVERITY ASSIGNMENT (per conventions/severity.md, impl-docs scope):
     - CLAUDE.md format violations
     - README.md missing where scope warrants
     - WHY-not-WHAT violations
+    - STALE_COMMENTS: comment describes behavior the code no longer exhibits
+      (distinct from TEMPORAL_CONTAMINATION / BASELINE_REFERENCE: the code still
+      exists and the wording is not change-relative -- the comment is just wrong now)
+    - FALSE_RATIONALE: comment states a WHY the code or decision log does not
+      support (the reasoning is fabricated/incorrect, not merely missing)
 
   COULD (iterations 1-2):
     - Minor formatting inconsistencies
@@ -662,6 +668,19 @@ class ImplCodeVerify(VerifyBase):
                 ],
             ),
             (
+                # Before "code quality" (a broad predicate) so a DEAD_PARAMS check
+                # routes here, not to the generic quality block (first-match).
+                lambda c: "dead" in c and "param" in c,
+                [
+                    "DEAD PARAMS VERIFICATION:",
+                    "  For each function the change touches, compare its parameter",
+                    "  list against the parameters actually referenced in the body.",
+                    "  - FAIL a parameter never referenced in the body (and not",
+                    "    required by an overridden signature / interface contract).",
+                    "",
+                ],
+            ),
+            (
                 lambda c: "code quality" in c,
                 [
                     "CODE QUALITY CHECK:",
@@ -830,6 +849,37 @@ class ImplDocsVerify(VerifyBase):
                     "  and confirm every acceptance criterion is satisfied by the authored docs.",
                     "  - A milestone with NO acceptance_criteria is vacuously satisfied (PASS).",
                     "  - FAIL a criterion only with concrete evidence it is unmet.",
+                    "",
+                ],
+            ),
+            (
+                # Before the why/what rule so a STALE_COMMENTS check routes here,
+                # not to the generic WHY-NOT-WHAT block (first-match).
+                lambda c: "stale" in c,
+                [
+                    "STALE COMMENTS VERIFICATION:",
+                    "  Read each comment/docstring against the CURRENT code it describes.",
+                    "  - FAIL when the comment describes behavior the code no longer has",
+                    "    (e.g. an old return type, a removed parameter, changed control flow).",
+                    "  - Distinct from temporal contamination (change-relative wording) and",
+                    "    baseline reference (mention of removed code): here the code exists,",
+                    "    the comment is simply inaccurate now.",
+                    "",
+                ],
+            ),
+            (
+                # Before why/what: a FALSE_RATIONALE check names a rationale (~why) and
+                # would otherwise be shadowed by the WHY-NOT-WHAT block (first-match).
+                lambda c: "false" in c and "rationale" in c,
+                [
+                    "FALSE RATIONALE VERIFICATION:",
+                    "  For each comment that states a reason/trade-off/design choice,",
+                    "  confirm the stated WHY is actually true of the code and consistent",
+                    "  with the decision log.",
+                    "  - FAIL a rationale the code contradicts (e.g. 'uses polling because",
+                    "    webhooks are unreliable' while the code is event-driven).",
+                    "  - Differs from WHY-NOT-WHAT (missing or mis-shaped reasoning):",
+                    "    this flags reasoning that is present but FALSE.",
                     "",
                 ],
             ),

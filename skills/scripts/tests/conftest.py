@@ -42,6 +42,25 @@ def write_qr(state_dir: Path, phase: str, items: list[dict], *, iteration: int =
     )
 
 
+def write_verify(
+    state_dir: Path, results: list[tuple[str, str, str]], *, iteration: int = 1
+) -> None:
+    """Write verify.json into state_dir (final-verification test helper).
+
+    results is a list of (check, status, summary) triples. Mirrors what
+    cli/verify.py writes, so gate tests can set a precise iteration / fail-set
+    without paying the subprocess cost of the recorder.
+    """
+    (Path(state_dir) / "verify.json").write_text(
+        json.dumps(
+            {
+                "iteration": iteration,
+                "results": [{"check": c, "status": s, "summary": m} for c, s, m in results],
+            }
+        )
+    )
+
+
 def import_all_skills() -> list[tuple[str, Exception]]:
     """Import all skill modules to populate workflow registry.
 

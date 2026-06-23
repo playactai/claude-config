@@ -44,8 +44,8 @@ EXECUTOR_GATE_CONFIG: dict[int, tuple] = {
     9: (
         PHASE_QR_NAME["impl-docs"],
         6,
-        10,
-        "Documentation verified. Proceed to retrospective.",
+        10,  # step 10 is Final Verification (run suite/lint/type); retrospective is step 12
+        "Documentation verified. Proceed to final verification.",
         AgentRole.TECHNICAL_WRITER,
     ),
 }

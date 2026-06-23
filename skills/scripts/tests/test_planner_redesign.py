@@ -519,6 +519,58 @@ def test_plan_design_step5_mandates_sweep_token():
     assert "Test-sweep:" in PLAN_DESIGN_STEP_5_GENERATE
 
 
+def test_impl_code_dead_params_verify_guidance():
+    # DEAD_PARAMS check routes to its block, not the broad "code quality" block.
+    from skills.planner.quality_reviewer.prompts.content import (
+        IMPL_CODE_STEP_5_GENERATE,
+        ImplCodeVerify,
+    )
+
+    assert "DEAD_PARAMS" in IMPL_CODE_STEP_5_GENERATE
+    guidance = "\n".join(
+        ImplCodeVerify().get_verification_guidance(
+            {"scope": "*", "check": "DEAD_PARAMS: unused parameter in foo"}, "/tmp/x"
+        )
+    )
+    assert "DEAD PARAMS VERIFICATION:" in guidance
+    assert "CODE QUALITY CHECK:" not in guidance
+
+
+def test_impl_docs_stale_comments_verify_guidance():
+    from skills.planner.quality_reviewer.prompts.content import (
+        IMPL_DOCS_STEP_5_GENERATE,
+        ImplDocsVerify,
+    )
+
+    assert "STALE_COMMENTS" in IMPL_DOCS_STEP_5_GENERATE
+    guidance = "\n".join(
+        ImplDocsVerify().get_verification_guidance(
+            {"scope": "*", "check": "STALE_COMMENTS: docstring describes old return type"},
+            "/tmp/x",
+        )
+    )
+    assert "STALE COMMENTS VERIFICATION:" in guidance
+
+
+def test_impl_docs_false_rationale_not_shadowed_by_why_what():
+    # A FALSE_RATIONALE check names a rationale (~why); the rule sits before the
+    # why/what rule so it isn't shadowed (select_check_guidance is first-match).
+    from skills.planner.quality_reviewer.prompts.content import (
+        IMPL_DOCS_STEP_5_GENERATE,
+        ImplDocsVerify,
+    )
+
+    assert "FALSE_RATIONALE" in IMPL_DOCS_STEP_5_GENERATE
+    guidance = "\n".join(
+        ImplDocsVerify().get_verification_guidance(
+            {"scope": "*", "check": "FALSE_RATIONALE: comment claims why but code differs"},
+            "/tmp/x",
+        )
+    )
+    assert "FALSE RATIONALE VERIFICATION:" in guidance
+    assert "WHY-NOT-WHAT VERIFICATION:" not in guidance
+
+
 def test_doc_deliverable_unsatisfied_is_must_not_should():
     # A doc-only milestone's whole purpose is its deliverable; an unproduced one is
     # knowledge loss. It must block all iterations (escalating to the user at the

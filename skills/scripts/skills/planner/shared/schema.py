@@ -559,6 +559,26 @@ if True:
         iteration_sig: str | None = None
         items: list[QRItem] = Field(default_factory=list)
 
+    class VerifyResult(BaseModel):
+        """One final-verification check result (suite / lint / type)."""
+
+        check: Literal["suite", "lint", "type"]
+        status: Literal["pass", "fail"]
+        summary: str  # the command's actual summary line (audit trail + fix detail)
+
+    class VerifyFile(BaseModel):
+        """verify.json -- the executor's final suite/lint/type record.
+
+        Written by cli/verify.py from the LLM-run command results; read by the
+        Final Verification gate (shared/verify_state.py). iteration counts FAILED
+        verify cycles so the gate escalates to the user at QR_ITERATION_LIMIT
+        instead of looping a red suite forever. Kept out of validate_state and the
+        QR machinery: it is a small binary record the gate reads fail-closed.
+        """
+
+        iteration: int = 1
+        results: list[VerifyResult] = Field(default_factory=list)
+
 
 # =============================================================================
 # Validation Functions
@@ -721,6 +741,8 @@ __all__ = [
     "RejectedAlternative",
     "Risk",
     "SchemaValidationError",
+    "VerifyFile",
+    "VerifyResult",
     "Wave",
     "canonicalize_severity",
     "plan_completeness_errors",

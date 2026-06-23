@@ -41,3 +41,4 @@ All plan state lives in plan.json. Context captured separately in context.json. 
 |                   | code_intents)                           |                     |                                |
 | `context.json`    | User-provided planning context          | frozen after step 2 | Sub-agent context handover     |
 | `qr-{phase}.json` | QA items for specific phase (ephemeral) | ephemeral           | QA decomposition, verification |
+| `verify.json`     | Final suite/lint/type record (executor step 10) | written by cli/verify.py | Final-verification gate |

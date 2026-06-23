@@ -24,6 +24,7 @@ All state mutations (except initial context.json) happen via Python CLI commands
 | `plan.json`       | Pydantic v2    | Step 1 init | CLI commands   | mutable                |
 | `context.json`    | Loose JSON     | Step 2      | LLM Write tool | frozen after step 2    |
 | `qr-{phase}.json` | QA item schema | QR dispatch | LLM during QR  | ephemeral per QR cycle |
+| `verify.json`     | Pydantic v2    | Step 10     | `cli/verify.py`| suite/lint/type record |
 
 ### plan.json Schema
 
@@ -116,29 +117,42 @@ Terminal on PASS at step 6: **PLAN APPROVED**.
 
 Code Intent (`code_intents[]`) is the binding behavioral contract. There are no plan-time unified diffs. At execution the developer regenerates implementation just-in-time per wave against the live file from Code Intent.
 
-### Executor Workflow (10 steps)
+### Executor Workflow (12 steps)
 
-| Step | Name              | Mutates           | Agent        |
-| ---- | ----------------- | ----------------- | ------------ |
-| 1    | init              | -                 | Orchestrator |
-| 2    | load-verify       | -                 | Orchestrator |
-| 3    | impl-execute      | Codebase files    | Developer    |
-| 4    | impl-code-qr-decompose | qr-impl-code.json | QR      |
-| 5    | impl-code-qr-verify   | qr-impl-code.json | QR      |
-| 6    | impl-code-qr-gate | -                 | Orchestrator |
-| 7    | impl-docs-execute | Codebase docs     | TW           |
-| 8    | impl-docs-qr-decompose | qr-impl-docs.json | QR     |
-| 9    | impl-docs-qr-verify   | qr-impl-docs.json | QR     |
-| 10   | impl-docs-qr-gate | -                 | Orchestrator |
+| Step | Name                   | Mutates            | Agent              |
+| ---- | ---------------------- | ------------------ | ------------------ |
+| 1    | exec-init (analyze plan, transcribe waves) | Creates plan.json | Orchestrator |
+| 2    | impl-code-work (wave-aware; verify-fix mode on a verify failure) | Codebase files | Developer |
+| 3    | impl-code-qr-decompose | qr-impl-code.json  | QR                 |
+| 4    | impl-code-qr-verify    | qr-impl-code.json  | QR                 |
+| 5    | impl-code-qr-gate      | -                  | Orchestrator       |
+| 6    | impl-docs-work         | Codebase docs      | TW                 |
+| 7    | impl-docs-qr-decompose | qr-impl-docs.json  | QR                 |
+| 8    | impl-docs-qr-verify    | qr-impl-docs.json  | QR                 |
+| 9    | impl-docs-qr-gate      | -                  | Orchestrator       |
+| 10   | final-verify (run full suite/lint/type) | verify.json | Orchestrator (LLM runs commands) |
+| 11   | final-verify-gate (green -> retro; red -> reset QR + step 2; ceiling -> user) | resets qr-*.json on fail | Orchestrator |
+| 12   | retrospective          | -                  | Orchestrator       |
 
 impl-code QR is the single authoritative code review. exec-docs (impl-docs phase) authors ALL documentation directly in the real implemented source (inline comments, docstrings from Decision Log + Invisible Knowledge, plus CLAUDE.md and README).
+
+**Final Verification gate** (steps 10-11): exec-docs (step 6) edits source comments
+after the last code test, and the per-wave test runs in step 2 are advisory prose,
+so the executor ends with a hard gate. Step 10 runs the full suite/lint/type and
+records `verify.json` via `cli/verify.py` (the LLM types the verdict, so the gate
+narrows but does not eliminate that trust -- see the consistency guardrails there).
+Step 11 routes deterministically: all green -> retrospective; any red -> reset the
+QR state (so the fix gets a FRESH code+doc QR review, not a re-verify of stale
+PASS items) and route to step 2 verify-fix mode; still red after `QR_ITERATION_LIMIT`
+cycles -> escalate to the user. A red suite/lint/type cannot reach the retrospective
+on its own.
 
 ## Components
 
 ```
 orchestrator/
   planner.py      6-step planning workflow
-  executor.py     10-step execution workflow
+  executor.py     12-step execution workflow (adds final-verify run + gate)
 
 architect/
   plan_design.py  Plan creation (exploration, milestones, code_intents, diagram render)
@@ -169,6 +183,8 @@ state/
 
 cli/
   plan.py         plan.json manipulation commands
+  qr.py           qr-{phase}.json item mutation (parallel-safe, file-locked)
+  verify.py       verify.json recorder (final suite/lint/type results)
 ```
 
 ## QR Gate Mechanics

@@ -104,6 +104,45 @@ def _has_blocking_todo_from_state(qr_state: dict | None) -> bool:
     return bool(_blocking_items_from_state(qr_state, "TODO"))
 
 
+def _render_iteration_limit_banner(
+    title: str,
+    limit_line: str,
+    detail_lines: list[str],
+    accept_block: list[str],
+    *,
+    forbidden_third_item: str = "Hiding or downgrading the unresolved findings",
+) -> str:
+    """Render the common iteration-limit escalation skeleton.
+
+    Both the QR gate (gates.py) and the Final Verification gate (executor.py)
+    build the same user-escalation banner at the iteration ceiling; this helper
+    provides the shared skeleton each caller wraps with its specific content.
+    """
+    parts = [
+        format_gate_result(passed=False),
+        "",
+        limit_line,
+        "",
+    ]
+    parts.extend(detail_lines)
+    parts.extend([
+        "",
+        "ESCALATE TO USER -- the workflow will NOT loop again on its own.\n"
+        f"User authority is absolute (INTENT.md). Use {ESCALATE_HANDLER} to ask how to proceed:",
+        "",
+    ])
+    parts.extend(accept_block)
+    parts.extend([
+        "",
+        format_forbidden(
+            "Looping back to the fixer automatically",
+            "Proceeding without an explicit user decision",
+            forbidden_third_item,
+        ),
+    ])
+    return f"{title}\n{'=' * len(title)}\n\n" + "\n".join(parts)
+
+
 def _build_iteration_limit_escalation(
     module_path: str,
     qr_name: str,
@@ -124,26 +163,17 @@ def _build_iteration_limit_escalation(
     """
     findings = _unresolved_blocking_findings_from_state(qr_state, iteration)
 
-    parts = [
-        format_gate_result(passed=False),
-        "",
-        f"QR REACHED THE ITERATION LIMIT ({QR_ITERATION_LIMIT}).",
-        "",
+    detail_lines = [
         f"Blocking findings still unresolved after {iteration} iterations:",
         "",
     ]
-    parts.extend(findings or ["  (see qr state; no per-item findings recorded)"])
-    parts.append("")
-    parts.append(
-        "ESCALATE TO USER -- the workflow will NOT loop again on its own.\n"
-        f"User authority is absolute (INTENT.md). Use {ESCALATE_HANDLER} to ask how to proceed:"
-    )
-    parts.append("")
+    detail_lines.extend(findings or ["  (see qr state; no per-item findings recorded)"])
+
     if pass_step is not None:
         accept_cmd = f"cd {shell_quote(str(SKILLS_DIR))} && uv run python -m {module_path} --step {pass_step}"
         if state_dir:
             accept_cmd += f" --state-dir {shell_quote(state_dir)}"
-        parts.append(f"  Accept (proceed despite findings):\n    {accept_cmd}")
+        accept_text = f"  Accept (proceed despite findings):\n    {accept_cmd}"
     else:
         # Terminal gate (planner, pass_step=None): "Accept" must FINALIZE the plan,
         # not just print prose. Re-invoke THIS gate step with --accept-findings so
@@ -156,19 +186,20 @@ def _build_iteration_limit_escalation(
         )
         if state_dir:
             accept_cmd += f" --state-dir {shell_quote(state_dir)}"
-        parts.append(f"  Accept (approve the plan as-is and finalize):\n    {accept_cmd}")
-    parts.append("  Abort: stop here. Do NOT invoke a next step; report the findings to the user.")
-    parts.append("")
-    parts.append(
-        format_forbidden(
-            "Looping back to the fixer automatically",
-            "Proceeding without an explicit user decision",
-            "Hiding or downgrading the unresolved findings",
-        )
-    )
+        accept_text = f"  Accept (approve the plan as-is and finalize):\n    {accept_cmd}"
+    accept_block = [
+        accept_text,
+        "  Abort: stop here. Do NOT invoke a next step; report the findings to the user.",
+    ]
 
     title = f"{qr_name} Gate -- Iteration Limit Reached"
-    body = f"{title}\n{'=' * len(title)}\n\n" + "\n".join(parts)
+    body = _render_iteration_limit_banner(
+        title=title,
+        limit_line=f"QR REACHED THE ITERATION LIMIT ({QR_ITERATION_LIMIT}).",
+        detail_lines=detail_lines,
+        accept_block=accept_block,
+        forbidden_third_item="Hiding or downgrading the unresolved findings",
+    )
     return GateResult(output=body, terminal_pass=False)
 
 

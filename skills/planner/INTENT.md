@@ -571,7 +571,7 @@ Step 6: plan-design-qr-route
 
 ### Execution Workflow (orchestrator/executor.py)
 
-10 steps. Implements the approved plan.
+12 steps. Implements the approved plan.
 
 ```
 Step 1: exec-init
@@ -630,10 +630,26 @@ Step 9: impl-docs-qr-route
   Route: All PASS -> delete qr file, proceed to Step 10
          Any FAIL -> loop to Step 6
 
-Step 10: wave-next
-  Action: Advance to next wave, repeat Steps 2-9 for each wave
-  Route: More waves -> loop to Step 2
-         All waves complete -> EXECUTION COMPLETE
+Step 10: final-verify
+  Action: Run the full test suite + lint + type-check against the final code AND
+          docs; record the three results to verify.json (cli/verify.py). Placed
+          AFTER doc QR because exec-docs (Step 6) edits source comments/docstrings
+          after the last code test, and Step 2's per-wave test runs are advisory.
+  Next: Step 11
+
+Step 11: final-verify-gate
+  Route: All green -> Step 12 (retrospective)
+         Any red   -> reset qr-impl-code/-docs.json (so the fix gets a FRESH
+                      code+doc QR review, not a re-verify of stale PASS items) and
+                      loop to Step 2 in verify-fix mode; the fix then re-runs code
+                      QR -> docs -> doc QR -> final-verify
+         Still red at QR_ITERATION_LIMIT -> escalate to user (accept -> Step 12, abort)
+  Note: routing is deterministic on verify.json; the pass/fail VERDICT is
+        LLM-asserted (cli/verify.py guardrails narrow but do not close that trust).
+
+Step 12: retrospective
+  Action: Present execution retrospective -> EXECUTION COMPLETE
+          (waves loop within Step 2: all waves complete before Code QR)
 ```
 
 ## Script Organization
@@ -650,7 +666,7 @@ Scripts follow router-dispatch pattern. Each QR-able phase has:
 skills/planner/
   orchestrator/
     planner.py       -- 6-step planning workflow
-    executor.py      -- 10-step execution workflow
+    executor.py      -- 12-step execution workflow
   architect/
     plan_design.py            -- router (detects state, dispatches)
     plan_design_execute.py    -- first execution (6 steps)

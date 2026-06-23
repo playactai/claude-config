@@ -201,6 +201,9 @@ Add flags when:
   - Normal: [e.g., "successful retry after transient failure"]
   - Edge: [e.g., "max retries exhausted", "zero delay"]
   - Error: [e.g., "non-retryable error returns immediately"]
+- **Coupling sweep**: for any Code Intent that modifies/removes behavior in an
+  existing function, list EVERY coupled test class -- sweep the suite by function
+  name, by its callers, and by the changed behavior -- not just the obvious one.
 
 Skip tests when: user explicitly stated no tests, OR milestone is documentation-only,
 OR project docs prohibit tests for this component. State skip reason explicitly.

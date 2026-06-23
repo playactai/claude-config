@@ -100,7 +100,11 @@ Focus on:
 
 OUT OF SCOPE (verified at execution):
   - Code correctness (impl-code phase)
-  - Documentation quality (impl-docs phase)"""
+  - Documentation quality (impl-docs phase)
+
+Verifying milestone.tests is COMPLETE may require reading the test suite -- that
+checks the plan's test enumeration against codebase reality (plan structure), not
+code correctness (still impl-code's job)."""
 
 
 PLAN_DESIGN_STEP_2_CONCERNS = """\
@@ -111,6 +115,9 @@ Brainstorm concerns specific to PLAN STRUCTURE:
   - Invalid references (decision_refs point nowhere)
   - Reasoning chains too shallow
   - Risks identified but not addressed
+  - Incomplete test sweep: a code_intent changes an existing function but
+    milestone.tests covers only the obvious coupled test (sibling tests on the
+    same behavior missed)
 
 DO NOT brainstorm code or documentation concerns (out of scope)."""
 
@@ -133,6 +140,8 @@ RISKS:
 MILESTONES:
   - Each milestone (ID, name, count of code_intents)
   - Each code_intent with decision_refs (ID, which decisions referenced)
+  - Each code_intent whose function modifies existing behavior: the tests
+    currently exercising that function (the sweep target)
 
 INVISIBLE KNOWLEDGE:
   - system, invariants[], tradeoffs[] content"""
@@ -155,6 +164,9 @@ SEVERITY ASSIGNMENT (per conventions/severity.md, plan-design scope):
     - Shallow reasoning chains (premise without implication)
     - Missing risk mitigations
     - Incomplete constraint documentation
+    - TEST_SWEEP_INCOMPLETE: a code_intent modifies an existing function but
+      milestone.tests omits a coupled test class. Emit one umbrella item whose
+      `check` BEGINS WITH "Test-sweep:" so the verifier routes it correctly.
 
   COULD (iterations 1-2):
     - Cosmetic plan formatting
@@ -501,6 +513,24 @@ class PlanDesignVerify(VerifyBase):
                     "  - Policy defaults affect user/org (lifecycle, capacity, failure handling)",
                     "  - Must have Tier 1 (user-specified) backing in decision_log",
                     "  - Technical defaults can use Tier 2-3 backing",
+                    "",
+                ],
+            ),
+            (
+                # Before the code_intent rule: select_check_guidance is first-match,
+                # and a sweep check naming "code_intent" would otherwise be shadowed.
+                lambda c: "test-sweep" in c,
+                [
+                    "TEST-SWEEP VERIFICATION:",
+                    "  For each code_intent that modifies/removes behavior in an EXISTING",
+                    "  function, confirm milestone.tests lists EVERY coupled test -- not",
+                    "  just the obvious one.",
+                    "  - Read the function named in the code_intent.",
+                    "  - Search the test suite for ALL tests exercising it: by function",
+                    "    name, by its callers, and by the behavior being changed/removed.",
+                    "  - FAIL if any coupled test class is absent from milestone.tests.",
+                    "  (Grep/Read; codebase graph optional. This checks the plan's test",
+                    "   enumeration vs codebase reality -- not code correctness.)",
                     "",
                 ],
             ),

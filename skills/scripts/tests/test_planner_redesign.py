@@ -483,6 +483,42 @@ def test_impl_code_testing_strategy_verify_guidance():
     assert "TESTING-STRATEGY VERIFICATION:" in guidance
 
 
+def test_plan_design_test_sweep_verify_guidance():
+    from skills.planner.quality_reviewer.prompts.content import PlanDesignVerify
+
+    guidance = "\n".join(
+        PlanDesignVerify().get_verification_guidance(
+            {"scope": "*", "check": "Test-sweep: M-001 coupled tests"}, "/tmp/x"
+        )
+    )
+    assert "TEST-SWEEP VERIFICATION:" in guidance
+
+
+def test_plan_design_test_sweep_not_shadowed_by_code_intent():
+    # select_check_guidance is first-match; the sweep rule sits before the
+    # code_intent rule so a sweep check naming "code_intent" still routes to the
+    # sweep block, not the generic CODE INTENT block. Guards the ordering fix.
+    from skills.planner.quality_reviewer.prompts.content import PlanDesignVerify
+
+    guidance = "\n".join(
+        PlanDesignVerify().get_verification_guidance(
+            {"scope": "*", "check": "Test-sweep: code_intent CI-001 coupled tests"},
+            "/tmp/x",
+        )
+    )
+    assert "TEST-SWEEP VERIFICATION:" in guidance
+    assert "CODE INTENT VERIFICATION:" not in guidance
+
+
+def test_plan_design_step5_mandates_sweep_token():
+    # Produce/verify coupling: the decompose severity guidance must mint the
+    # "Test-sweep:" token the verify predicate keys on, else the rule is dead code.
+    from skills.planner.quality_reviewer.prompts.content import PLAN_DESIGN_STEP_5_GENERATE
+
+    assert "TEST_SWEEP_INCOMPLETE" in PLAN_DESIGN_STEP_5_GENERATE
+    assert "Test-sweep:" in PLAN_DESIGN_STEP_5_GENERATE
+
+
 def test_doc_deliverable_unsatisfied_is_must_not_should():
     # A doc-only milestone's whole purpose is its deliverable; an unproduced one is
     # knowledge loss. It must block all iterations (escalating to the user at the

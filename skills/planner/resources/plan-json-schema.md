@@ -124,7 +124,11 @@ and data-flow diagrams live in `diagram_graphs` (scope `invisible_knowledge`), n
 
 ## Milestone
 
-CLI: `set-milestone`. `tests` is a flat list of free-form descriptions.
+CLI: `set-milestone`. `tests` is a flat list of free-form descriptions. For any
+`code_intent` that modifies or removes behavior in an existing function, `tests`
+must enumerate **every** test coupled to that function — found by sweeping the
+suite (by function name, by its callers, and by the specific behavior changed) —
+not only the obvious one.
 
 ```json
 {

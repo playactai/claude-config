@@ -101,6 +101,8 @@ Plan
                           -- "file:tests/test_auth.py"
                           -- "scenario:EDGE empty token returns 401"
                           -- "skip:no integration environment"
+                          -- sweep: EVERY test coupled to a changed function,
+                          --        not just the obvious one
 
     code_intents: CodeIntent[]  -- binding behavioral contract; populated by Architect
       id: "CI-001"

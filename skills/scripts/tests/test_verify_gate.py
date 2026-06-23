@@ -14,7 +14,7 @@ import sys
 from pathlib import Path
 
 import pytest
-from conftest import write_verify
+from conftest import write_verify  # pyright: ignore[reportMissingImports]
 
 from skills.planner.orchestrator import executor as ex
 from skills.planner.shared.qr.constants import QR_ITERATION_LIMIT

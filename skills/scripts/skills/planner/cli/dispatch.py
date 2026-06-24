@@ -61,10 +61,13 @@ def dispatch(methods: dict, method: str, params: dict, ctx) -> Any:
     # Build kwargs: start with optional defaults, override with provided params
     kwargs = {k: params.get(k, v) for k, v in optional.items()}
     kwargs.update({k: params[k] for k in required if k in params})
-    # Also include any extra optional params that were provided
-    for k in params:
-        if k not in kwargs:
-            kwargs[k] = params[k]
+    # Reject unknown keys (the valid set is required + optional) so a typo or a
+    # hyphenated key (e.g. "decision-refs" vs "decision_refs") returns an actionable
+    # frame instead of a deep TypeError from func(ctx, **kwargs).
+    valid = required | set(optional)
+    unknown = set(params) - valid
+    if unknown:
+        raise ValueError(f"Unknown params: {sorted(unknown)}. Valid: {sorted(valid)}")
 
     return func(ctx, **kwargs)
 

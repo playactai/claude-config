@@ -35,6 +35,28 @@ STEPS = {
 }
 
 
+def _render_method_catalog() -> list[str]:
+    """Render the plan CLI's RPC method catalog as prompt lines.
+
+    Lists each method's full param-key set (underscore form) so the architect copies
+    exact keys instead of inferring them from prose. Deliberately NOT the
+    required/optional split: for the dual create/update commands the signature's
+    required/optional split does not match create-vs-update requiredness, so showing it
+    would mislabel them (the CREATE vs UPDATE note in step 6 carries that distinction).
+    """
+    # Local import: keeps prompt construction self-contained and avoids any module-load
+    # cycle (cli.dispatch / cli.plan_commands do not import architect.*).
+    from skills.planner.cli import plan_commands
+    from skills.planner.cli.dispatch import discover_methods, list_methods
+
+    catalog = list_methods(discover_methods(plan_commands))
+    lines = ["", "RPC METHOD CATALOG -- exact param keys per method (underscores):"]
+    for name in sorted(catalog):
+        keys = sorted(set(catalog[name]["required"]) | set(catalog[name]["optional"]))
+        lines.append(f"  {name:<19}{', '.join(keys) or '(none)'}")
+    return lines
+
+
 def get_step_guidance(step: int, module_path: str | None = None, **kwargs) -> dict:
     """Return guidance for the given step."""
     _provider = PlannerResourceProvider()
@@ -195,6 +217,7 @@ def get_step_guidance(step: int, module_path: str | None = None, **kwargs) -> di
 
     elif step == 6:
         plan_json_schema = _provider.get_resource("plan-json-schema.md")
+        catalog_lines = _render_method_catalog()
         return {
             "title": STEPS[6],
             "actions": [
@@ -223,6 +246,21 @@ def get_step_guidance(step: int, module_path: str | None = None, **kwargs) -> di
                 "BATCH MODE (preferred - reduces process invocations) -- pass JSON via stdin, never inline:",
                 "",
                 'JSON-RPC format: [{"method": "...", "params": {...}, "id": N}, ...]',
+                *catalog_lines,
+                "",
+                "params use the EXACT underscore keys above; CLI flags are the same names",
+                "hyphenated (--decision-refs <-> decision_refs). In batch params ALWAYS use",
+                "underscores. Unknown keys are rejected.",
+                "",
+                "CREATE vs UPDATE (the catalog lists every key, not when each is required):",
+                "  - CREATE (omit id): set-decision needs decision+reasoning; set-milestone",
+                "    needs name; set-intent needs milestone+file+behavior; set-wave needs milestones.",
+                "  - UPDATE (pass id + changed fields): set-intent still needs milestone (its parent);",
+                "    set-wave still needs milestones (its new membership).",
+                "  - version drives CAS on set-decision/set-milestone/set-intent; set-wave has no",
+                "    version. version is rejected on create.",
+                "  - set-diagram / add-diagram-* / list-* / init / validate are not create/update --",
+                "    pass exactly the catalog keys.",
                 "",
                 "  # Write the batch JSON to a file (Write tool), then pipe it in:",
                 f"  {pin_cwd('uv run python -m skills.planner.cli.plan --state-dir $STATE_DIR batch < /tmp/changes.json')}",
@@ -231,7 +269,12 @@ def get_step_guidance(step: int, module_path: str | None = None, **kwargs) -> di
                 "  [",
                 '    {"method": "set-decision", "params": {"decision": "Use polling", "reasoning": "30% webhook failures"}, "id": 1},',
                 '    {"method": "set-milestone", "params": {"name": "Auth stack", "files": "src/auth.py"}, "id": 2},',
-                '    {"method": "set-intent", "params": {"milestone": "M-001", "file": "src/auth.py", "behavior": "Add token validation", "decision_refs": "DL-001"}, "id": 3}',
+                '    {"method": "set-intent", "params": {"milestone": "M-001", "file": "src/auth.py", "behavior": "Add token validation", "decision_refs": "DL-001"}, "id": 3},',
+                '    {"method": "set-wave", "params": {"milestones": "M-001"}, "id": 4},',
+                '    {"method": "set-diagram", "params": {"type": "architecture", "scope": "overview", "title": "System Overview"}, "id": 5},',
+                '    {"method": "add-diagram-node", "params": {"diagram": "DIAG-001", "node_id": "client", "label": "Client", "type": "service"}, "id": 6},',
+                '    {"method": "add-diagram-node", "params": {"diagram": "DIAG-001", "node_id": "server", "label": "Server", "type": "service"}, "id": 7},',
+                '    {"method": "add-diagram-edge", "params": {"diagram": "DIAG-001", "source": "client", "target": "server", "label": "calls", "protocol": "gRPC"}, "id": 8}',
                 "  ]",
                 "",
                 'Response: [{"id": 1, "result": {"id": "DL-001", ...}}, ...]',

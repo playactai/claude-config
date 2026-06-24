@@ -20,6 +20,7 @@ And the §3b "bugs surfaced only by the run logs":
 from __future__ import annotations
 
 import fcntl
+import io
 import json
 import math
 import subprocess
@@ -1437,14 +1438,14 @@ class TestQrCommonExtraction:
         with pytest.raises(ValueError, match="is not valid JSON"):
             load_qr_state_under_lock(bad)
 
-    def test_qr_cli_batch_bad_json_exits_clean(self, tmp_path: Path):
-        # D3: the qr.py batch path must surface malformed input as a clean error_exit
-        # (SystemExit), not leak a raw JSONDecodeError traceback. Mirrors plan.py's
-        # wrapped batch path.
+    def test_qr_cli_batch_bad_json_exits_clean(self, tmp_path: Path, capsys, monkeypatch):
+        # D3: the qr.py batch path must surface malformed STDIN input as a clean
+        # error_exit (SystemExit) with a location hint, not a raw JSONDecodeError
+        # traceback. (Inline batch args are rejected separately; batch reads stdin.)
+        monkeypatch.setattr(sys, "stdin", io.StringIO("not json"))
         with pytest.raises(SystemExit):
-            qr_cli.cli(
-                ["--state-dir", str(tmp_path), "--qr-phase", "impl-code", "batch", "not json"]
-            )
+            qr_cli.cli(["--state-dir", str(tmp_path), "--qr-phase", "impl-code", "batch"])
+        assert "Invalid JSON" in capsys.readouterr().out
 
     def test_is_valid_group_id(self):
         from skills.planner.cli.qr_common import is_valid_group_id
@@ -2440,16 +2441,18 @@ class TestBatchSetupFailure:
         with pytest.raises(ValueError, match="batch could not start"):
             batch(methods, [{"method": "list-milestones", "params": {}, "id": 1}], ctx)
 
-    def test_batch_snapshot_read_failure_exits_clean_cli(self, tmp_path: Path, capsys):
+    def test_batch_snapshot_read_failure_exits_clean_cli(self, tmp_path: Path, capsys, monkeypatch):
         # Same non-ValueError snapshot read failure, end-to-end: the CLI maps the
         # batch-level ValueError to a clean error frame + exit 1, no raw traceback.
+        # Batch reads JSON from stdin (an inline arg is rejected with a guiding error).
         (tmp_path / "plan.json").mkdir()
+        monkeypatch.setattr(
+            sys,
+            "stdin",
+            io.StringIO(json.dumps([{"method": "list-milestones", "params": {}, "id": 1}])),
+        )
         with pytest.raises(SystemExit) as exc_info:
-            plan_cli.cli([
-                "--state-dir", str(tmp_path),
-                "batch",
-                json.dumps([{"method": "list-milestones", "params": {}, "id": 1}]),
-            ])
+            plan_cli.cli(["--state-dir", str(tmp_path), "batch"])
         assert exc_info.value.code == 1
         captured = capsys.readouterr()
         assert "could not start" in (captured.out + captured.err)

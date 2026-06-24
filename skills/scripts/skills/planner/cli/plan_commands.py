@@ -134,7 +134,7 @@ def _check_version(entity, provided: int | None, entity_id: str) -> None:
     if provided != current:
         raise ValueError(
             f"Version mismatch for {entity_id}: provided {provided}, current {current}. "
-            f"Re-read entity and retry with --version {current}"
+            f"Re-read entity and retry with version {current}"
         )
 
 
@@ -191,7 +191,7 @@ def set_milestone(
     tests_list = parse_csv(tests)
 
     if files_list:
-        files_list = [validate_relpath(f, "set-milestone --files") for f in files_list]
+        files_list = [validate_relpath(f, "set-milestone files") for f in files_list]
 
     if id:
         # UPDATE
@@ -241,9 +241,9 @@ def set_milestone(
     else:
         # CREATE
         if version is not None:
-            raise ValueError("--version only valid for updates (when --id provided)")
+            raise ValueError("version is only valid for updates (provide id to update)")
         if not name:
-            raise ValueError("--name required for create")
+            raise ValueError("name required for create")
 
         mid = plan.next_milestone_id()
         number = int(mid.rsplit("-", 1)[1])
@@ -288,12 +288,12 @@ def set_intent(
     # Plan.validate_completeness). Reject so the plan can't be wedged invalid.
     if ms.is_documentation_only:
         raise ValueError(
-            f"milestone {milestone} is documentation-only; clear it with "
-            f"set-milestone --no-documentation-only before adding code intents"
+            f"milestone {milestone} is documentation-only; set documentation_only=false "
+            f"on it via set-milestone before adding code intents"
         )
 
     if file:
-        file = validate_relpath(file, "set-intent --file")
+        file = validate_relpath(file, "set-intent file")
 
     refs_list = parse_csv(decision_refs)
     for ref in refs_list:
@@ -324,9 +324,9 @@ def set_intent(
     else:
         # CREATE
         if version is not None:
-            raise ValueError("--version only valid for updates")
+            raise ValueError("version is only valid for updates (provide id to update)")
         if not file or not behavior:
-            raise ValueError("--file and --behavior required for create")
+            raise ValueError("file and behavior required for create")
 
         cid = plan.next_intent_id(ms)
 
@@ -374,9 +374,9 @@ def set_decision(
     else:
         # CREATE
         if version is not None:
-            raise ValueError("--version only valid for updates")
+            raise ValueError("version is only valid for updates (provide id to update)")
         if not decision or not reasoning:
-            raise ValueError("--decision and --reasoning required for create")
+            raise ValueError("decision and reasoning required for create")
 
         did = plan.next_decision_id()
 
@@ -521,7 +521,7 @@ def set_wave(
         return {"id": wave.id, "operation": "updated"}
 
     if not milestones_list:
-        raise ValueError("--milestones required for create (empty allowed only on update)")
+        raise ValueError("milestones required for create (empty allowed only on update)")
     wid = plan.next_wave_id()
     plan.waves.append(schema["Wave"](id=wid, milestones=milestones_list))
     ctx.save_plan(plan)

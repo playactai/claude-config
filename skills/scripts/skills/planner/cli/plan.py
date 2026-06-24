@@ -1101,7 +1101,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     # Batch RPC subcommand
     batch_p = subparsers.add_parser("batch", help="Execute batch of RPC commands")
-    batch_p.add_argument("input", nargs="?", help="JSON array of requests (stdin if omitted)")
+    # Positional kept only to reject an inline arg with a guiding error; batch reads
+    # JSON from stdin (pipe a file: batch < changes.json).
+    batch_p.add_argument("input", nargs="?", help="(unused; batch reads JSON from stdin)")
 
     # List methods subcommand
     subparsers.add_parser("list-methods", help="List available RPC methods")
@@ -1121,11 +1123,17 @@ def cli(args: list[str] | None = None):
         methods = discover_methods(plan_commands)
         ctx = plan_commands.PlanContext(state_dir=Path(parsed.state_dir))
 
+        # batch reads JSON from stdin only -- an inline arg can't escape apostrophes
+        # in prose behavior/reasoning, so reject it with a guiding message.
+        if hasattr(parsed, "input") and parsed.input:
+            error_exit(
+                "batch reads JSON from stdin, not an inline argument. Write the batch "
+                "to a file and pipe it: uv run python -m skills.planner.cli.plan "
+                "--state-dir <dir> batch < changes.json"
+            )
+
         try:
-            if hasattr(parsed, "input") and parsed.input:
-                requests = json.loads(parsed.input)
-            else:
-                requests = json.load(sys.stdin)
+            requests = json.load(sys.stdin)
 
             if not isinstance(requests, list) or not all(isinstance(r, dict) for r in requests):
                 error_exit("batch input must be a JSON array of {method, params} objects")
@@ -1142,6 +1150,11 @@ def cli(args: list[str] | None = None):
                         error_exit(role_err)
 
             results = batch_dispatch(methods, requests, ctx)
+        except json.JSONDecodeError as e:
+            error_exit(
+                f"Invalid JSON in batch input: line {e.lineno} col {e.colno}: {e.msg}. "
+                "Write the batch to a file and pipe it via stdin: batch < changes.json"
+            )
         except (ValueError, OSError) as e:
             error_exit(str(e))
         print(json.dumps(results, indent=2))

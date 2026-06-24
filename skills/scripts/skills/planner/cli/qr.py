@@ -307,17 +307,28 @@ def cli(args: list[str] | None = None):
         methods = discover_methods(qr_commands)
         ctx = qr_commands.QRContext(state_dir=Path(state_dir), phase=phase)
 
+        # batch reads JSON from stdin only -- an inline arg can't escape apostrophes
+        # in prose findings, so reject it with a guiding message.
+        if cmd_args:
+            error_exit(
+                "batch reads JSON from stdin, not an inline argument. Write the batch "
+                "to a file and pipe it: uv run python -m skills.planner.cli.qr "
+                "--state-dir <dir> --qr-phase <phase> batch < changes.json"
+            )
+
         try:
-            if cmd_args:
-                requests = json.loads(cmd_args[0])
-            else:
-                requests = json.load(sys.stdin)
+            requests = json.load(sys.stdin)
 
             if not isinstance(requests, list) or not all(isinstance(r, dict) for r in requests):
                 error_exit("batch input must be a JSON array of {method, params} objects")
 
             results = batch_dispatch(methods, requests, ctx)
-        except ValueError as e:
+        except json.JSONDecodeError as e:
+            error_exit(
+                f"Invalid JSON in batch input: line {e.lineno} col {e.colno}: {e.msg}. "
+                "Write the batch to a file and pipe it via stdin: batch < changes.json"
+            )
+        except (ValueError, OSError) as e:
             error_exit(str(e))
         print(json.dumps(results, indent=2))
         return

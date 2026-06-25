@@ -5,6 +5,8 @@ No decorators needed - write a function, it becomes a method.
 """
 
 import inspect
+import json
+import sys
 from collections.abc import Callable
 from contextlib import nullcontext
 from typing import Any
@@ -58,9 +60,6 @@ def dispatch(methods: dict, method: str, params: dict, ctx) -> Any:
     if missing:
         raise ValueError(f"Missing required params: {sorted(missing)}")
 
-    # Build kwargs: start with optional defaults, override with provided params
-    kwargs = {k: params.get(k, v) for k, v in optional.items()}
-    kwargs.update({k: params[k] for k in required if k in params})
     # Reject unknown keys (the valid set is required + optional) so a typo or a
     # hyphenated key (e.g. "decision-refs" vs "decision_refs") returns an actionable
     # frame instead of a deep TypeError from func(ctx, **kwargs).
@@ -69,6 +68,9 @@ def dispatch(methods: dict, method: str, params: dict, ctx) -> Any:
     if unknown:
         raise ValueError(f"Unknown params: {sorted(unknown)}. Valid: {sorted(valid)}")
 
+    # Every params key is now known and all required are present (checked above), so
+    # the optional defaults simply underlay the provided params in one merge.
+    kwargs = {**optional, **params}
     return func(ctx, **kwargs)
 
 
@@ -237,3 +239,31 @@ def list_methods(methods: dict) -> dict[str, dict]:
             "description": doc,
         }
     return result
+
+
+def read_batch_requests(inline_arg: str | None, usage: str) -> list[dict]:
+    """Read and shape-check a batch RPC request array from stdin.
+
+    Shared by the plan and qr CLIs so the stdin contract -- no inline arg, a JSON
+    array of objects, and a friendly JSON-decode frame -- can't drift between the two
+    surfaces. `inline_arg` is the surface's positional/leftover token (None when
+    absent); ANY provided value is rejected because an inline arg can't escape
+    apostrophes in prose fields. `usage` is the surface-specific invocation echoed in
+    that rejection. Raises ValueError on any misuse; the caller maps it to its own
+    error_exit frame (error_exit is defined per-surface, so it is not called here).
+    """
+    if inline_arg is not None:
+        raise ValueError(
+            "batch reads JSON from stdin, not an inline argument. Write the batch "
+            f"to a file and pipe it: {usage} batch < changes.json"
+        )
+    try:
+        requests = json.load(sys.stdin)
+    except json.JSONDecodeError as e:
+        raise ValueError(
+            f"Invalid JSON in batch input: line {e.lineno} col {e.colno}: {e.msg}. "
+            "Write the batch to a file and pipe it via stdin: batch < changes.json"
+        ) from e
+    if not isinstance(requests, list) or not all(isinstance(r, dict) for r in requests):
+        raise ValueError("batch input must be a JSON array of {method, params} objects")
+    return requests

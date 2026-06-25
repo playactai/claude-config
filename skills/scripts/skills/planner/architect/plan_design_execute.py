@@ -47,12 +47,13 @@ def _render_method_catalog() -> list[str]:
     # Local import: keeps prompt construction self-contained and avoids any module-load
     # cycle (cli.dispatch / cli.plan_commands do not import architect.*).
     from skills.planner.cli import plan_commands
-    from skills.planner.cli.dispatch import discover_methods, list_methods
+    from skills.planner.cli.dispatch import discover_methods, extract_params
 
-    catalog = list_methods(discover_methods(plan_commands))
+    methods = discover_methods(plan_commands)
     lines = ["", "RPC METHOD CATALOG -- exact param keys per method (underscores):"]
-    for name in sorted(catalog):
-        keys = sorted(set(catalog[name]["required"]) | set(catalog[name]["optional"]))
+    for name in sorted(methods):
+        required, optional = extract_params(methods[name])
+        keys = sorted(required | set(optional))
         lines.append(f"  {name:<19}{', '.join(keys) or '(none)'}")
     return lines
 
@@ -255,7 +256,8 @@ def get_step_guidance(step: int, module_path: str | None = None, **kwargs) -> di
                 "CREATE vs UPDATE (the catalog lists every key, not when each is required):",
                 "  - CREATE (omit id): set-decision needs decision+reasoning; set-milestone",
                 "    needs name; set-intent needs milestone+file+behavior; set-wave needs milestones.",
-                "  - UPDATE (pass id + changed fields): set-wave still needs milestones (its new membership);",
+                "  - UPDATE (pass id + changed fields): set-wave still needs milestones (its new",
+                "    membership, replacing the prior one; pass '' to blank the wave);",
                 "    set-intent infers its parent milestone from the intent id (omit it; if passed it must match).",
                 "  - version drives CAS on set-decision/set-milestone/set-intent; set-wave has no",
                 "    version. version is rejected on create.",

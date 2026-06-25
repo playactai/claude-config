@@ -265,6 +265,20 @@ def set_milestone(
         return {"id": mid, "version": 1, "operation": "created"}
 
 
+def _validated_decision_refs(plan, decision_refs: str | None) -> list[str]:
+    """Parse a decision_refs CSV and confirm every ref exists; returns the list.
+
+    Shared by set_intent's create and update paths so each validates refs at the
+    point where a bad ref should surface relative to its own checks (create: after
+    the milestone, so a bad milestone is reported first).
+    """
+    refs_list = parse_csv(decision_refs)
+    for ref in refs_list:
+        if not plan.get_decision(ref):
+            raise ValueError(f"Decision {ref} not found")
+    return refs_list
+
+
 def set_intent(
     ctx: PlanContext,
     milestone: str | None = None,
@@ -298,11 +312,6 @@ def set_intent(
     if file:
         file = validate_relpath(file, "set-intent file")
 
-    refs_list = parse_csv(decision_refs)
-    for ref in refs_list:
-        if not plan.get_decision(ref):
-            raise ValueError(f"Decision {ref} not found")
-
     if id:
         # UPDATE -- the intent id encodes its parent milestone, so locate globally
         # and never require a milestone arg (mirrors set_wave/set_decision: id-only).
@@ -320,6 +329,11 @@ def set_intent(
             )
 
         _check_version(ci, version, id)
+
+        # decision_refs validated after the intent is located and version-checked so the
+        # structural errors (unknown id, wrong parent, stale version) surface before a
+        # stale decision ref -- mirrors the create branch's milestone-before-refs order.
+        refs_list = _validated_decision_refs(plan, decision_refs)
 
         if file:
             ci.file = file
@@ -350,6 +364,9 @@ def set_intent(
                 f"milestone {milestone} is documentation-only; set documentation_only=false "
                 f"on it via set-milestone before adding code intents"
             )
+        # decision_refs validated after the milestone so a bad milestone (the
+        # structural error) is reported before a stale decision ref.
+        refs_list = _validated_decision_refs(plan, decision_refs)
         if not file or not behavior:
             raise ValueError("file and behavior required for create")
 

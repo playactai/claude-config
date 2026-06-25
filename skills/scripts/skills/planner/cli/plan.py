@@ -33,7 +33,7 @@ from ..shared.schema import (
 )
 from . import plan_commands
 from .dispatch import batch as batch_dispatch
-from .dispatch import discover_methods, list_methods
+from .dispatch import discover_methods, list_methods, read_batch_requests
 from .output import EntityResult, VersionMismatchError, exit_with_version_error, print_entity_result
 from .plan_common import (
     apply_documentation_only_toggle,
@@ -386,6 +386,24 @@ class SetMilestoneCommand(Command):
             print_entity_result(EntityResult(id=mid, version=1, operation="created"))
 
 
+def _validated_decision_refs(plan, decision_refs: str | None) -> list[str]:
+    """Parse a decision_refs CSV and confirm each ref exists (CLI surface).
+
+    The argparse twin of plan_commands._validated_decision_refs: emits the CLI's
+    validation_error frame instead of raising. Returns the parsed list.
+    """
+    refs = parse_csv(decision_refs)
+    for dref in refs:
+        if not plan.get_decision(dref):
+            validation_error(
+                "decision_refs",
+                "Valid decision ID",
+                dref,
+                f"Use existing: {', '.join(d.id for d in plan.planning_context.decisions)}",
+            )
+    return refs
+
+
 class SetIntentCommand(Command):
     """Argparse mirror of the RPC set_intent (plan_commands.py).
 
@@ -423,16 +441,6 @@ class SetIntentCommand(Command):
             except ValueError as e:
                 error_exit(str(e))
 
-        decision_refs = parse_csv(args.decision_refs)
-        for dref in decision_refs:
-            if not plan.get_decision(dref):
-                validation_error(
-                    "decision_refs",
-                    "Valid decision ID",
-                    dref,
-                    f"Use existing: {', '.join(d.id for d in plan.planning_context.decisions)}",
-                )
-
         if args.id:
             # UPDATE path -- the intent id encodes its parent milestone, so locate
             # globally and never require --milestone (mirrors set_wave: id-only).
@@ -459,6 +467,11 @@ class SetIntentCommand(Command):
             except VersionMismatchError as e:
                 exit_with_version_error(e)
                 return
+
+            # decision_refs validated after the intent is located and version-checked so the
+            # structural errors (unknown id, wrong parent, stale version) surface before a
+            # stale decision ref -- mirrors the create branch's milestone-before-refs order.
+            decision_refs = _validated_decision_refs(plan, args.decision_refs)
 
             # Update only provided fields
             if args.file:
@@ -498,6 +511,9 @@ class SetIntentCommand(Command):
                     f"'set-milestone --id {args.milestone} --no-documentation-only' "
                     f"before adding code intents"
                 )
+            # decision_refs validated after the milestone so a bad milestone (the
+            # structural error) is reported before a stale decision ref.
+            decision_refs = _validated_decision_refs(plan, args.decision_refs)
             if not args.file or not args.behavior:
                 error_exit("--file and --behavior required for create")
 
@@ -1143,20 +1159,13 @@ def cli(args: list[str] | None = None):
         methods = discover_methods(plan_commands)
         ctx = plan_commands.PlanContext(state_dir=Path(parsed.state_dir))
 
-        # batch reads JSON from stdin only -- an inline arg can't escape apostrophes
-        # in prose behavior/reasoning, so reject it with a guiding message.
-        if hasattr(parsed, "input") and parsed.input:
-            error_exit(
-                "batch reads JSON from stdin, not an inline argument. Write the batch "
-                "to a file and pipe it: uv run python -m skills.planner.cli.plan "
-                "--state-dir <dir> batch < changes.json"
-            )
-
         try:
-            requests = json.load(sys.stdin)
-
-            if not isinstance(requests, list) or not all(isinstance(r, dict) for r in requests):
-                error_exit("batch input must be a JSON array of {method, params} objects")
+            # Shared stdin contract (no inline arg, JSON array of objects, friendly
+            # decode frame); raises ValueError mapped to a clean frame below.
+            requests = read_batch_requests(
+                parsed.input,
+                "uv run python -m skills.planner.cli.plan --state-dir <dir>",
+            )
 
             # Role enforcement: the per-command role check runs after the batch
             # early-return and is never reached. Reject any restricted method
@@ -1170,11 +1179,6 @@ def cli(args: list[str] | None = None):
                         error_exit(role_err)
 
             results = batch_dispatch(methods, requests, ctx)
-        except json.JSONDecodeError as e:
-            error_exit(
-                f"Invalid JSON in batch input: line {e.lineno} col {e.colno}: {e.msg}. "
-                "Write the batch to a file and pipe it via stdin: batch < changes.json"
-            )
         except (ValueError, OSError) as e:
             error_exit(str(e))
         print(json.dumps(results, indent=2))

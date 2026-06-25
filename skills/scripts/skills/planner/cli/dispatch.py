@@ -369,8 +369,9 @@ def read_batch_requests(inline_arg: str | None, usage: str) -> list[dict]:
     #     `method in restricted_methods` raise "unhashable type" (uncaught -> traceback);
     #     requiring a non-empty str also upgrades the otherwise bare "Unknown method: ."
     #     frame an empty/missing method would produce,
-    #   - id: a list/dict id makes batch()'s duplicate-id scan `id in seen_ids` raise
-    #     "unhashable type" (both surfaces, before batch()'s own try/except).
+    #   - id: a list/dict (or bool) id is rejected up front so it never reaches batch()'s
+    #     dedup scan. batch() now guards this directly too (covering direct callers); this
+    #     stdin guard fires first and frames the rejection per-surface.
     for r in requests:
         params = r.get("params")
         if params is not None and not isinstance(params, dict):

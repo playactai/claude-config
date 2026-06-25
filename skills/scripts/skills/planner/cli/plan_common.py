@@ -100,9 +100,10 @@ def parse_csv(value: str | list[str] | None) -> list[str]:
     like 123) so the caller sees a clear error rather than a silent str()-coercion
     that masks the mis-typed RPC value.
     """
-    # Only None means "no value"; falsy non-None scalars (False, 0, 0.0, {}, [])
-    # must fall through to the type checks below so the caller gets a clear
-    # ValueError instead of a silent clear of persisted data.
+    # Only None short-circuits to [] here. Empty collections fall through but still
+    # yield []: "" via the str branch, [] via the list branch. Falsy non-None
+    # SCALARS (False, 0, 0.0, {}) fall through to the type checks and raise a clear
+    # ValueError, instead of silently clearing persisted data.
     if value is None:
         return []
     if isinstance(value, list):

@@ -159,6 +159,57 @@ def test_doc_only_intent_rejection_message_has_no_dashdash(tmp_path: Path):
     assert "--" not in str(exc.value)
 
 
+# --- doc-only guard on set-intent UPDATE (both surfaces) ---------------------
+#
+# The create path rejects an intent under a doc-only milestone; the update path re-adds
+# the same guard as defense-in-depth. The invalid state (a doc-only milestone still
+# holding an intent) is unproducible via the API -- create requires a non-doc-only parent
+# and the documentation_only toggle clears intents on the forward flip -- so these tests
+# seed it by flipping the flag directly on disk.
+
+
+def _wedge_doc_only_with_intent(tmp_path: Path) -> pc.PlanContext:
+    """Seed a doc-only milestone that still holds an intent, by flipping the flag on disk."""
+    ctx = _seed_plan(tmp_path)
+    pc.set_milestone(ctx, name="m", files="a.py")                       # M-001 (code)
+    pc.set_intent(ctx, milestone="M-001", file="a.py", behavior="orig")  # CI-M-001-001
+    plan = json.loads(ctx.plan_path().read_text(encoding="utf-8"))
+    plan["milestones"][0]["is_documentation_only"] = True               # corrupt: bypass the toggle
+    ctx.plan_path().write_text(json.dumps(plan), encoding="utf-8")
+    return ctx
+
+
+def test_set_intent_update_under_doc_only_rejected_rpc(tmp_path: Path):
+    """RPC set_intent UPDATE rejects an intent whose parent milestone is doc-only and
+    leaves the intent's data intact (RPC-neutral message, no --flags)."""
+    ctx = _wedge_doc_only_with_intent(tmp_path)
+    methods = discover_methods(pc)
+    with pytest.raises(ValueError, match=r"documentation-only") as exc:
+        dispatch(methods, "set-intent",
+                 {"id": "CI-M-001-001", "version": 1, "behavior": "HACKED"}, ctx)
+    assert "--" not in str(exc.value)
+    plan = json.loads(ctx.plan_path().read_text(encoding="utf-8"))
+    assert plan["milestones"][0]["code_intents"][0]["behavior"] == "orig"  # not mutated
+
+
+def test_set_intent_update_under_doc_only_rejected_cli(tmp_path: Path, monkeypatch, capsys):
+    """CLI mirror (DL-004): set-intent --id UPDATE under a doc-only milestone exits 1 with a
+    validation_error and leaves the intent intact."""
+    monkeypatch.setenv("PLAN_AGENT_ROLE", "architect")  # set-intent is architect-gated
+    ctx = _wedge_doc_only_with_intent(tmp_path)
+    with pytest.raises(SystemExit) as exc:
+        plan_cli.cli([
+            "--state-dir", str(tmp_path), "set-intent",
+            "--id", "CI-M-001-001", "--version", "1", "--behavior", "HACKED",
+        ])
+    assert exc.value.code == 1
+    out = capsys.readouterr().out
+    assert "<validation_error>" in out
+    assert "documentation-only" in out
+    plan = json.loads(ctx.plan_path().read_text(encoding="utf-8"))
+    assert plan["milestones"][0]["code_intents"][0]["behavior"] == "orig"  # not mutated
+
+
 # --- Fix 4: JSON-decode errors carry a location + stdin hint ----------------
 
 
@@ -545,6 +596,13 @@ def test_qr_fix_plan_design_apply_has_catalog_not_listmethods():
         pytest.param(True, id="bool"),
         pytest.param(1.5, id="float"),
         pytest.param({"x": 1}, id="dict"),
+        # FALSY non-None scalars: the original bug returned [] for these via the
+        # `if not value` short-circuit (silent clear); the fix routes them to the
+        # type check so they raise like their truthy siblings above.
+        pytest.param(False, id="bool-false"),
+        pytest.param(0, id="int-0"),
+        pytest.param(0.0, id="float-0"),
+        pytest.param({}, id="empty-dict"),
     ],
 )
 def test_parse_csv_scalar_rejection_through_set_milestone(tmp_path: Path, bad_scalar):
@@ -553,6 +611,10 @@ def test_parse_csv_scalar_rejection_through_set_milestone(tmp_path: Path, bad_sc
     Previously a bare int/float/bool/dict would fall through to
     value.split(",") and produce a cryptic ``'X' object has no attribute 'split'``.
     Now raises ValueError with a clear type name in the message.
+
+    Both truthy (123/True/1.5/{x:1}) and FALSY (False/0/0.0/{}) non-None scalars
+    must raise: the falsy set is the regression guard for the data-loss bug where
+    `if not value` short-circuited them to a silent [].
     """
     ctx = _seed_plan(tmp_path)
     methods = discover_methods(pc)
@@ -571,6 +633,47 @@ def test_parse_csv_none_returns_empty(tmp_path: Path):
     dispatch(methods, "set-milestone", {"name": "ms", "files": None}, ctx)
     plan = json.loads(ctx.plan_path().read_text(encoding="utf-8"))
     assert plan["milestones"][0]["files"] == []
+
+
+def test_parse_csv_falsy_scalar_no_silent_clear_on_update(tmp_path: Path):
+    """A falsy non-None scalar on a CSV param must RAISE and leave persisted data intact.
+
+    Regression guard for the data-loss bug: decision_refs/milestones are CSV params
+    (dispatch._normalize_params leaves them as-is), and both update paths call parse_csv
+    unconditionally, so a JSON `false` reaches it. Under the old `if not value` it
+    returned [] -- which set-intent's `is not None` assign-gate (and set-wave's
+    unconditional assignment) then wrote back as a silent clear. The fix (`if value is
+    None`) raises instead, so the prior value survives. The legit empty form ([]) still
+    clears -- pinned here too so a future over-correction can't make the valid-empty
+    path raise.
+    """
+    ctx = _seed_plan(tmp_path)
+    pc.set_decision(ctx, decision="d", reasoning="r")  # DL-001
+    pc.set_milestone(ctx, name="ms", files="a.py")     # M-001
+    methods = discover_methods(pc)
+    dispatch(methods, "set-intent", {
+        "milestone": "M-001", "file": "a.py", "behavior": "b", "decision_refs": "DL-001",
+    }, ctx)
+
+    # decision_refs=False must raise and NOT clear the stored ["DL-001"].
+    with pytest.raises(ValueError, match=r"expected a string or list of strings"):
+        dispatch(methods, "set-intent",
+                 {"id": "CI-M-001-001", "version": 1, "decision_refs": False}, ctx)
+    plan = json.loads(ctx.plan_path().read_text(encoding="utf-8"))
+    assert plan["milestones"][0]["code_intents"][0]["decision_refs"] == ["DL-001"]
+
+    # set-wave milestones=False must raise and NOT blank the wave.
+    dispatch(methods, "set-wave", {"milestones": "M-001"}, ctx)  # W-001 = [M-001]
+    with pytest.raises(ValueError, match=r"expected a string or list of strings"):
+        dispatch(methods, "set-wave", {"id": "W-001", "milestones": False}, ctx)
+    plan = json.loads(ctx.plan_path().read_text(encoding="utf-8"))
+    assert plan["waves"][0]["milestones"] == ["M-001"]
+
+    # Boundary: the legit empty form ([]) still clears (over-correction guard).
+    dispatch(methods, "set-intent",
+             {"id": "CI-M-001-001", "version": 1, "decision_refs": []}, ctx)
+    plan = json.loads(ctx.plan_path().read_text(encoding="utf-8"))
+    assert plan["milestones"][0]["code_intents"][0]["decision_refs"] == []
 
 
 # --- Fix: documentation_only strict bool validation (MEDIUM) ------------------
@@ -662,6 +765,9 @@ def test_documentation_only_none_omitted(tmp_path: Path):
         pytest.param('[{"method": [], "params": {}, "id": 1}]', id="list-method"),
         pytest.param('[{"method": "list-decisions", "params": {}, "id": []}]', id="list-id"),
         pytest.param('[{"method": "list-decisions", "params": {}, "id": {}}]', id="dict-id"),
+        # bool id: isinstance(True, int) is True, so it is hashable but would silently
+        # collide with integer id 1 in dedup -- rejected up front instead.
+        pytest.param('[{"method": "list-decisions", "params": {}, "id": true}]', id="bool-id"),
         pytest.param('[{"method": "", "params": {}, "id": 1}]', id="empty-method"),
         pytest.param('[{"params": {}, "id": 1}]', id="missing-method"),
     ],
@@ -681,6 +787,7 @@ def test_plan_cli_batch_malformed_request_clean_frame(tmp_path, capsys, monkeypa
     [
         pytest.param('[{"method": [], "params": {}, "id": 1}]', id="list-method"),
         pytest.param('[{"method": "update-item", "params": {}, "id": []}]', id="list-id"),
+        pytest.param('[{"method": "update-item", "params": {}, "id": true}]', id="bool-id"),
     ],
 )
 def test_qr_cli_batch_malformed_request_clean_frame(tmp_path, capsys, monkeypatch, payload):
@@ -690,6 +797,25 @@ def test_qr_cli_batch_malformed_request_clean_frame(tmp_path, capsys, monkeypatc
     out = capsys.readouterr().out
     assert "<qr_cli_error>" in out
     assert "Traceback" not in out
+
+
+def test_batch_direct_caller_rejects_unhashable_and_bool_id(tmp_path: Path):
+    """batch() guards its own dedup scan for direct callers (bypassing read_batch_requests).
+
+    The stdin malformed-id tests above stop at read_batch_requests and never reach
+    batch()'s guard; this exercises batch() directly. An unhashable (list) id gets a clean
+    ValueError instead of a raw `unhashable type` TypeError, and a bool id is rejected up
+    front -- proving True no longer silently collides with integer id 1 in the dedup scan.
+    """
+    ctx = _seed_plan(tmp_path)
+    methods = discover_methods(pc)
+    with pytest.raises(ValueError, match=r"id must be a string, number, or null"):
+        batch(methods, [{"method": "list-milestones", "params": {}, "id": []}], ctx)
+    with pytest.raises(ValueError, match=r"id must be a string, number, or null"):
+        batch(methods, [
+            {"method": "list-milestones", "params": {}, "id": 1},
+            {"method": "list-milestones", "params": {}, "id": True},
+        ], ctx)
 
 
 # --- Review #6: non-UTF-8 batch input gets the friendly frame ---------------

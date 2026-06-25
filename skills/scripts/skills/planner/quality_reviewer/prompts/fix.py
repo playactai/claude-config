@@ -11,9 +11,9 @@ rather than splitting them across two files, because the fix content is small an
 self-contained (decompose's larger content lives in content.py).
 
 Step-2/step-3 bodies are a list[str] when static, or a (state_dir) -> list[str] builder
-when they need runtime composition (impl-docs injects temporal.md; plan-design shell-
-quotes state_dir into its validate command). plan-design's apply and validate bodies are
-both builders that import architect preambles at call time, matching impl-docs's pattern.
+when they need runtime composition (impl-docs's apply injects temporal.md; plan-design's
+validate shell-quotes state_dir into its command). plan-design's apply body is likewise a
+builder: it imports the architect batch-contract preambles at call time.
 """
 
 from __future__ import annotations

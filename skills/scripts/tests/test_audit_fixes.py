@@ -2008,7 +2008,7 @@ _SETINTENT_EQUIV_MATRIX = [
     # version as a JSON float (1.0) — common when an LLM writes a literal number.
     ("update_version_float", _equiv_seed_codes_with_intent,
      {"id": "CI-M-001-001", "version": 1.0, "behavior": "new"},
-     "ok", None),
+     "error", None),
     # decision_refs as a JSON array — the idiomatic JSON form for a list.
     ("update_decision_refs_array", _equiv_seed_codes_with_intent_and_decision,
      {"id": "CI-M-001-001", "version": 1, "decision_refs": ["DL-001"], "behavior": "new"},
@@ -2027,8 +2027,11 @@ _SETINTENT_EQUIV_MATRIX = [
 def _run_setintent_rpc(state_dir: Path, seed, op: dict) -> tuple[str, str]:
     ctx = _init_plan(state_dir)
     seed(ctx)
+    from skills.planner.cli.dispatch import discover_methods, dispatch
+
+    methods = discover_methods(plan_commands)
     try:
-        plan_commands.set_intent(ctx, **op)
+        dispatch(methods, "set-intent", op, ctx)
         return ("ok", "")
     except ValueError as e:
         return ("error", str(e))
@@ -2042,14 +2045,9 @@ def _run_setintent_cli(state_dir: Path, capsys, seed, op: dict) -> tuple[str, st
     for key, val in op.items():
         if val is None:
             continue
-        # Convert JSON-typed values to CLI-compatible string forms so the
-        # equivalence test can drive both surfaces with JSON-typed inputs:
-        # lists become comma-separated strings (matching CLI CSV convention),
-        # losslessly-whole floats become ints (1.0 -> 1) for argparse type=int.
+        # list -> comma-join (matching CLI CSV convention) for argparse.
         if isinstance(val, list):
             val = ",".join(str(v) for v in val)
-        elif isinstance(val, float) and val == int(val):
-            val = int(val)
         argv += [f"--{key.replace('_', '-')}", str(val)]
     try:
         plan_cli.cli(argv)

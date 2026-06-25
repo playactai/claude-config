@@ -13,6 +13,8 @@ from typing import Any
 
 from skills.lib.io import atomic_write_text
 
+from .plan_common import CSV_PARAM_NAMES
+
 
 def discover_methods(module) -> dict[str, Callable[..., Any]]:
     """Find all public functions with 'ctx' as first parameter.
@@ -49,37 +51,40 @@ def extract_params(func) -> tuple[set[str], dict[str, Any]]:
 
 
 def _normalize_params(method: str, params: dict, required: set, optional: dict) -> dict:
-    """Normalize hyphenated param keys to underscores and unwrap single-element lists.
+    """Normalize hyphenated param keys to underscores and unwrap/reject scalar lists.
+
+    Single authority for key-shape (hyphen -> underscore; reject ambiguity) and
+    value-shape (unwrap single-element scalar lists; reject multi-element; CSV
+    params keep their list so parse_csv owns tokenization).
 
     Canonicalizes param keys the same way method names are already normalized
     (hyphens -> underscores in discover_methods), so a batch caller writing
     ``decision-refs`` reaches the same ``decision_refs`` function param as the
     CLI's ``--decision-refs`` flag. Returns a new dict (never mutates *params*).
-
-    Rejects ambiguous requests where both the hyphenated and underscore forms
-    of the same stem are present.
     """
     valid = required | set(optional)
     normalized: dict[str, object] = {}
+    # Key-shape: hyphen -> underscore; reject if both forms of a stem are present.
     for k, v in params.items():
         stem = k.replace("-", "_")
-        if stem != k and stem in valid:
-            if k in valid:
-                raise ValueError(
-                    f"Ambiguous params in {method}: both {k!r} and {stem!r} present; "
-                    f"drop one"
-                )
-            normalized[stem] = v
-        else:
-            normalized[k] = v
-    # Unwrap single-element lists for scalar params so a JSON array wrapping
-    # a single value (e.g. ``milestone: ["M-001"]``) behaves like the scalar
-    # argparse would produce. Multi-element lists pass through: parse_csv
-    # handles them for CSV fields; non-CSV scalar params reject with a clear
-    # function-level ValueError instead of a cryptic TypeError.
+        if stem in normalized:
+            raise ValueError(
+                f"Ambiguous params in {method}: both forms of {stem!r} present; drop one"
+            )
+        normalized[stem] = v
+    # Value-shape: ONLY for known scalar params. Unknown keys fall through to
+    # dispatch's unknown-key frame; CSV params keep their list so parse_csv owns
+    # tokenization (preserving internal commas).
     for k, v in list(normalized.items()):
-        if isinstance(v, list) and len(v) == 1:
-            normalized[k] = v[0]
+        if k not in valid or k in CSV_PARAM_NAMES:
+            continue
+        while isinstance(v, list) and len(v) == 1:   # recursive: fixes nested [[ "x" ]]
+            v = v[0]
+        if isinstance(v, list):                       # multi-element scalar -> clean reject
+            raise ValueError(
+                f"{k} must be a single value, got a list of {len(v)} values: {v!r}"
+            )
+        normalized[k] = v
     return normalized
 
 
@@ -219,7 +224,7 @@ def batch(methods: dict, requests: list[dict], ctx) -> list[dict]:
             for req in requests:
                 req_id = req.get("id")
                 method = req.get("method", "")
-                params = req.get("params", {})
+                params = req.get("params") or {}  # null/absent both mean "no params"
                 result = dispatch(methods, method, params, ctx)
                 results.append({"id": req_id, "result": result})
             if hasattr(ctx, "flush_batch"):
@@ -271,9 +276,10 @@ def batch(methods: dict, requests: list[dict], ctx) -> list[dict]:
 def get_method_keys(methods: dict) -> dict[str, list[str]]:
     """Return {method_name: sorted_param_keys} for every discovered method.
 
-    The single source of truth for "what keys does each method accept?" —
-    shared by list_methods (JSON output) and the architect's _render_method_catalog
-    (prompt lines). Both callers derive their output shape from this one walk.
+    Used by the architect's _render_method_catalog (prompt lines). list_methods
+    derives its own return shape (required/optional split) from the same
+    extract_params primitive instead of this function. Both callers stay in
+    sync because they share extract_params semantics.
     """
     result: dict[str, list[str]] = {}
     for name, func in methods.items():

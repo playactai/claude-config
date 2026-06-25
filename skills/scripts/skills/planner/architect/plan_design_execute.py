@@ -44,9 +44,9 @@ def _render_method_catalog() -> list[str]:
     required/optional split does not match create-vs-update requiredness, so showing it
     would mislabel them (the CREATE vs UPDATE note in step 6 carries that distinction).
 
-    Uses get_method_keys (dispatch.py) — the same introspection backing list_methods —
-    so the catalog and the JSON list-methods output can't drift apart when
-    extract_params semantics change.
+    Uses get_method_keys (dispatch.py). list_methods builds its own shape
+    (required/optional split) from the same extract_params primitive — both
+    stay in sync through that shared primitive, not this function.
     """
     from skills.planner.cli import plan_commands
     from skills.planner.cli.dispatch import discover_methods, get_method_keys

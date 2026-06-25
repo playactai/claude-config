@@ -53,6 +53,17 @@ def validate_relpath(path: str, context: str) -> str:
     return normalized
 
 
+# The param names whose RPC value is tokenized by parse_csv. dispatch._normalize_params
+# leaves these as lists so parse_csv (which accepts str|list) owns their shape; every
+# other param is scalar. Adding a parse_csv-backed param REQUIRES adding it here (a
+# dispatch-routed round-trip test guards against drift).
+CSV_PARAM_NAMES = frozenset({
+    "files", "flags", "requirements", "acceptance_criteria", "tests",  # set_milestone
+    "decision_refs",                                                    # set_intent
+    "milestones",                                                       # set_wave
+})
+
+
 def parse_csv(value: str | list[str] | None) -> list[str]:
     """Split a comma-separated CLI value into stripped, non-empty tokens.
 
@@ -66,11 +77,21 @@ def parse_csv(value: str | list[str] | None) -> list[str]:
     for lists, and rejecting them with a cryptic ``'list' object has no
     attribute 'split'`` made the batch surface hostile to the exact shape the
     catalog's bare key names invite.
+
+    Raises ValueError when a list element is not a string (e.g. a bare number
+    like 123) so the caller sees a clear error rather than a silent str()-coercion
+    that masks the mis-typed RPC value.
     """
     if not value:
         return []
     if isinstance(value, list):
-        return [str(v).strip() for v in value if str(v).strip()]
+        if not all(isinstance(v, str) for v in value):
+            raise ValueError(f"expected a list of strings, got {value!r}")
+        return [v.strip() for v in value if v.strip()]
+    if not isinstance(value, str):
+        raise ValueError(
+            f"expected a string or list of strings, got {type(value).__name__} {value!r}"
+        )
     return [v.strip() for v in value.split(",") if v.strip()]
 
 

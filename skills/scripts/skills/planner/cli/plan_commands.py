@@ -129,18 +129,19 @@ class PlanContext:
 def _check_version(entity, provided: int | None, entity_id: str) -> None:
     """CAS version check. Raises if mismatch.
 
-    Coerces ``provided`` to int so JSON string/number values from batch/RPC
-    callers compare equal to the entity's int version (the CLI surface gets
-    int from argparse type=int; batch callers quoting version as "1" in JSON
-    would otherwise hit a spurious str-vs-int mismatch with a self-contradicting
-    message).
+    STRICT: version must be an integer. Rejects bool (an int subclass) and
+    float (including whole-valued 1.0) to match the CLI's ``type=int``
+    precisely — JSON batch callers sending 1.0 or true get a clean error
+    instead of silent coercion. Accepts string ``"1"`` (int() coercion) for
+    LLM callers who quote JSON values as strings.
     """
     if provided is None:
         return
-    current = getattr(entity, "version", 1)
-    # Reject non-integer floats (e.g. 1.5) — version numbers are integers;
-    # losslessly-whole floats (1.0) are accepted because JSON parses 1.0 as float.
-    if isinstance(provided, float) and provided != int(provided):
+    if isinstance(provided, bool):
+        raise ValueError(
+            f"Version for {entity_id} must be an integer, got {provided!r}"
+        )
+    if isinstance(provided, float):
         raise ValueError(
             f"Version for {entity_id} must be an integer, got {provided!r}"
         )
@@ -150,6 +151,7 @@ def _check_version(entity, provided: int | None, entity_id: str) -> None:
         raise ValueError(
             f"Version for {entity_id} must be an integer, got {provided!r}"
         ) from err
+    current = getattr(entity, "version", 1)
     if provided != current:
         raise ValueError(
             f"Version mismatch for {entity_id}: provided {provided}, current {current}. "
@@ -211,6 +213,19 @@ def set_milestone(
 
     if files_list:
         files_list = [validate_relpath(f, "set-milestone files") for f in files_list]
+
+    # Validate documentation_only type before create/update branch.
+    # Mirror _check_version's strict rejection: only actual bools or the
+    # JSON boolean strings "true"/"false" are accepted. Everything else
+    # (int, float, non-boolean string, dict, list) raises cleanly.
+    if documentation_only is not None and not isinstance(documentation_only, bool):
+        if isinstance(documentation_only, str) and documentation_only.lower() in ("true", "false"):
+            documentation_only = documentation_only.lower() == "true"
+        else:
+            raise ValueError(
+                f"documentation_only must be a boolean, got "
+                f"{type(documentation_only).__name__} {documentation_only!r}"
+            )
 
     if id:
         # UPDATE
@@ -277,7 +292,7 @@ def set_milestone(
             requirements=requirements_list,
             acceptance_criteria=acceptance_list,
             tests=tests_list,
-            is_documentation_only=bool(documentation_only),
+            is_documentation_only=False if documentation_only is None else documentation_only,
         )
         plan.milestones.append(ms)
         ctx.save_plan(plan)
@@ -298,22 +313,7 @@ def _validated_decision_refs(plan, decision_refs: str | None) -> list[str]:
     return refs_list
 
 
-def _unwrap_scalar(value, name: str):
-    """Unwrap a single-element list to its scalar value.
 
-    dispatch._normalize_params does this for batch callers; direct RPC callers
-    need the same unwrapping so a JSON array around a single scalar value behaves
-    like the scalar argparse would produce. Multi-element lists are rejected:
-    they signal a structural misunderstanding (e.g. passing a list to a param
-    that expects a single value).
-    """
-    if not isinstance(value, list):
-        return value
-    if len(value) == 1:
-        return value[0]
-    raise ValueError(
-        f"{name} must be a single value, got a list of {len(value)} values: {value!r}"
-    )
 
 
 def set_intent(
@@ -345,15 +345,6 @@ def set_intent(
     """
     schema = _get_schema()
     plan = ctx.load_plan()
-
-    # Normalize JSON-typed scalar params: single-element list -> scalar.
-    # dispatch._normalize_params does this for batch callers; direct RPC callers
-    # need the same unwrapping so a JSON array around a single scalar value
-    # behaves like the scalar argparse would produce.
-    milestone = _unwrap_scalar(milestone, "milestone")
-    file = _unwrap_scalar(file, "file")
-    behavior = _unwrap_scalar(behavior, "behavior")
-    function = _unwrap_scalar(function, "function")
 
     if file:
         file = validate_relpath(file, "set-intent file")

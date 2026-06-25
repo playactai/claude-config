@@ -211,8 +211,8 @@ def test_step6_prompt_surfaces_catalog_and_notes():
     assert "Unknown keys are rejected" in body
     assert "CREATE vs UPDATE" in body
     assert "version is rejected on create" in body
-    # P2-A: update still requires milestone/milestones
-    assert "set-intent still needs milestone" in body
+    # P2-A: set-wave update still needs milestones; set-intent infers its parent from the id
+    assert "set-intent infers its parent milestone from" in body
     assert "set-wave still needs milestones" in body
     # P2-B: example is ordered (set-diagram before add-diagram-node)
     assert body.index('"method": "set-diagram"') < body.index('"method": "add-diagram-node"')

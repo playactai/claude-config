@@ -387,6 +387,17 @@ class SetMilestoneCommand(Command):
 
 
 class SetIntentCommand(Command):
+    """Argparse mirror of the RPC set_intent (plan_commands.py).
+
+    CREATE (no --id): --milestone, --file, and --behavior are required.
+    UPDATE (--id provided): --milestone is optional; the intent id encodes its
+    parent milestone, so the parent is inferred.  If --milestone is passed on
+    update it must match the intent's real parent, otherwise error_exit is called.
+
+    This class and set_intent must stay semantically equivalent (DL-004); any
+    logic change to one surface requires the same change to the other.
+    """
+
     name = "set-intent"
     help = "Create or update code intent"
     role = "architect"
@@ -395,7 +406,7 @@ class SetIntentCommand(Command):
     def add_arguments(cls, parser: argparse.ArgumentParser) -> None:
         parser.add_argument("--id", help="Intent ID (omit for create)")
         parser.add_argument("--version", type=int, help="Current version (required for update)")
-        parser.add_argument("--milestone", required=True, help="Parent milestone ID")
+        parser.add_argument("--milestone", help="Parent milestone ID (create only; inferred from --id on update)")
         parser.add_argument("--file", help="Target file path (required for create)")
         parser.add_argument("--function", help="Target function name")
         parser.add_argument("--behavior", help="Behavioral description (required for create)")
@@ -405,26 +416,6 @@ class SetIntentCommand(Command):
     def run(cls, args: argparse.Namespace) -> None:
         state_dir = get_state_dir()
         plan = load_plan(state_dir)
-
-        ms = plan.get_milestone(args.milestone)
-        if not ms:
-            ids = [m.id for m in plan.milestones]
-            validation_error(
-                "milestone",
-                "Valid milestone ID",
-                args.milestone,
-                f"Use existing: {', '.join(ids) or 'none'}",
-            )
-
-        # Doc-only milestones carry no code_intents (the relationship is exclusive --
-        # see Plan.validate_completeness). Reject here so the plan can't be wedged into
-        # a permanently-invalid state; clear the flag first if code is in fact needed.
-        if ms.is_documentation_only:
-            error_exit(
-                f"milestone {args.milestone} is documentation-only; clear it with "
-                f"'set-milestone --id {args.milestone} --no-documentation-only' "
-                f"before adding code intents"
-            )
 
         if args.file:
             try:
@@ -443,8 +434,9 @@ class SetIntentCommand(Command):
                 )
 
         if args.id:
-            # UPDATE path
-            _, ci = plan.get_intent(args.id)
+            # UPDATE path -- the intent id encodes its parent milestone, so locate
+            # globally and never require --milestone (mirrors set_wave: id-only).
+            ms, ci = plan.get_intent(args.id)
             if not ci:
                 all_intents = [c.id for m in plan.milestones for c in m.code_intents]
                 validation_error(
@@ -452,6 +444,14 @@ class SetIntentCommand(Command):
                     "Valid intent ID",
                     args.id,
                     f"Use existing: {', '.join(all_intents) or 'none'}",
+                )
+            assert ms is not None  # get_intent returns (ms, ci) together; ci-truthy => ms set
+            # A passed milestone must name the intent's real parent (intents never
+            # move); reject a mismatch instead of silently accepting it.
+            if args.milestone is not None and args.milestone != ms.id:
+                error_exit(
+                    f"intent {args.id} belongs to milestone {ms.id}, not {args.milestone}; "
+                    f"omit --milestone on update (it is inferred from --id)"
                 )
 
             try:
@@ -478,6 +478,26 @@ class SetIntentCommand(Command):
             # CREATE path
             if args.version is not None:
                 error_exit("--version only valid for updates (when --id provided)")
+            if not args.milestone:
+                error_exit("--milestone required for create")
+            ms = plan.get_milestone(args.milestone)
+            if not ms:
+                ids = [m.id for m in plan.milestones]
+                validation_error(
+                    "milestone",
+                    "Valid milestone ID",
+                    args.milestone,
+                    f"Use existing: {', '.join(ids) or 'none'}",
+                )
+            # Doc-only milestones carry no code_intents (the relationship is exclusive --
+            # see Plan.validate_completeness). Reject here so the plan can't be wedged into
+            # a permanently-invalid state; clear the flag first if code is in fact needed.
+            if ms.is_documentation_only:
+                error_exit(
+                    f"milestone {args.milestone} is documentation-only; clear it with "
+                    f"'set-milestone --id {args.milestone} --no-documentation-only' "
+                    f"before adding code intents"
+                )
             if not args.file or not args.behavior:
                 error_exit("--file and --behavior required for create")
 

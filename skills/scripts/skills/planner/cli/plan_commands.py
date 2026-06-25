@@ -267,7 +267,7 @@ def set_milestone(
 
 def set_intent(
     ctx: PlanContext,
-    milestone: str,
+    milestone: str | None = None,
     file: str | None = None,
     behavior: str | None = None,
     id: str | None = None,
@@ -275,22 +275,25 @@ def set_intent(
     function: str | None = None,
     decision_refs: str | None = None,
 ) -> dict:
-    """Create or update code intent."""
+    """Create or update a code intent (RPC surface; auto-discovered as 'set-intent').
+
+    CREATE (no id): milestone, file, and behavior are required.  milestone must
+    name a non-doc-only milestone -- doc-only milestones carry no code_intents by
+    schema invariant (Plan.validate_completeness).
+
+    UPDATE (id provided): milestone is optional.  Intent ids encode their parent
+    (CI-{milestone}-N), so the milestone is inferred from the id and the milestone
+    arg is never needed to locate or scope the intent.  If milestone is passed it
+    must equal the intent's real parent; a mismatch raises ValueError to close the
+    silent-wrong-parent footgun that existed when the arg was required.
+
+    This function is one of two surfaces for set-intent; SetIntentCommand (plan.py)
+    is the argparse mirror and must stay semantically equivalent (DL-004).
+    milestone's default of None makes dispatch.extract_params treat it as optional
+    with no dispatch change required (DL-001).
+    """
     schema = _get_schema()
     plan = ctx.load_plan()
-
-    ms = plan.get_milestone(milestone)
-    if not ms:
-        ids = [m.id for m in plan.milestones]
-        raise ValueError(f"Milestone {milestone} not found. Valid: {ids}")
-
-    # Doc-only milestones carry no code_intents (exclusive relationship -- see
-    # Plan.validate_completeness). Reject so the plan can't be wedged invalid.
-    if ms.is_documentation_only:
-        raise ValueError(
-            f"milestone {milestone} is documentation-only; set documentation_only=false "
-            f"on it via set-milestone before adding code intents"
-        )
 
     if file:
         file = validate_relpath(file, "set-intent file")
@@ -301,11 +304,20 @@ def set_intent(
             raise ValueError(f"Decision {ref} not found")
 
     if id:
-        # UPDATE
-        _, ci = plan.get_intent(id)
+        # UPDATE -- the intent id encodes its parent milestone, so locate globally
+        # and never require a milestone arg (mirrors set_wave/set_decision: id-only).
+        ms, ci = plan.get_intent(id)
         if not ci:
             all_intents = [c.id for m in plan.milestones for c in m.code_intents]
             raise ValueError(f"Intent {id} not found. Valid: {all_intents}")
+        assert ms is not None  # get_intent returns (ms, ci) together; ci-truthy => ms set
+        # A passed milestone must name the intent's real parent (intents never move);
+        # reject a mismatch instead of silently accepting it.
+        if milestone is not None and milestone != ms.id:
+            raise ValueError(
+                f"intent {id} belongs to milestone {ms.id}, not {milestone}; "
+                f"omit milestone on update (it is inferred from the intent id)"
+            )
 
         _check_version(ci, version, id)
 
@@ -325,6 +337,19 @@ def set_intent(
         # CREATE
         if version is not None:
             raise ValueError("version is only valid for updates (provide id to update)")
+        if not milestone:
+            raise ValueError("milestone required for create")
+        ms = plan.get_milestone(milestone)
+        if not ms:
+            ids = [m.id for m in plan.milestones]
+            raise ValueError(f"Milestone {milestone} not found. Valid: {ids}")
+        # Doc-only milestones carry no code_intents (exclusive relationship -- see
+        # Plan.validate_completeness). Reject so the plan can't be wedged invalid.
+        if ms.is_documentation_only:
+            raise ValueError(
+                f"milestone {milestone} is documentation-only; set documentation_only=false "
+                f"on it via set-milestone before adding code intents"
+            )
         if not file or not behavior:
             raise ValueError("file and behavior required for create")
 

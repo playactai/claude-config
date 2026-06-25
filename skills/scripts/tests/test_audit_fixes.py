@@ -1804,6 +1804,295 @@ class TestRelpathNormalizedAndStored:
         assert "Parent-relative" in out
 
 
+# --- set-intent: milestone optional on update (validate-match), required on create ---
+class TestSetIntentMilestoneOptionalOnUpdate:
+    def test_rpc_update_without_milestone_succeeds(self, tmp_path: Path):
+        # The intent id encodes its parent, so update locates globally and never
+        # needs the milestone arg.
+        ctx = _init_plan(tmp_path)
+        plan_commands.set_milestone(ctx, name="Code", files="a.py")
+        res = plan_commands.set_intent(ctx, milestone="M-001", file="src/a.py", behavior="old")
+        upd = plan_commands.set_intent(ctx, id=res["id"], behavior="new")
+        assert upd["operation"] == "updated"
+        ci = json.loads(ctx.plan_path().read_text())["milestones"][0]["code_intents"][0]
+        assert ci["behavior"] == "new"
+
+    def test_cli_update_without_milestone_succeeds(self, tmp_path: Path, monkeypatch):
+        monkeypatch.setenv("PLAN_AGENT_ROLE", "architect")
+        plan_cli.cli(["--state-dir", str(tmp_path), "init", "--task", "t"])
+        plan_cli.cli(["--state-dir", str(tmp_path), "set-milestone", "--name", "Code", "--files", "a.py"])
+        plan_cli.cli([
+            "--state-dir", str(tmp_path), "set-intent",
+            "--milestone", "M-001", "--file", "src/a.py", "--behavior", "old",
+        ])
+        cid = json.loads((tmp_path / "plan.json").read_text())["milestones"][0]["code_intents"][0]["id"]
+        plan_cli.cli([
+            "--state-dir", str(tmp_path), "set-intent",
+            "--id", cid, "--version", "1", "--behavior", "new",
+        ])
+        ci = json.loads((tmp_path / "plan.json").read_text())["milestones"][0]["code_intents"][0]
+        assert ci["behavior"] == "new"
+
+    def test_rpc_create_without_milestone_raises(self, tmp_path: Path):
+        ctx = _init_plan(tmp_path)
+        with pytest.raises(ValueError, match="milestone required for create"):
+            plan_commands.set_intent(ctx, file="src/a.py", behavior="b")
+
+    def test_cli_create_without_milestone_exits(self, tmp_path: Path, monkeypatch, capsys):
+        # Regression guard for dropping required=True: without the new guard,
+        # next_intent_id(None) would crash with an opaque AttributeError.
+        monkeypatch.setenv("PLAN_AGENT_ROLE", "architect")
+        plan_cli.cli(["--state-dir", str(tmp_path), "init", "--task", "t"])
+        with pytest.raises(SystemExit):
+            plan_cli.cli([
+                "--state-dir", str(tmp_path), "set-intent",
+                "--file", "src/a.py", "--behavior", "b",
+            ])
+        assert "--milestone required for create" in capsys.readouterr().out
+
+    def test_rpc_update_mismatched_milestone_raises(self, tmp_path: Path):
+        ctx = _init_plan(tmp_path)
+        plan_commands.set_milestone(ctx, name="Code", files="a.py")
+        plan_commands.set_milestone(ctx, name="More", files="b.py")  # M-002 (real code milestone)
+        res = plan_commands.set_intent(ctx, milestone="M-001", file="src/a.py", behavior="b")
+        with pytest.raises(ValueError, match="belongs to milestone M-001"):
+            plan_commands.set_intent(ctx, id=res["id"], milestone="M-002", behavior="new")
+
+    def test_cli_update_mismatched_milestone_exits(self, tmp_path: Path, monkeypatch, capsys):
+        monkeypatch.setenv("PLAN_AGENT_ROLE", "architect")
+        plan_cli.cli(["--state-dir", str(tmp_path), "init", "--task", "t"])
+        plan_cli.cli(["--state-dir", str(tmp_path), "set-milestone", "--name", "Code", "--files", "a.py"])
+        plan_cli.cli(["--state-dir", str(tmp_path), "set-milestone", "--name", "More", "--files", "b.py"])
+        plan_cli.cli([
+            "--state-dir", str(tmp_path), "set-intent",
+            "--milestone", "M-001", "--file", "src/a.py", "--behavior", "b",
+        ])
+        cid = json.loads((tmp_path / "plan.json").read_text())["milestones"][0]["code_intents"][0]["id"]
+        capsys.readouterr()  # drain prior output
+        with pytest.raises(SystemExit):
+            plan_cli.cli([
+                "--state-dir", str(tmp_path), "set-intent",
+                "--id", cid, "--version", "1", "--milestone", "M-002", "--behavior", "new",
+            ])
+        assert "belongs to milestone M-001" in capsys.readouterr().out
+
+    def test_cli_matching_milestone_update_succeeds(self, tmp_path: Path, monkeypatch):
+        # Passing the correct --milestone on update is tolerated (RPC analogue is
+        # test_rpc_set_intent_update_collapses_dot_slash).
+        monkeypatch.setenv("PLAN_AGENT_ROLE", "architect")
+        plan_cli.cli(["--state-dir", str(tmp_path), "init", "--task", "t"])
+        plan_cli.cli(["--state-dir", str(tmp_path), "set-milestone", "--name", "Code", "--files", "a.py"])
+        plan_cli.cli([
+            "--state-dir", str(tmp_path), "set-intent",
+            "--milestone", "M-001", "--file", "src/a.py", "--behavior", "old",
+        ])
+        cid = json.loads((tmp_path / "plan.json").read_text())["milestones"][0]["code_intents"][0]["id"]
+        plan_cli.cli([
+            "--state-dir", str(tmp_path), "set-intent",
+            "--id", cid, "--version", "1", "--milestone", "M-001", "--behavior", "new",
+        ])
+        ci = json.loads((tmp_path / "plan.json").read_text())["milestones"][0]["code_intents"][0]
+        assert ci["behavior"] == "new"
+
+    def test_cli_create_on_doc_only_milestone_rejected(self, tmp_path: Path, monkeypatch, capsys):
+        # CLI mirror of the doc-only check moved into the CREATE branch; the RPC side
+        # is covered by test_planner_redesign / test_batch_roundtrip_fixes.
+        monkeypatch.setenv("PLAN_AGENT_ROLE", "architect")
+        plan_cli.cli(["--state-dir", str(tmp_path), "init", "--task", "t"])
+        plan_cli.cli(["--state-dir", str(tmp_path), "set-milestone", "--name", "Docs", "--documentation-only"])
+        capsys.readouterr()  # drain prior output
+        with pytest.raises(SystemExit):
+            plan_cli.cli([
+                "--state-dir", str(tmp_path), "set-intent",
+                "--milestone", "M-001", "--file", "src/a.py", "--behavior", "b",
+            ])
+        out = capsys.readouterr().out
+        assert "validation_error" in out
+        assert "documentation-only" in out
+
+    def test_rpc_create_check_order_version_before_milestone(self, tmp_path: Path):
+        # CREATE-branch order pin: the version-guard precedes the milestone-required
+        # guard, so a no-id create with version surfaces the VERSION error.
+        ctx = _init_plan(tmp_path)
+        with pytest.raises(ValueError, match="version is only valid for updates"):
+            plan_commands.set_intent(ctx, version=1)
+
+    def test_cli_create_check_order_version_before_milestone(self, tmp_path: Path, monkeypatch, capsys):
+        monkeypatch.setenv("PLAN_AGENT_ROLE", "architect")
+        plan_cli.cli(["--state-dir", str(tmp_path), "init", "--task", "t"])
+        with pytest.raises(SystemExit):
+            plan_cli.cli(["--state-dir", str(tmp_path), "set-intent", "--version", "1"])
+        out = capsys.readouterr().out
+        assert "validation_error" in out
+        assert "--version only valid for updates" in out
+        assert "--milestone required for create" not in out
+
+    def test_rpc_update_empty_string_milestone_is_mismatch(self, tmp_path: Path):
+        # The validate-match guard keys on `is not None`, NOT truthiness: an empty
+        # string is a *passed* milestone that mismatches the real parent, so it must
+        # error -- pins that update never silently accepts "" (a `if milestone:` slip
+        # would let "" through).
+        ctx = _init_plan(tmp_path)
+        plan_commands.set_milestone(ctx, name="Code", files="a.py")
+        res = plan_commands.set_intent(ctx, milestone="M-001", file="src/a.py", behavior="b")
+        with pytest.raises(ValueError, match="belongs to milestone M-001"):
+            plan_commands.set_intent(ctx, id=res["id"], milestone="", behavior="new")
+
+    def test_cli_update_empty_string_milestone_is_mismatch(self, tmp_path: Path, monkeypatch, capsys):
+        # CLI mirror of the `is not None` (not truthiness) guard semantics.
+        monkeypatch.setenv("PLAN_AGENT_ROLE", "architect")
+        plan_cli.cli(["--state-dir", str(tmp_path), "init", "--task", "t"])
+        plan_cli.cli(["--state-dir", str(tmp_path), "set-milestone", "--name", "Code", "--files", "a.py"])
+        plan_cli.cli([
+            "--state-dir", str(tmp_path), "set-intent",
+            "--milestone", "M-001", "--file", "src/a.py", "--behavior", "b",
+        ])
+        cid = json.loads((tmp_path / "plan.json").read_text())["milestones"][0]["code_intents"][0]["id"]
+        capsys.readouterr()  # drain prior output
+        with pytest.raises(SystemExit):
+            plan_cli.cli([
+                "--state-dir", str(tmp_path), "set-intent",
+                "--id", cid, "--version", "1", "--milestone", "", "--behavior", "new",
+            ])
+        assert "belongs to milestone M-001" in capsys.readouterr().out
+
+    def test_rpc_update_nonexistent_milestone_is_mismatch_not_notfound(self, tmp_path: Path):
+        # Update does a pure parent-identity match -- it never validates --milestone
+        # against the milestone list. A non-existent milestone yields the mismatch
+        # error, NOT "Milestone M-999 not found" (that existence check is CREATE-only).
+        ctx = _init_plan(tmp_path)
+        plan_commands.set_milestone(ctx, name="Code", files="a.py")
+        res = plan_commands.set_intent(ctx, milestone="M-001", file="src/a.py", behavior="b")
+        with pytest.raises(ValueError, match="belongs to milestone M-001") as exc:
+            plan_commands.set_intent(ctx, id=res["id"], milestone="M-999", behavior="new")
+        assert "not found" not in str(exc.value)
+
+    def test_batch_update_omits_milestone_create_without_rolls_back(self, tmp_path: Path):
+        # DL-001 end-to-end through the batch/RPC dispatch path: extract_params derives
+        # milestone as optional from its None default, so a batch UPDATE omits it and
+        # succeeds, while a batch CREATE without it fails cleanly (the mechanism that
+        # makes the whole change matter for batch mode).
+        ctx = _init_plan(tmp_path)
+        plan_commands.set_milestone(ctx, name="Code", files="a.py")
+        cid = plan_commands.set_intent(ctx, milestone="M-001", file="src/a.py", behavior="old")["id"]
+        methods = discover_methods(plan_commands)
+        ok = batch(methods, [{"method": "set-intent", "params": {"id": cid, "behavior": "new"}, "id": 1}], ctx)
+        assert "error" not in ok[0]
+        assert json.loads(ctx.plan_path().read_text())["milestones"][0]["code_intents"][0]["behavior"] == "new"
+        bad = batch(methods, [{"method": "set-intent", "params": {"file": "src/b.py", "behavior": "z"}, "id": 2}], ctx)
+        assert "milestone required for create" in bad[0]["error"]["message"]
+
+
+# --- DL-004: both set-intent surfaces must reach the same accept/reject decision ---
+def _equiv_seed_codes(ctx) -> None:
+    plan_commands.set_milestone(ctx, name="Code", files="a.py")  # M-001
+    plan_commands.set_milestone(ctx, name="More", files="b.py")  # M-002
+
+
+def _equiv_seed_codes_with_intent(ctx) -> None:
+    _equiv_seed_codes(ctx)
+    plan_commands.set_intent(ctx, milestone="M-001", file="src/a.py", behavior="old")  # CI-M-001-001
+
+
+def _equiv_seed_doc_only(ctx) -> None:
+    plan_commands.set_milestone(ctx, name="Docs", documentation_only=True)  # M-001 (doc-only)
+
+
+# (id, seed, op-params, expected outcome, substring both messages must share | None).
+# shared is None where the surfaces legitimately diverge in wording (e.g. the unknown-id
+# frame: RPC "not found" vs CLI validation_error); there we pin only that BOTH reject.
+_SETINTENT_EQUIV_MATRIX = [
+    ("create_ok", _equiv_seed_codes,
+     {"milestone": "M-001", "file": "src/a.py", "behavior": "b"},
+     "ok", None),
+    ("create_no_milestone", _equiv_seed_codes,
+     {"file": "src/a.py", "behavior": "b"},
+     "error", "milestone required for create"),
+    ("create_missing_file_behavior", _equiv_seed_codes,
+     {"milestone": "M-001"},
+     "error", "behavior required for create"),
+    ("create_version_rejected", _equiv_seed_codes,
+     {"milestone": "M-001", "file": "src/a.py", "behavior": "b", "version": 1},
+     "error", "valid for updates"),
+    ("create_doc_only", _equiv_seed_doc_only,
+     {"milestone": "M-001", "file": "src/a.py", "behavior": "b"},
+     "error", "documentation-only"),
+    ("update_omit_milestone", _equiv_seed_codes_with_intent,
+     {"id": "CI-M-001-001", "version": 1, "behavior": "new"},
+     "ok", None),
+    ("update_match_milestone", _equiv_seed_codes_with_intent,
+     {"id": "CI-M-001-001", "version": 1, "milestone": "M-001", "behavior": "new"},
+     "ok", None),
+    ("update_mismatch_milestone", _equiv_seed_codes_with_intent,
+     {"id": "CI-M-001-001", "version": 1, "milestone": "M-002", "behavior": "new"},
+     "error", "belongs to milestone M-001"),
+    ("update_empty_milestone", _equiv_seed_codes_with_intent,
+     {"id": "CI-M-001-001", "version": 1, "milestone": "", "behavior": "new"},
+     "error", "belongs to milestone M-001"),
+    ("update_unknown_id", _equiv_seed_codes,
+     {"id": "CI-M-001-001", "version": 1, "behavior": "new"},
+     "error", None),
+]
+
+
+def _run_setintent_rpc(state_dir: Path, seed, op: dict) -> tuple[str, str]:
+    ctx = _init_plan(state_dir)
+    seed(ctx)
+    try:
+        plan_commands.set_intent(ctx, **op)
+        return ("ok", "")
+    except ValueError as e:
+        return ("error", str(e))
+
+
+def _run_setintent_cli(state_dir: Path, capsys, seed, op: dict) -> tuple[str, str]:
+    # Seed via the RPC funcs; both surfaces read the same plan.json schema.
+    seed(_init_plan(state_dir))
+    capsys.readouterr()  # drop seed/init output so only the op's frame is captured
+    argv = ["--state-dir", str(state_dir), "set-intent"]
+    for key, val in op.items():
+        if val is None:
+            continue
+        argv += [f"--{key.replace('_', '-')}", str(val)]
+    try:
+        plan_cli.cli(argv)
+        return ("ok", capsys.readouterr().out)
+    except SystemExit:
+        return ("error", capsys.readouterr().out)
+
+
+class TestSetIntentTwoSurfaceEquivalence:
+    """DL-004 guard: set_intent (RPC) and SetIntentCommand (argparse) are two
+    hand-maintained implementations of one contract -- intentionally NOT unified.
+    This drives both through one input matrix and asserts they reach the SAME
+    accept/reject decision (not the same message: they differ by design --
+    ValueError vs error_exit/validation_error). A future one-sided edit that
+    diverges the surfaces fails here instead of silently shipping.
+    """
+
+    @pytest.mark.parametrize(
+        ("seed", "op", "outcome", "shared"),
+        [pytest.param(s, o, oc, sh, id=i) for (i, s, o, oc, sh) in _SETINTENT_EQUIV_MATRIX],
+    )
+    def test_surfaces_agree(self, tmp_path, monkeypatch, capsys, seed, op, outcome, shared):
+        monkeypatch.setenv("PLAN_AGENT_ROLE", "architect")  # the CLI surface is architect-gated
+        rpc_dir, cli_dir = tmp_path / "rpc", tmp_path / "cli"
+        rpc_dir.mkdir()
+        cli_dir.mkdir()
+
+        rpc_outcome, rpc_msg = _run_setintent_rpc(rpc_dir, seed, op)
+        cli_outcome, cli_out = _run_setintent_cli(cli_dir, capsys, seed, op)
+
+        # Core DL-004 assertion: identical accept/reject decision on both surfaces.
+        assert rpc_outcome == cli_outcome == outcome, (
+            f"surface divergence: rpc={rpc_outcome!r} cli={cli_outcome!r} expected={outcome!r}"
+        )
+        # Where the two messages legitimately share text, pin the reject reason on both.
+        if shared is not None:
+            assert shared in rpc_msg, f"RPC message missing {shared!r}: {rpc_msg!r}"
+            assert shared in cli_out, f"CLI output missing {shared!r}: {cli_out!r}"
+
+
 # --- F3: the CLI mirror warns (stderr) on a wedging reverse doc-only toggle ---
 class TestCliToggleOffWarning:
     def test_cli_toggle_off_into_wedged_warns_on_stderr(self, tmp_path: Path, monkeypatch, capsys):

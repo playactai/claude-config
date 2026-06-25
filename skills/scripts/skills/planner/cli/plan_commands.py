@@ -127,10 +127,29 @@ class PlanContext:
 
 
 def _check_version(entity, provided: int | None, entity_id: str) -> None:
-    """CAS version check. Raises if mismatch."""
+    """CAS version check. Raises if mismatch.
+
+    Coerces ``provided`` to int so JSON string/number values from batch/RPC
+    callers compare equal to the entity's int version (the CLI surface gets
+    int from argparse type=int; batch callers quoting version as "1" in JSON
+    would otherwise hit a spurious str-vs-int mismatch with a self-contradicting
+    message).
+    """
     if provided is None:
         return
     current = getattr(entity, "version", 1)
+    # Reject non-integer floats (e.g. 1.5) — version numbers are integers;
+    # losslessly-whole floats (1.0) are accepted because JSON parses 1.0 as float.
+    if isinstance(provided, float) and provided != int(provided):
+        raise ValueError(
+            f"Version for {entity_id} must be an integer, got {provided!r}"
+        )
+    try:
+        provided = int(provided)
+    except (TypeError, ValueError) as err:
+        raise ValueError(
+            f"Version for {entity_id} must be an integer, got {provided!r}"
+        ) from err
     if provided != current:
         raise ValueError(
             f"Version mismatch for {entity_id}: provided {provided}, current {current}. "
@@ -279,6 +298,24 @@ def _validated_decision_refs(plan, decision_refs: str | None) -> list[str]:
     return refs_list
 
 
+def _unwrap_scalar(value, name: str):
+    """Unwrap a single-element list to its scalar value.
+
+    dispatch._normalize_params does this for batch callers; direct RPC callers
+    need the same unwrapping so a JSON array around a single scalar value behaves
+    like the scalar argparse would produce. Multi-element lists are rejected:
+    they signal a structural misunderstanding (e.g. passing a list to a param
+    that expects a single value).
+    """
+    if not isinstance(value, list):
+        return value
+    if len(value) == 1:
+        return value[0]
+    raise ValueError(
+        f"{name} must be a single value, got a list of {len(value)} values: {value!r}"
+    )
+
+
 def set_intent(
     ctx: PlanContext,
     milestone: str | None = None,
@@ -308,6 +345,15 @@ def set_intent(
     """
     schema = _get_schema()
     plan = ctx.load_plan()
+
+    # Normalize JSON-typed scalar params: single-element list -> scalar.
+    # dispatch._normalize_params does this for batch callers; direct RPC callers
+    # need the same unwrapping so a JSON array around a single scalar value
+    # behaves like the scalar argparse would produce.
+    milestone = _unwrap_scalar(milestone, "milestone")
+    file = _unwrap_scalar(file, "file")
+    behavior = _unwrap_scalar(behavior, "behavior")
+    function = _unwrap_scalar(function, "function")
 
     if file:
         file = validate_relpath(file, "set-intent file")
@@ -341,7 +387,7 @@ def set_intent(
             ci.function = function if function else None
         if behavior:
             ci.behavior = behavior
-        if refs_list:
+        if decision_refs is not None:
             ci.decision_refs = refs_list
 
         _bump_version(ci)

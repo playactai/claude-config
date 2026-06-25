@@ -53,16 +53,24 @@ def validate_relpath(path: str, context: str) -> str:
     return normalized
 
 
-def parse_csv(value: str | None) -> list[str]:
+def parse_csv(value: str | list[str] | None) -> list[str]:
     """Split a comma-separated CLI value into stripped, non-empty tokens.
 
     Shared by plan.py and plan_commands.py so the two CLI mirrors tokenize a
     --files/--flags/... value identically: an empty token (a trailing or doubled
     comma, or a whitespace-only value) is dropped on BOTH paths rather than kept
     as a "" entry by the live CLI while the RPC filtered it.
+
+    Accepts a JSON array (list[str]) from batch/RPC callers as well as the
+    comma-separated string argparse yields — JSON arrays are the idiomatic form
+    for lists, and rejecting them with a cryptic ``'list' object has no
+    attribute 'split'`` made the batch surface hostile to the exact shape the
+    catalog's bare key names invite.
     """
     if not value:
         return []
+    if isinstance(value, list):
+        return [str(v).strip() for v in value if str(v).strip()]
     return [v.strip() for v in value.split(",") if v.strip()]
 
 

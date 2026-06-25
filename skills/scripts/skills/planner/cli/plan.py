@@ -480,7 +480,7 @@ class SetIntentCommand(Command):
                 ci.function = args.function if args.function else None
             if args.behavior:
                 ci.behavior = args.behavior
-            if decision_refs:
+            if args.decision_refs is not None:
                 ci.decision_refs = decision_refs
 
             bump_version(ci)

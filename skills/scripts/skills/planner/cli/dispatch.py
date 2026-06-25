@@ -48,6 +48,41 @@ def extract_params(func) -> tuple[set[str], dict[str, Any]]:
     return required, optional
 
 
+def _normalize_params(method: str, params: dict, required: set, optional: dict) -> dict:
+    """Normalize hyphenated param keys to underscores and unwrap single-element lists.
+
+    Canonicalizes param keys the same way method names are already normalized
+    (hyphens -> underscores in discover_methods), so a batch caller writing
+    ``decision-refs`` reaches the same ``decision_refs`` function param as the
+    CLI's ``--decision-refs`` flag. Returns a new dict (never mutates *params*).
+
+    Rejects ambiguous requests where both the hyphenated and underscore forms
+    of the same stem are present.
+    """
+    valid = required | set(optional)
+    normalized: dict[str, object] = {}
+    for k, v in params.items():
+        stem = k.replace("-", "_")
+        if stem != k and stem in valid:
+            if k in valid:
+                raise ValueError(
+                    f"Ambiguous params in {method}: both {k!r} and {stem!r} present; "
+                    f"drop one"
+                )
+            normalized[stem] = v
+        else:
+            normalized[k] = v
+    # Unwrap single-element lists for scalar params so a JSON array wrapping
+    # a single value (e.g. ``milestone: ["M-001"]``) behaves like the scalar
+    # argparse would produce. Multi-element lists pass through: parse_csv
+    # handles them for CSV fields; non-CSV scalar params reject with a clear
+    # function-level ValueError instead of a cryptic TypeError.
+    for k, v in list(normalized.items()):
+        if isinstance(v, list) and len(v) == 1:
+            normalized[k] = v[0]
+    return normalized
+
+
 def dispatch(methods: dict, method: str, params: dict, ctx) -> Any:
     """Dispatch single RPC call. Returns result or raises."""
     if method not in methods:
@@ -56,13 +91,19 @@ def dispatch(methods: dict, method: str, params: dict, ctx) -> Any:
     func = methods[method]
     required, optional = extract_params(func)
 
+    # Normalize keys (hyphens->underscores, single-element lists unwrapped)
+    # BEFORE key validation so the canonical forms are used for the
+    # required/unknown checks.
+    params = _normalize_params(method, params, required, optional)
+
     missing = required - set(params.keys())
     if missing:
         raise ValueError(f"Missing required params: {sorted(missing)}")
 
-    # Reject unknown keys (the valid set is required + optional) so a typo or a
-    # hyphenated key (e.g. "decision-refs" vs "decision_refs") returns an actionable
-    # frame instead of a deep TypeError from func(ctx, **kwargs).
+    # Reject unknown keys (the valid set is required + optional) so a typo
+    # returns an actionable frame instead of a deep TypeError from
+    # func(ctx, **kwargs). Hyphenated keys are already normalized above, so
+    # only truly-unknown stems reach this check.
     valid = required | set(optional)
     unknown = set(params) - valid
     if unknown:
@@ -227,6 +268,20 @@ def batch(methods: dict, requests: list[dict], ctx) -> list[dict]:
     return results
 
 
+def get_method_keys(methods: dict) -> dict[str, list[str]]:
+    """Return {method_name: sorted_param_keys} for every discovered method.
+
+    The single source of truth for "what keys does each method accept?" —
+    shared by list_methods (JSON output) and the architect's _render_method_catalog
+    (prompt lines). Both callers derive their output shape from this one walk.
+    """
+    result: dict[str, list[str]] = {}
+    for name, func in methods.items():
+        required, optional = extract_params(func)
+        result[name] = sorted(required | set(optional))
+    return result
+
+
 def list_methods(methods: dict) -> dict[str, dict]:
     """Return method signatures for discoverability."""
     result = {}
@@ -262,8 +317,19 @@ def read_batch_requests(inline_arg: str | None, usage: str) -> list[dict]:
     except json.JSONDecodeError as e:
         raise ValueError(
             f"Invalid JSON in batch input: line {e.lineno} col {e.colno}: {e.msg}. "
-            "Write the batch to a file and pipe it via stdin: batch < changes.json"
+            f"Write the batch to a file and pipe it via stdin: {usage} batch < changes.json"
         ) from e
     if not isinstance(requests, list) or not all(isinstance(r, dict) for r in requests):
         raise ValueError("batch input must be a JSON array of {method, params} objects")
+    # Validate params shape so dispatch() never hits a raw AttributeError on
+    # .keys() — a non-dict params (null, array, string) is rejected here with
+    # the offending request's id/method instead of leaking "'X' object has no
+    # attribute 'keys'".
+    for r in requests:
+        params = r.get("params")
+        if params is not None and not isinstance(params, dict):
+            raise ValueError(
+                f"params must be a JSON object, got {type(params).__name__} "
+                f"in request id={r.get('id')!r} method={r.get('method')!r}"
+            )
     return requests

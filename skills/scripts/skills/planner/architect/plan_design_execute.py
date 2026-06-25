@@ -43,17 +43,19 @@ def _render_method_catalog() -> list[str]:
     required/optional split: for the dual create/update commands the signature's
     required/optional split does not match create-vs-update requiredness, so showing it
     would mislabel them (the CREATE vs UPDATE note in step 6 carries that distinction).
+
+    Uses get_method_keys (dispatch.py) — the same introspection backing list_methods —
+    so the catalog and the JSON list-methods output can't drift apart when
+    extract_params semantics change.
     """
-    # Local import: keeps prompt construction self-contained and avoids any module-load
-    # cycle (cli.dispatch / cli.plan_commands do not import architect.*).
     from skills.planner.cli import plan_commands
-    from skills.planner.cli.dispatch import discover_methods, extract_params
+    from skills.planner.cli.dispatch import discover_methods, get_method_keys
 
     methods = discover_methods(plan_commands)
+    key_sets = get_method_keys(methods)
     lines = ["", "RPC METHOD CATALOG -- exact param keys per method (underscores):"]
-    for name in sorted(methods):
-        required, optional = extract_params(methods[name])
-        keys = sorted(required | set(optional))
+    for name in sorted(key_sets):
+        keys = key_sets[name]
         lines.append(f"  {name:<19}{', '.join(keys) or '(none)'}")
     return lines
 
@@ -263,6 +265,12 @@ def get_step_guidance(step: int, module_path: str | None = None, **kwargs) -> di
                 "    version. version is rejected on create.",
                 "  - set-diagram / add-diagram-* / list-* / init / validate are not create/update --",
                 "    pass exactly the catalog keys.",
+                "",
+                "NOTE: The example IDs below (DL-001, M-001, DIAG-001, CI-M-001-001) are the",
+                "  first IDs a fresh skeleton assigns. If your plan.json skeleton already has",
+                "  entities (decisions, milestones, diagrams) those IDs will differ — use the",
+                "  actual IDs from your plan, not the example literals. After each create,",
+                "  capture the returned id and use it in subsequent chained ops.",
                 "",
                 "  # Write the batch JSON to a file (Write tool), then pipe it in:",
                 f"  {pin_cwd('uv run python -m skills.planner.cli.plan --state-dir $STATE_DIR batch < /tmp/changes.json')}",

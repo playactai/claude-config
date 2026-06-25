@@ -23,7 +23,13 @@ from skills.planner.architect.plan_design_execute import (
 from skills.planner.cli import plan as plan_cli
 from skills.planner.cli import plan_commands as pc
 from skills.planner.cli import qr as qr_cli
-from skills.planner.cli.dispatch import batch, discover_methods, dispatch
+from skills.planner.cli.dispatch import (
+    _normalize_params,
+    batch,
+    discover_methods,
+    dispatch,
+    extract_params,
+)
 
 
 def _seed_plan(tmp_path: Path) -> pc.PlanContext:
@@ -45,10 +51,26 @@ def test_dispatch_rejects_unknown_param():
     assert "name" in msg  # the valid set is listed for recovery
 
 
-def test_dispatch_rejects_hyphenated_param_key():
-    # The exact mistake the catalog prevents: decision-refs (hyphen) vs decision_refs.
+def test_dispatch_normalizes_hyphenated_param_key():
+    # Fix 6: dispatch normalizes hyphenated param keys to underscores, matching
+    # the method-name normalization already done by discover_methods.  The exact
+    # mistake the catalog previously only warned about (decision-refs vs
+    # decision_refs) is now accepted transparently.
     methods = discover_methods(pc)
     params = {"milestone": "M-001", "file": "a.py", "behavior": "b", "decision-refs": "DL-001"}
+    # Normalization succeeds — the hyphenated key is canonicalized to decision_refs.
+    normalized = _normalize_params("set-intent", params, *extract_params(methods["set-intent"]))
+    assert "decision-refs" not in normalized
+    assert "decision_refs" in normalized
+    assert normalized["decision_refs"] == "DL-001"
+
+
+def test_dispatch_still_rejects_truly_unknown_key():
+    # Fix 6: normalization only rewrites hyphenated keys whose underscore form
+    # is valid.  A genuinely unknown hyphenated key (no underscore equivalent)
+    # is still rejected.
+    methods = discover_methods(pc)
+    params = {"milestone": "M-001", "file": "a.py", "behavior": "b", "bogus-key": "x"}
     with pytest.raises(ValueError, match=r"Unknown params"):
         dispatch(methods, "set-intent", params, None)
 

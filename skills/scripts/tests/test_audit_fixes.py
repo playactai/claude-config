@@ -1949,6 +1949,15 @@ def _equiv_seed_doc_only(ctx) -> None:
     plan_commands.set_milestone(ctx, name="Docs", documentation_only=True)  # M-001 (doc-only)
 
 
+def _equiv_seed_codes_with_intent_and_decision(ctx) -> None:
+    _equiv_seed_codes(ctx)  # M-001, M-002
+    # Decision created before the intent so the intent can reference it.
+    plan_commands.set_decision(ctx, decision="Test", reasoning="Because")  # DL-001
+    plan_commands.set_intent(
+        ctx, milestone="M-001", file="src/a.py", behavior="old", decision_refs="DL-001"
+    )  # CI-M-001-001 with decision_refs=["DL-001"]
+
+
 # (id, seed, op-params, expected outcome, substring both messages must share | None).
 # shared is None where the surfaces legitimately diverge in wording (e.g. the unknown-id
 # frame: RPC "not found" vs CLI validation_error); there we pin only that BOTH reject.
@@ -1985,6 +1994,33 @@ _SETINTENT_EQUIV_MATRIX = [
     ("update_unknown_id", _equiv_seed_codes,
      {"id": "CI-M-001-001", "version": 1, "behavior": "new"},
      "error", None),
+    # --- JSON-typed params: the RPC/batch surface receives JSON values with types ---
+    # (int, str, float, list) that argparse never produces.  Every row below must
+    # reach the same accept/reject decision on both surfaces, pinning the type-
+    # coercion paths added for _check_version (str->int), parse_csv (list->str),
+    # and dispatch._normalize_params (single-element list unwrap).
+    #
+    # version as a JSON string — the step-6 catalog lists version as a key;
+    # an architect quoting it like every other JSON value sends "1" not 1.
+    ("update_version_string", _equiv_seed_codes_with_intent,
+     {"id": "CI-M-001-001", "version": "1", "behavior": "new"},
+     "ok", None),
+    # version as a JSON float (1.0) — common when an LLM writes a literal number.
+    ("update_version_float", _equiv_seed_codes_with_intent,
+     {"id": "CI-M-001-001", "version": 1.0, "behavior": "new"},
+     "ok", None),
+    # decision_refs as a JSON array — the idiomatic JSON form for a list.
+    ("update_decision_refs_array", _equiv_seed_codes_with_intent_and_decision,
+     {"id": "CI-M-001-001", "version": 1, "decision_refs": ["DL-001"], "behavior": "new"},
+     "ok", None),
+    # decision_refs as an empty JSON array — must clear the field (Fix 4).
+    ("update_decision_refs_clear_array", _equiv_seed_codes_with_intent_and_decision,
+     {"id": "CI-M-001-001", "version": 1, "decision_refs": [], "behavior": "new"},
+     "ok", None),
+    # milestone as a single-element JSON array — dispatch unwraps it to scalar.
+    ("update_milestone_single_array", _equiv_seed_codes_with_intent,
+     {"id": "CI-M-001-001", "version": 1, "milestone": ["M-001"], "behavior": "new"},
+     "ok", None),
 ]
 
 
@@ -2006,6 +2042,14 @@ def _run_setintent_cli(state_dir: Path, capsys, seed, op: dict) -> tuple[str, st
     for key, val in op.items():
         if val is None:
             continue
+        # Convert JSON-typed values to CLI-compatible string forms so the
+        # equivalence test can drive both surfaces with JSON-typed inputs:
+        # lists become comma-separated strings (matching CLI CSV convention),
+        # losslessly-whole floats become ints (1.0 -> 1) for argparse type=int.
+        if isinstance(val, list):
+            val = ",".join(str(v) for v in val)
+        elif isinstance(val, float) and val == int(val):
+            val = int(val)
         argv += [f"--{key.replace('_', '-')}", str(val)]
     try:
         plan_cli.cli(argv)

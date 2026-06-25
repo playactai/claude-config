@@ -33,7 +33,7 @@ from ..shared.schema import (
 )
 from . import plan_commands
 from .dispatch import batch as batch_dispatch
-from .dispatch import discover_methods, list_methods
+from .dispatch import discover_methods, list_methods, read_batch_requests
 from .output import EntityResult, VersionMismatchError, exit_with_version_error, print_entity_result
 from .plan_common import (
     apply_documentation_only_toggle,
@@ -386,7 +386,36 @@ class SetMilestoneCommand(Command):
             print_entity_result(EntityResult(id=mid, version=1, operation="created"))
 
 
+def _validated_decision_refs(plan, decision_refs: str | None) -> list[str]:
+    """Parse a decision_refs CSV and confirm each ref exists (CLI surface).
+
+    The argparse twin of plan_commands._validated_decision_refs: emits the CLI's
+    validation_error frame instead of raising. Returns the parsed list.
+    """
+    refs = parse_csv(decision_refs)
+    for dref in refs:
+        if not plan.get_decision(dref):
+            validation_error(
+                "decision_refs",
+                "Valid decision ID",
+                dref,
+                f"Use existing: {', '.join(d.id for d in plan.planning_context.decisions)}",
+            )
+    return refs
+
+
 class SetIntentCommand(Command):
+    """Argparse mirror of the RPC set_intent (plan_commands.py).
+
+    CREATE (no --id): --milestone, --file, and --behavior are required.
+    UPDATE (--id provided): --milestone is optional; the intent id encodes its
+    parent milestone, so the parent is inferred.  If --milestone is passed on
+    update it must match the intent's real parent, otherwise error_exit is called.
+
+    This class and set_intent must stay semantically equivalent (DL-004); any
+    logic change to one surface requires the same change to the other.
+    """
+
     name = "set-intent"
     help = "Create or update code intent"
     role = "architect"
@@ -395,7 +424,7 @@ class SetIntentCommand(Command):
     def add_arguments(cls, parser: argparse.ArgumentParser) -> None:
         parser.add_argument("--id", help="Intent ID (omit for create)")
         parser.add_argument("--version", type=int, help="Current version (required for update)")
-        parser.add_argument("--milestone", required=True, help="Parent milestone ID")
+        parser.add_argument("--milestone", help="Parent milestone ID (create only; inferred from --id on update)")
         parser.add_argument("--file", help="Target file path (required for create)")
         parser.add_argument("--function", help="Target function name")
         parser.add_argument("--behavior", help="Behavioral description (required for create)")
@@ -406,45 +435,16 @@ class SetIntentCommand(Command):
         state_dir = get_state_dir()
         plan = load_plan(state_dir)
 
-        ms = plan.get_milestone(args.milestone)
-        if not ms:
-            ids = [m.id for m in plan.milestones]
-            validation_error(
-                "milestone",
-                "Valid milestone ID",
-                args.milestone,
-                f"Use existing: {', '.join(ids) or 'none'}",
-            )
-
-        # Doc-only milestones carry no code_intents (the relationship is exclusive --
-        # see Plan.validate_completeness). Reject here so the plan can't be wedged into
-        # a permanently-invalid state; clear the flag first if code is in fact needed.
-        if ms.is_documentation_only:
-            error_exit(
-                f"milestone {args.milestone} is documentation-only; clear it with "
-                f"'set-milestone --id {args.milestone} --no-documentation-only' "
-                f"before adding code intents"
-            )
-
         if args.file:
             try:
                 args.file = validate_relpath(args.file, "set-intent --file")
             except ValueError as e:
                 error_exit(str(e))
 
-        decision_refs = parse_csv(args.decision_refs)
-        for dref in decision_refs:
-            if not plan.get_decision(dref):
-                validation_error(
-                    "decision_refs",
-                    "Valid decision ID",
-                    dref,
-                    f"Use existing: {', '.join(d.id for d in plan.planning_context.decisions)}",
-                )
-
         if args.id:
-            # UPDATE path
-            _, ci = plan.get_intent(args.id)
+            # UPDATE path -- the intent id encodes its parent milestone, so locate
+            # globally and never require --milestone (mirrors set_wave: id-only).
+            ms, ci = plan.get_intent(args.id)
             if not ci:
                 all_intents = [c.id for m in plan.milestones for c in m.code_intents]
                 validation_error(
@@ -453,12 +453,35 @@ class SetIntentCommand(Command):
                     args.id,
                     f"Use existing: {', '.join(all_intents) or 'none'}",
                 )
+            assert ms is not None  # get_intent returns (ms, ci) together; ci-truthy => ms set
+            # A passed milestone must name the intent's real parent (intents never
+            # move); reject a mismatch instead of silently accepting it.
+            if args.milestone is not None and args.milestone != ms.id:
+                error_exit(
+                    f"intent {args.id} belongs to milestone {ms.id}, not {args.milestone}; "
+                    f"omit --milestone on update (it is inferred from --id)"
+                )
+
+            # Doc-only milestones carry no code_intents (exclusive relationship -- see
+            # Plan.validate_completeness). Guard UPDATE the same way CREATE is guarded
+            # (DL-004 defense-in-depth; the CREATE path and toggle are the primary gates).
+            if ms.is_documentation_only:
+                error_exit(
+                    f"milestone {ms.id} is documentation-only; clear it with "
+                    f"'set-milestone --id {ms.id} --no-documentation-only' "
+                    f"before updating intents under it"
+                )
 
             try:
                 check_version(ci, args.version, args.id)
             except VersionMismatchError as e:
                 exit_with_version_error(e)
                 return
+
+            # decision_refs validated after the intent is located and version-checked so the
+            # structural errors (unknown id, wrong parent, stale version) surface before a
+            # stale decision ref -- mirrors the create branch's milestone-before-refs order.
+            decision_refs = _validated_decision_refs(plan, args.decision_refs)
 
             # Update only provided fields
             if args.file:
@@ -467,7 +490,7 @@ class SetIntentCommand(Command):
                 ci.function = args.function if args.function else None
             if args.behavior:
                 ci.behavior = args.behavior
-            if decision_refs:
+            if args.decision_refs is not None:
                 ci.decision_refs = decision_refs
 
             bump_version(ci)
@@ -478,6 +501,29 @@ class SetIntentCommand(Command):
             # CREATE path
             if args.version is not None:
                 error_exit("--version only valid for updates (when --id provided)")
+            if not args.milestone:
+                error_exit("--milestone required for create")
+            ms = plan.get_milestone(args.milestone)
+            if not ms:
+                ids = [m.id for m in plan.milestones]
+                validation_error(
+                    "milestone",
+                    "Valid milestone ID",
+                    args.milestone,
+                    f"Use existing: {', '.join(ids) or 'none'}",
+                )
+            # Doc-only milestones carry no code_intents (the relationship is exclusive --
+            # see Plan.validate_completeness). Reject here so the plan can't be wedged into
+            # a permanently-invalid state; clear the flag first if code is in fact needed.
+            if ms.is_documentation_only:
+                error_exit(
+                    f"milestone {args.milestone} is documentation-only; clear it with "
+                    f"'set-milestone --id {args.milestone} --no-documentation-only' "
+                    f"before adding code intents"
+                )
+            # decision_refs validated after the milestone so a bad milestone (the
+            # structural error) is reported before a stale decision ref.
+            decision_refs = _validated_decision_refs(plan, args.decision_refs)
             if not args.file or not args.behavior:
                 error_exit("--file and --behavior required for create")
 
@@ -1101,7 +1147,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     # Batch RPC subcommand
     batch_p = subparsers.add_parser("batch", help="Execute batch of RPC commands")
-    batch_p.add_argument("input", nargs="?", help="JSON array of requests (stdin if omitted)")
+    # Positional kept only to reject an inline arg with a guiding error; batch reads
+    # JSON from stdin (pipe a file: batch < changes.json).
+    batch_p.add_argument("input", nargs="?", help="(unused; batch reads JSON from stdin)")
 
     # List methods subcommand
     subparsers.add_parser("list-methods", help="List available RPC methods")
@@ -1122,13 +1170,12 @@ def cli(args: list[str] | None = None):
         ctx = plan_commands.PlanContext(state_dir=Path(parsed.state_dir))
 
         try:
-            if hasattr(parsed, "input") and parsed.input:
-                requests = json.loads(parsed.input)
-            else:
-                requests = json.load(sys.stdin)
-
-            if not isinstance(requests, list) or not all(isinstance(r, dict) for r in requests):
-                error_exit("batch input must be a JSON array of {method, params} objects")
+            # Shared stdin contract (no inline arg, JSON array of objects, friendly
+            # decode frame); raises ValueError mapped to a clean frame below.
+            requests = read_batch_requests(
+                parsed.input,
+                "uv run python -m skills.planner.cli.plan --state-dir <dir>",
+            )
 
             # Role enforcement: the per-command role check runs after the batch
             # early-return and is never reached. Reject any restricted method

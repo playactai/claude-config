@@ -11,10 +11,9 @@ rather than splitting them across two files, because the fix content is small an
 self-contained (decompose's larger content lives in content.py).
 
 Step-2/step-3 bodies are a list[str] when static, or a (state_dir) -> list[str] builder
-when they need runtime composition (impl-docs injects temporal.md; plan-design shell-
-quotes state_dir into its validate command). pin_cwd-wrapped commands that take a literal
-$STATE_DIR are static (pin_cwd only prefixes a fixed cd), so plan-design's apply body is
-a constant built at import.
+when they need runtime composition (impl-docs's apply injects temporal.md; plan-design's
+validate shell-quotes state_dir into its command). plan-design's apply body is likewise a
+builder: it imports the architect batch-contract preambles at call time.
 """
 
 from __future__ import annotations
@@ -145,61 +144,67 @@ IMPL_DOCS_VALIDATE: list[str] = [
 ]
 
 # pin_cwd only prefixes a fixed `cd SKILLS_DIR`, and these commands carry a literal
-# $STATE_DIR placeholder (the agent substitutes it), so this body is static.
-PLAN_DESIGN_APPLY: list[str] = [
-    "APPLY targeted fixes to plan.json using CLI commands.",
-    "",
-    "SINGLE COMMAND EXAMPLES:",
-    "",
-    "Missing decision_log entry:",
-    "  "
-    + pin_cwd(
-        "uv run python -m skills.planner.cli.plan --state-dir $STATE_DIR set-decision \\"
-    ),
-    "    --decision '<what was decided>' \\",
-    "    --reasoning '<premise -> implication -> conclusion>'",
-    "",
-    "Missing code_intent:",
-    "  "
-    + pin_cwd(
-        "uv run python -m skills.planner.cli.plan --state-dir $STATE_DIR set-intent \\"
-    ),
-    "    --milestone <milestone-id> --file <path> \\",
-    "    --behavior '<what to implement>' \\",
-    "    --decision-refs '<DL-001,DL-002>'",
-    "",
-    "Updating existing intent (requires --version from current state):",
-    "  "
-    + pin_cwd(
-        "uv run python -m skills.planner.cli.plan --state-dir $STATE_DIR set-intent \\"
-    ),
-    "    --id <intent-id> --version <current-version> \\",
-    "    --behavior '<updated description>'",
-    "",
-    "BATCH MODE (preferred - reduces process invocations) -- pass JSON via stdin, never inline:",
-    "",
-    "  # Write the batch JSON to a file (Write tool), then pipe it in:",
-    f"  {pin_cwd('uv run python -m skills.planner.cli.plan --state-dir $STATE_DIR batch < /tmp/changes.json')}",
-    "",
-    "  # /tmp/changes.json (JSON escapes apostrophes/backslashes/newlines for you):",
-    "  [",
-    '    {"method": "set-decision", "params": {"decision": "Use polling", "reasoning": "30% webhook failures"}, "id": 1},',
-    '    {"method": "set-intent", "params": {"milestone": "M-001", "file": "src/a.py", "behavior": "Add handler", "decision_refs": "DL-001"}, "id": 2},',
-    '    {"method": "set-intent", "params": {"id": "CI-M-001-001", "version": 1, "behavior": "Updated description"}, "id": 3}',
-    "  ]",
-    "",
-    "COMMON FIX PATTERNS:",
-    "",
-    "Invalid decision_refs:",
-    "  - If decision exists but ref is wrong: update the intent",
-    "  - If decision is missing: add it first, then update ref",
-    "",
-    "Policy default without backing:",
-    "  - Add decision_log entry explaining user confirmation",
-    "  - Or use <needs_user_input> to get confirmation NOW",
-    "",
-    "CONSTRAINT: Fix ONLY the failing items. Don't refactor passing items.",
-]
+# $STATE_DIR placeholder (the agent substitutes it). The BATCH-MODE preamble (header +
+# JSON-RPC shape + method catalog + underscore note) and the pipe lead-in are shared
+# with plan_design_execute so the architect and QR-fix surfaces teach one batch
+# contract; only this prompt's example array and fix-pattern prose stay local.
+def _plan_design_apply(state_dir: str) -> list[str]:
+    from skills.planner.architect.plan_design_execute import (
+        _render_batch_mode_preamble,
+        _render_batch_pipe_preamble,
+    )
+
+    return [
+        "APPLY targeted fixes to plan.json using CLI commands.",
+        "",
+        "SINGLE COMMAND EXAMPLES:",
+        "",
+        "Missing decision_log entry:",
+        "  "
+        + pin_cwd(
+            "uv run python -m skills.planner.cli.plan --state-dir $STATE_DIR set-decision \\"
+        ),
+        "    --decision '<what was decided>' \\",
+        "    --reasoning '<premise -> implication -> conclusion>'",
+        "",
+        "Missing code_intent:",
+        "  "
+        + pin_cwd(
+            "uv run python -m skills.planner.cli.plan --state-dir $STATE_DIR set-intent \\"
+        ),
+        "    --milestone <milestone-id> --file <path> \\",
+        "    --behavior '<what to implement>' \\",
+        "    --decision-refs '<DL-001,DL-002>'",
+        "",
+        "Updating existing intent (requires --version from current state):",
+        "  "
+        + pin_cwd(
+            "uv run python -m skills.planner.cli.plan --state-dir $STATE_DIR set-intent \\"
+        ),
+        "    --id <intent-id> --version <current-version> \\",
+        "    --behavior '<updated description>'",
+        "",
+        *_render_batch_mode_preamble(),
+        "",
+        *_render_batch_pipe_preamble(),
+        "  [",
+        '    {"method": "set-decision", "params": {"decision": "Use polling", "reasoning": "30% webhook failures"}, "id": 1},',
+        '    {"method": "set-intent", "params": {"milestone": "M-001", "file": "src/a.py", "behavior": "Add handler", "decision_refs": "DL-001"}, "id": 2},',
+        '    {"method": "set-intent", "params": {"id": "CI-M-001-001", "version": 1, "behavior": "Updated description"}, "id": 3}',
+        "  ]",
+        "",
+        "COMMON FIX PATTERNS:",
+        "",
+        "Invalid decision_refs:",
+        "  - If decision exists but ref is wrong: update the intent",
+        "  - If decision is missing: add it first, then update ref",
+        "",
+        "Policy default without backing:",
+        "  - Add decision_log entry explaining user confirmation",
+        "  - Or use <needs_user_input> to get confirmation NOW",
+        "",
+        "CONSTRAINT: Fix ONLY the failing items. Don't refactor passing items.",
+    ]
 
 
 def _plan_design_validate(state_dir: str) -> list[str]:
@@ -251,7 +256,7 @@ FIX_CONTENT: dict[str, dict] = {
             "  - You MUST NOT write, modify, or append to context.json",
             "  - Your fixes go to plan.json -- never context.json",
         ],
-        "apply": PLAN_DESIGN_APPLY,
+        "apply": _plan_design_apply,
         "validate": _plan_design_validate,
     },
     "impl-code": {

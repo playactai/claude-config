@@ -47,7 +47,7 @@ from skills.planner.shared.schema import canonicalize_severity
 
 from . import qr_commands
 from .dispatch import batch as batch_dispatch
-from .dispatch import discover_methods, list_methods
+from .dispatch import discover_methods, list_methods, read_batch_requests
 from .output import EntityResult, print_entity_result
 from .qr_common import (
     assign_group_in_state,
@@ -308,16 +308,14 @@ def cli(args: list[str] | None = None):
         ctx = qr_commands.QRContext(state_dir=Path(state_dir), phase=phase)
 
         try:
-            if cmd_args:
-                requests = json.loads(cmd_args[0])
-            else:
-                requests = json.load(sys.stdin)
-
-            if not isinstance(requests, list) or not all(isinstance(r, dict) for r in requests):
-                error_exit("batch input must be a JSON array of {method, params} objects")
-
+            # Shared stdin contract (no inline arg, JSON array of objects, friendly
+            # decode frame); raises ValueError mapped to a clean frame below.
+            requests = read_batch_requests(
+                cmd_args[0] if cmd_args else None,
+                "uv run python -m skills.planner.cli.qr --state-dir <dir> --qr-phase <phase>",
+            )
             results = batch_dispatch(methods, requests, ctx)
-        except ValueError as e:
+        except (ValueError, OSError) as e:
             error_exit(str(e))
         print(json.dumps(results, indent=2))
         return

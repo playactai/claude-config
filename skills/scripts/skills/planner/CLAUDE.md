@@ -26,6 +26,7 @@ Planning and execution workflows with QR gates, TW passes, and Dev execution. St
 | ------------------- | -------------------------------------- | ------------------------------------------ |
 | `orchestrator/`     | Main workflows (planner, executor)     | Creating/executing plans                   |
 | `architect/`        | Plan design sub-agent                  | Understanding planning workflow            |
+| `cli/`              | RPC commands, argparse mirror, batch dispatch | Modifying plan commands, CLI UX     |
 | `developer/`        | Exec-phase implementation              | Dev execution                              |
 | `technical_writer/` | Documentation scrubbing and generation | TW passes, temporal cleanup                |
 | `quality_reviewer/` | QR modules for all phases              | QR logic, validation, understanding gates  |

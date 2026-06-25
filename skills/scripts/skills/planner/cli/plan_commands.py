@@ -127,14 +127,31 @@ class PlanContext:
 
 
 def _check_version(entity, provided: int | None, entity_id: str) -> None:
-    """CAS version check. Raises if mismatch."""
+    """CAS version check. Raises if mismatch.
+
+    STRICT: version must be an integer. Rejects bool (an int subclass) and
+    float (including whole-valued 1.0) to match the CLI's ``type=int``
+    precisely — JSON batch callers sending 1.0 or true get a clean error
+    instead of silent coercion. Accepts string ``"1"`` (int() coercion) for
+    LLM callers who quote JSON values as strings.
+    """
     if provided is None:
         return
+    # Reject bool (an int subclass, so this must precede the int() coercion that
+    # would turn True into 1) and float (incl. whole-valued 1.0) together -- both
+    # carry the identical "must be an integer" rejection.
+    version_err = f"Version for {entity_id} must be an integer, got {provided!r}"
+    if isinstance(provided, (bool, float)):
+        raise ValueError(version_err)
+    try:
+        provided = int(provided)
+    except (TypeError, ValueError) as err:
+        raise ValueError(version_err) from err
     current = getattr(entity, "version", 1)
     if provided != current:
         raise ValueError(
             f"Version mismatch for {entity_id}: provided {provided}, current {current}. "
-            f"Re-read entity and retry with --version {current}"
+            f"Re-read entity and retry with version {current}"
         )
 
 
@@ -191,7 +208,22 @@ def set_milestone(
     tests_list = parse_csv(tests)
 
     if files_list:
-        files_list = [validate_relpath(f, "set-milestone --files") for f in files_list]
+        files_list = [validate_relpath(f, "set-milestone files") for f in files_list]
+
+    # Validate documentation_only type before the create/update branch: accept only
+    # actual bools or the exact JSON boolean strings "true"/"false" (any case); int,
+    # float, other strings, dict, and list all raise cleanly. This is close to
+    # _check_version's strict rejection but stricter on whitespace -- " true " is
+    # rejected here, whereas _check_version accepts " 1 " because int() strips it.
+    if documentation_only is not None and not isinstance(documentation_only, bool):
+        lowered = documentation_only.lower() if isinstance(documentation_only, str) else None
+        if lowered in ("true", "false"):
+            documentation_only = lowered == "true"
+        else:
+            raise ValueError(
+                f"documentation_only must be a boolean, got "
+                f"{type(documentation_only).__name__} {documentation_only!r}"
+            )
 
     if id:
         # UPDATE
@@ -241,9 +273,9 @@ def set_milestone(
     else:
         # CREATE
         if version is not None:
-            raise ValueError("--version only valid for updates (when --id provided)")
+            raise ValueError("version is only valid for updates (provide id to update)")
         if not name:
-            raise ValueError("--name required for create")
+            raise ValueError("name required for create")
 
         mid = plan.next_milestone_id()
         number = int(mid.rsplit("-", 1)[1])
@@ -258,16 +290,30 @@ def set_milestone(
             requirements=requirements_list,
             acceptance_criteria=acceptance_list,
             tests=tests_list,
-            is_documentation_only=bool(documentation_only),
+            is_documentation_only=False if documentation_only is None else documentation_only,
         )
         plan.milestones.append(ms)
         ctx.save_plan(plan)
         return {"id": mid, "version": 1, "operation": "created"}
 
 
+def _validated_decision_refs(plan, decision_refs: str | None) -> list[str]:
+    """Parse a decision_refs CSV and confirm every ref exists; returns the list.
+
+    Shared by set_intent's create and update paths so each validates refs at the
+    point where a bad ref should surface relative to its own checks (create: after
+    the milestone, so a bad milestone is reported first).
+    """
+    refs_list = parse_csv(decision_refs)
+    for ref in refs_list:
+        if not plan.get_decision(ref):
+            raise ValueError(f"Decision {ref} not found")
+    return refs_list
+
+
 def set_intent(
     ctx: PlanContext,
-    milestone: str,
+    milestone: str | None = None,
     file: str | None = None,
     behavior: str | None = None,
     id: str | None = None,
@@ -275,39 +321,63 @@ def set_intent(
     function: str | None = None,
     decision_refs: str | None = None,
 ) -> dict:
-    """Create or update code intent."""
+    """Create or update a code intent (RPC surface; auto-discovered as 'set-intent').
+
+    CREATE (no id): milestone, file, and behavior are required.  milestone must
+    name a non-doc-only milestone -- doc-only milestones carry no code_intents by
+    schema invariant (Plan.validate_completeness).
+
+    UPDATE (id provided): milestone is optional.  Intent ids encode their parent
+    (CI-{milestone}-N), so the milestone is inferred from the id and the milestone
+    arg is never needed to locate or scope the intent.  If milestone is passed it
+    must equal the intent's real parent; a mismatch raises ValueError to close the
+    silent-wrong-parent footgun that existed when the arg was required.
+
+    This function is one of two surfaces for set-intent; SetIntentCommand (plan.py)
+    is the argparse mirror and must stay semantically equivalent (DL-004).
+    milestone's default of None makes dispatch.extract_params treat it as optional
+    with no dispatch change required (DL-001).
+    """
     schema = _get_schema()
     plan = ctx.load_plan()
 
-    ms = plan.get_milestone(milestone)
-    if not ms:
-        ids = [m.id for m in plan.milestones]
-        raise ValueError(f"Milestone {milestone} not found. Valid: {ids}")
-
-    # Doc-only milestones carry no code_intents (exclusive relationship -- see
-    # Plan.validate_completeness). Reject so the plan can't be wedged invalid.
-    if ms.is_documentation_only:
-        raise ValueError(
-            f"milestone {milestone} is documentation-only; clear it with "
-            f"set-milestone --no-documentation-only before adding code intents"
-        )
-
     if file:
-        file = validate_relpath(file, "set-intent --file")
-
-    refs_list = parse_csv(decision_refs)
-    for ref in refs_list:
-        if not plan.get_decision(ref):
-            raise ValueError(f"Decision {ref} not found")
+        file = validate_relpath(file, "set-intent file")
 
     if id:
-        # UPDATE
-        _, ci = plan.get_intent(id)
+        # UPDATE -- the intent id encodes its parent milestone, so locate globally
+        # and never require a milestone arg (mirrors set_wave/set_decision: id-only).
+        ms, ci = plan.get_intent(id)
         if not ci:
             all_intents = [c.id for m in plan.milestones for c in m.code_intents]
             raise ValueError(f"Intent {id} not found. Valid: {all_intents}")
+        assert ms is not None  # get_intent returns (ms, ci) together; ci-truthy => ms set
+        # A passed milestone must name the intent's real parent (intents never move);
+        # reject a mismatch instead of silently accepting it.
+        if milestone is not None and milestone != ms.id:
+            raise ValueError(
+                f"intent {id} belongs to milestone {ms.id}, not {milestone}; "
+                f"omit milestone on update (it is inferred from the intent id)"
+            )
+
+        # Doc-only milestones carry no code_intents (exclusive relationship -- see
+        # Plan.validate_completeness). Guard UPDATE the same way CREATE is guarded so
+        # an externally-written plan.json can't wedge an intent under a doc-only
+        # milestone via this path (DL-004 defense-in-depth; the CREATE path's
+        # rejection and apply_documentation_only_toggle's intent-clear are the
+        # primary gates).
+        if ms.is_documentation_only:
+            raise ValueError(
+                f"milestone {ms.id} is documentation-only; set documentation_only=false "
+                f"on it via set-milestone before updating intents under it"
+            )
 
         _check_version(ci, version, id)
+
+        # decision_refs validated after the intent is located and version-checked so the
+        # structural errors (unknown id, wrong parent, stale version) surface before a
+        # stale decision ref -- mirrors the create branch's milestone-before-refs order.
+        refs_list = _validated_decision_refs(plan, decision_refs)
 
         if file:
             ci.file = file
@@ -315,7 +385,7 @@ def set_intent(
             ci.function = function if function else None
         if behavior:
             ci.behavior = behavior
-        if refs_list:
+        if decision_refs is not None:
             ci.decision_refs = refs_list
 
         _bump_version(ci)
@@ -324,9 +394,25 @@ def set_intent(
     else:
         # CREATE
         if version is not None:
-            raise ValueError("--version only valid for updates")
+            raise ValueError("version is only valid for updates (provide id to update)")
+        if not milestone:
+            raise ValueError("milestone required for create")
+        ms = plan.get_milestone(milestone)
+        if not ms:
+            ids = [m.id for m in plan.milestones]
+            raise ValueError(f"Milestone {milestone} not found. Valid: {ids}")
+        # Doc-only milestones carry no code_intents (exclusive relationship -- see
+        # Plan.validate_completeness). Reject so the plan can't be wedged invalid.
+        if ms.is_documentation_only:
+            raise ValueError(
+                f"milestone {milestone} is documentation-only; set documentation_only=false "
+                f"on it via set-milestone before adding code intents"
+            )
+        # decision_refs validated after the milestone so a bad milestone (the
+        # structural error) is reported before a stale decision ref.
+        refs_list = _validated_decision_refs(plan, decision_refs)
         if not file or not behavior:
-            raise ValueError("--file and --behavior required for create")
+            raise ValueError("file and behavior required for create")
 
         cid = plan.next_intent_id(ms)
 
@@ -374,9 +460,9 @@ def set_decision(
     else:
         # CREATE
         if version is not None:
-            raise ValueError("--version only valid for updates")
+            raise ValueError("version is only valid for updates (provide id to update)")
         if not decision or not reasoning:
-            raise ValueError("--decision and --reasoning required for create")
+            raise ValueError("decision and reasoning required for create")
 
         did = plan.next_decision_id()
 
@@ -521,7 +607,7 @@ def set_wave(
         return {"id": wave.id, "operation": "updated"}
 
     if not milestones_list:
-        raise ValueError("--milestones required for create (empty allowed only on update)")
+        raise ValueError("milestones required for create (empty allowed only on update)")
     wid = plan.next_wave_id()
     plan.waves.append(schema["Wave"](id=wid, milestones=milestones_list))
     ctx.save_plan(plan)

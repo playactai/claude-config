@@ -55,13 +55,31 @@ def validate_relpath(path: str, context: str) -> str:
 
 # The param names whose RPC value is tokenized by parse_csv. dispatch._normalize_params
 # leaves these as lists so parse_csv (which accepts str|list) owns their shape; every
-# other param is scalar. Adding a parse_csv-backed param REQUIRES adding it here (a
-# dispatch-routed round-trip test guards against drift).
+# other param is scalar. Adding a parse_csv-backed param REQUIRES adding it here:
+# test_csv_param_names_matches_parse_csv_call_sites introspects plan_commands' parse_csv
+# call sites and fails the moment this frozenset drifts from them.
 CSV_PARAM_NAMES = frozenset({
     "files", "flags", "requirements", "acceptance_criteria", "tests",  # set_milestone
     "decision_refs",                                                    # set_intent
     "milestones",                                                       # set_wave
 })
+
+
+# Fields each dual create/update command requires when CREATING (no id). These
+# functions mark every field optional (default None) so one function serves both
+# create and update -- which makes the signature-derived "required" set empty and
+# misleading for create. This declarative map is the single source the
+# discoverability surfaces (dispatch.list_methods, the architect method catalog
+# prose) derive create-requiredness from, so they cannot teach a create shape the
+# runtime create-branch guards don't enforce. The guards keep their own ordering and
+# messages (procedural rules); test_create_required_matches_runtime_guards pins them
+# to this map.
+CREATE_REQUIRED: dict[str, list[str]] = {
+    "set-decision": ["decision", "reasoning"],
+    "set-milestone": ["name"],
+    "set-intent": ["milestone", "file", "behavior"],
+    "set-wave": ["milestones"],
+}
 
 
 def parse_csv(value: str | list[str] | None) -> list[str]:

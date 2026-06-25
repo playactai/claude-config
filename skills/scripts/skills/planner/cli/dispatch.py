@@ -13,7 +13,7 @@ from typing import Any
 
 from skills.lib.io import atomic_write_text
 
-from .plan_common import CSV_PARAM_NAMES
+from .plan_common import CREATE_REQUIRED, CSV_PARAM_NAMES
 
 
 def discover_methods(module) -> dict[str, Callable[..., Any]]:
@@ -50,19 +50,20 @@ def extract_params(func) -> tuple[set[str], dict[str, Any]]:
     return required, optional
 
 
-def _normalize_params(method: str, params: dict, required: set, optional: dict) -> dict:
+def _normalize_params(method: str, params: dict, valid: set) -> dict:
     """Normalize hyphenated param keys to underscores and unwrap/reject scalar lists.
 
     Single authority for key-shape (hyphen -> underscore; reject ambiguity) and
     value-shape (unwrap single-element scalar lists; reject multi-element; CSV
-    params keep their list so parse_csv owns tokenization).
+    params keep their list so parse_csv owns tokenization). *valid* (the
+    required|optional key set) is passed in so dispatch owns the one computation
+    used for both value-shaping here and the unknown-key check there.
 
     Canonicalizes param keys the same way method names are already normalized
     (hyphens -> underscores in discover_methods), so a batch caller writing
     ``decision-refs`` reaches the same ``decision_refs`` function param as the
     CLI's ``--decision-refs`` flag. Returns a new dict (never mutates *params*).
     """
-    valid = required | set(optional)
     normalized: dict[str, object] = {}
     # Key-shape: hyphen -> underscore; reject if both forms of a stem are present.
     for k, v in params.items():
@@ -95,11 +96,14 @@ def dispatch(methods: dict, method: str, params: dict, ctx) -> Any:
 
     func = methods[method]
     required, optional = extract_params(func)
+    valid = required | set(optional)
 
     # Normalize keys (hyphens->underscores, single-element lists unwrapped)
     # BEFORE key validation so the canonical forms are used for the
-    # required/unknown checks.
-    params = _normalize_params(method, params, required, optional)
+    # required/unknown checks. valid is computed once here and threaded into
+    # _normalize_params and the unknown-key check below (one owner of "what is a
+    # valid key").
+    params = _normalize_params(method, params, valid)
 
     missing = required - set(params.keys())
     if missing:
@@ -109,7 +113,6 @@ def dispatch(methods: dict, method: str, params: dict, ctx) -> Any:
     # returns an actionable frame instead of a deep TypeError from
     # func(ctx, **kwargs). Hyphenated keys are already normalized above, so
     # only truly-unknown stems reach this check.
-    valid = required | set(optional)
     unknown = set(params) - valid
     if unknown:
         raise ValueError(f"Unknown params: {sorted(unknown)}. Valid: {sorted(valid)}")
@@ -289,16 +292,27 @@ def get_method_keys(methods: dict) -> dict[str, list[str]]:
 
 
 def list_methods(methods: dict) -> dict[str, dict]:
-    """Return method signatures for discoverability."""
+    """Return method signatures for discoverability.
+
+    For the dual create/update commands every field is optional in the signature
+    (so one function serves both paths), so the signature-derived ``required`` set
+    is empty and would tell an agent a create needs no fields. Surface
+    ``create_required`` from CREATE_REQUIRED for those methods so this subcommand
+    agrees with the architect catalog's CREATE/UPDATE prose rather than mislabeling
+    e.g. set-intent's milestone as optional.
+    """
     result = {}
     for name, func in methods.items():
         required, optional = extract_params(func)
         doc = func.__doc__.split("\n")[0] if func.__doc__ else ""
-        result[name] = {
+        entry: dict = {
             "required": sorted(required),
             "optional": sorted(optional.keys()),
             "description": doc,
         }
+        if name in CREATE_REQUIRED:
+            entry["create_required"] = sorted(CREATE_REQUIRED[name])
+        result[name] = entry
     return result
 
 
@@ -325,17 +339,47 @@ def read_batch_requests(inline_arg: str | None, usage: str) -> list[dict]:
             f"Invalid JSON in batch input: line {e.lineno} col {e.colno}: {e.msg}. "
             f"Write the batch to a file and pipe it via stdin: {usage} batch < changes.json"
         ) from e
+    except UnicodeDecodeError as e:
+        # json.load decodes stdin's bytes before parsing, so a non-UTF-8 pipe raises
+        # here, ahead of any JSONDecodeError. Frame it the same friendly way -- it would
+        # otherwise reach the caller's outer except only because UnicodeDecodeError
+        # happens to subclass ValueError, emitting a raw codec message with no hint.
+        raise ValueError(
+            f"Batch input is not valid UTF-8 ({e.reason} at byte {e.start}). "
+            f"Save the batch as UTF-8 and pipe it via stdin: {usage} batch < changes.json"
+        ) from e
     if not isinstance(requests, list) or not all(isinstance(r, dict) for r in requests):
         raise ValueError("batch input must be a JSON array of {method, params} objects")
-    # Validate params shape so dispatch() never hits a raw AttributeError on
-    # .keys() — a non-dict params (null, array, string) is rejected here with
-    # the offending request's id/method instead of leaking "'X' object has no
-    # attribute 'keys'".
+    # Shape-check each request so dispatch()/batch()/the role gate never hit a raw
+    # TypeError or AttributeError on a malformed field -- the same LLM failure mode
+    # (array-wrapping or mistyping a scalar) that _normalize_params already normalizes
+    # for params. Reject here with the offending request's id/method:
+    #   - params: a non-dict would raise AttributeError on .items() in _normalize_params,
+    #   - method: a list/dict method makes the plan role gate's
+    #     `method in restricted_methods` raise "unhashable type" (uncaught -> traceback);
+    #     requiring a non-empty str also upgrades the otherwise bare "Unknown method: ."
+    #     frame an empty/missing method would produce,
+    #   - id: a list/dict id makes batch()'s duplicate-id scan `id in seen_ids` raise
+    #     "unhashable type" (both surfaces, before batch()'s own try/except).
     for r in requests:
         params = r.get("params")
         if params is not None and not isinstance(params, dict):
             raise ValueError(
                 f"params must be a JSON object, got {type(params).__name__} "
                 f"in request id={r.get('id')!r} method={r.get('method')!r}"
+            )
+        method = r.get("method")
+        if not isinstance(method, str) or not method:
+            raise ValueError(
+                f"method must be a non-empty string, got {method!r} "
+                f"in request id={r.get('id')!r}"
+            )
+        rid = r.get("id")
+        # str/int/float/bool are hashable scalars (bool subclasses int); only a list or
+        # dict id is unhashable JSON, so reject exactly those. None means "no id".
+        if rid is not None and not isinstance(rid, (str, int, float)):
+            raise ValueError(
+                f"id must be a string, number, or null, got {type(rid).__name__} "
+                f"in request method={method!r}"
             )
     return requests

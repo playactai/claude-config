@@ -145,13 +145,16 @@ IMPL_DOCS_VALIDATE: list[str] = [
 ]
 
 # pin_cwd only prefixes a fixed `cd SKILLS_DIR`, and these commands carry a literal
-# $STATE_DIR placeholder (the agent substitutes it). The catalog rendering is deferred
-# to a builder so it stays in sync with plan_design_execute._render_method_catalog —
-# both derive from the same dispatch.get_method_keys introspection.
+# $STATE_DIR placeholder (the agent substitutes it). The BATCH-MODE preamble (header +
+# JSON-RPC shape + method catalog + underscore note) and the pipe lead-in are shared
+# with plan_design_execute so the architect and QR-fix surfaces teach one batch
+# contract; only this prompt's example array and fix-pattern prose stay local.
 def _plan_design_apply(state_dir: str) -> list[str]:
-    from skills.planner.architect.plan_design_execute import _render_method_catalog
+    from skills.planner.architect.plan_design_execute import (
+        _render_batch_mode_preamble,
+        _render_batch_pipe_preamble,
+    )
 
-    catalog_lines = _render_method_catalog()
     return [
         "APPLY targeted fixes to plan.json using CLI commands.",
         "",
@@ -182,19 +185,9 @@ def _plan_design_apply(state_dir: str) -> list[str]:
         "    --id <intent-id> --version <current-version> \\",
         "    --behavior '<updated description>'",
         "",
-        "BATCH MODE (preferred - reduces process invocations) -- pass JSON via stdin, never inline:",
+        *_render_batch_mode_preamble(),
         "",
-        'JSON-RPC format: [{"method": "...", "params": {...}, "id": N}, ...]',
-        *catalog_lines,
-        "",
-        "params use the EXACT underscore keys above; CLI flags are the same names",
-        "hyphenated (--decision-refs <-> decision_refs). In batch params ALWAYS use",
-        "underscores. Unknown keys are rejected.",
-        "",
-        "  # Write the batch JSON to a file (Write tool), then pipe it in:",
-        f"  {pin_cwd('uv run python -m skills.planner.cli.plan --state-dir $STATE_DIR batch < /tmp/changes.json')}",
-        "",
-        "  # /tmp/changes.json (JSON escapes apostrophes/backslashes/newlines for you):",
+        *_render_batch_pipe_preamble(),
         "  [",
         '    {"method": "set-decision", "params": {"decision": "Use polling", "reasoning": "30% webhook failures"}, "id": 1},',
         '    {"method": "set-intent", "params": {"milestone": "M-001", "file": "src/a.py", "behavior": "Add handler", "decision_refs": "DL-001"}, "id": 2},',

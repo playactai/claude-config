@@ -15,3 +15,4 @@ Plan CLI: RPC commands, argparse commands, batch dispatch, and output formatting
 | `qr_common.py`     | Shared QR primitives                                                      | Understanding QR state, modifying QR validation                  |
 | `qr.py`            | Argparse command classes for QR phase                                     | Modifying QR CLI interface                                       |
 | `verify.py`        | Final-verification recorder (writes verify.json)                          | Modifying final-verification gate, understanding verify.json     |
+| `__init__.py`      | Package init: re-exports qr, documents the read/write asymmetry            | Rarely (package layout)                                          |

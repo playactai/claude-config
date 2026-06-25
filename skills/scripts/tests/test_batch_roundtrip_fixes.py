@@ -1,11 +1,21 @@
 """Tests for the planner batch-authoring round-trip fixes.
 
-Covers:
+Two groups with independent numbering -- read the section headers, not bare numbers:
+
+"Fix N" sections cover the original batch-roundtrip fixes:
 - Fix 2: dispatch rejects unknown params (was a deep TypeError from func(ctx, **kwargs))
 - Fix 3: create-required / version errors are RPC-neutral (no --flag names)
 - Fix 4: batch JSON-decode errors carry a line/col + stdin hint (+ qr OSError parity)
 - Fix 5: inline batch args are rejected with a guiding message (stdin only)
 - Fix 1: step-6 prompt renders the exact RPC method catalog (underscore keys)
+
+"Review #N" sections cover the later max-effort review round (numbers are that review's
+finding numbers, NOT the "Fix N" scheme above):
+- Review #1: read_batch_requests guards method/id shape
+- Review #6: non-UTF-8 batch input gets the friendly frame
+- Review #2: list_methods surfaces create-requiredness
+- Review #5: CSV_PARAM_NAMES drift guard is introspective
+- Review #2/#7: CREATE_REQUIRED is pinned to the runtime create guards
 """
 
 from __future__ import annotations
@@ -60,7 +70,8 @@ def test_dispatch_normalizes_hyphenated_param_key():
     methods = discover_methods(pc)
     params = {"milestone": "M-001", "file": "a.py", "behavior": "b", "decision-refs": "DL-001"}
     # Normalization succeeds — the hyphenated key is canonicalized to decision_refs.
-    normalized = _normalize_params("set-intent", params, *extract_params(methods["set-intent"]))
+    required, optional = extract_params(methods["set-intent"])
+    normalized = _normalize_params("set-intent", params, required | set(optional))
     assert "decision-refs" not in normalized
     assert "decision_refs" in normalized
     assert normalized["decision_refs"] == "DL-001"
@@ -244,29 +255,30 @@ def test_step6_prompt_surfaces_catalog_and_notes():
     assert "batch '[" not in body
 
 
+def _extract_example_batch(actions: list[str]) -> list[dict]:
+    """Parse the JSON request array out of rendered step-6 guidance actions.
+
+    The example lives as literal lines between a standalone '[' and ']' (the only
+    standalone brackets in the actions). Parsing the RENDERED example -- not a copy --
+    is what makes the test fail if the documented example drifts.
+    """
+    start = next(i for i, ln in enumerate(actions) if ln.strip() == "[")
+    end = next(i for i in range(start + 1, len(actions)) if actions[i].strip() == "]")
+    return json.loads("\n".join(actions[start : end + 1]))
+
+
 def test_step6_example_batch_is_self_contained(tmp_path: Path):
     """The step-6 example batch must round-trip against a fresh skeleton.
 
-    Proves both P2 fixes: the documented shapes (including set-intent's milestone
-    on what would be an update) produce valid RPC, and set-diagram creates DIAG-001
-    before add-diagram-node/edge reference it.
+    Parses the example out of the RENDERED guidance (not a hand-copied literal) and
+    runs it through batch(), so a drifted example -- an intent referencing the wrong
+    milestone, a node before its diagram -- fails here instead of shipping silently.
     """
     ctx = _seed_plan(tmp_path)
     methods = discover_methods(pc)
-    results = batch(
-        methods,
-        [
-            {"method": "set-decision", "params": {"decision": "Use polling", "reasoning": "30% webhook failures"}, "id": 1},
-            {"method": "set-milestone", "params": {"name": "Auth stack", "files": "src/auth.py"}, "id": 2},
-            {"method": "set-intent", "params": {"milestone": "M-001", "file": "src/auth.py", "behavior": "Add token validation", "decision_refs": "DL-001"}, "id": 3},
-            {"method": "set-wave", "params": {"milestones": "M-001"}, "id": 4},
-            {"method": "set-diagram", "params": {"type": "architecture", "scope": "overview", "title": "System Overview"}, "id": 5},
-            {"method": "add-diagram-node", "params": {"diagram": "DIAG-001", "node_id": "client", "label": "Client", "type": "service"}, "id": 6},
-            {"method": "add-diagram-node", "params": {"diagram": "DIAG-001", "node_id": "server", "label": "Server", "type": "service"}, "id": 7},
-            {"method": "add-diagram-edge", "params": {"diagram": "DIAG-001", "source": "client", "target": "server", "label": "calls", "protocol": "gRPC"}, "id": 8},
-        ],
-        ctx,
-    )
+    requests = _extract_example_batch(get_step_guidance(6)["actions"])
+    assert len(requests) == 8  # guards against the bracket-scan matching the wrong block
+    results = batch(methods, requests, ctx)
     # Every op must succeed — no errors.
     for r in results:
         assert "result" in r, f"unexpected error in batch result: {r}"
@@ -634,3 +646,184 @@ def test_documentation_only_none_omitted(tmp_path: Path):
     dispatch(methods, "set-milestone", {"name": "ms", "files": "a.py", "documentation_only": None}, ctx)
     plan = json.loads(ctx.plan_path().read_text(encoding="utf-8"))
     assert plan["milestones"][0]["is_documentation_only"] is False
+
+
+# --- Review #1: read_batch_requests guards method/id shape (HIGH) ------------
+#
+# A non-string method (plan role gate `method in restricted_methods`) or an
+# unhashable list/dict id (batch()'s `id in seen_ids` scan) previously escaped the
+# CLI's except as a raw TypeError traceback. read_batch_requests now rejects both
+# shapes up front with a clean ValueError -> error_exit frame on BOTH surfaces.
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        pytest.param('[{"method": [], "params": {}, "id": 1}]', id="list-method"),
+        pytest.param('[{"method": "list-decisions", "params": {}, "id": []}]', id="list-id"),
+        pytest.param('[{"method": "list-decisions", "params": {}, "id": {}}]', id="dict-id"),
+        pytest.param('[{"method": "", "params": {}, "id": 1}]', id="empty-method"),
+        pytest.param('[{"params": {}, "id": 1}]', id="missing-method"),
+    ],
+)
+def test_plan_cli_batch_malformed_request_clean_frame(tmp_path, capsys, monkeypatch, payload):
+    monkeypatch.setattr(sys, "stdin", io.StringIO(payload))
+    with pytest.raises(SystemExit) as exc:
+        plan_cli.cli(["--state-dir", str(tmp_path), "batch"])
+    assert exc.value.code == 1
+    out = capsys.readouterr().out
+    assert "<validation_error>" in out  # clean frame, not a raw traceback
+    assert "Traceback" not in out
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        pytest.param('[{"method": [], "params": {}, "id": 1}]', id="list-method"),
+        pytest.param('[{"method": "update-item", "params": {}, "id": []}]', id="list-id"),
+    ],
+)
+def test_qr_cli_batch_malformed_request_clean_frame(tmp_path, capsys, monkeypatch, payload):
+    monkeypatch.setattr(sys, "stdin", io.StringIO(payload))
+    with pytest.raises(SystemExit):
+        qr_cli.cli(["--state-dir", str(tmp_path), "--qr-phase", "impl-code", "batch"])
+    out = capsys.readouterr().out
+    assert "<qr_cli_error>" in out
+    assert "Traceback" not in out
+
+
+# --- Review #6: non-UTF-8 batch input gets the friendly frame ---------------
+
+
+class _BadUtf8Stdin:
+    """json.load(fp) calls fp.read(); a non-UTF-8 pipe raises UnicodeDecodeError there."""
+
+    def read(self, *args):
+        return b"\xff\xfe".decode("utf-8")
+
+
+def test_plan_cli_batch_non_utf8_clean_frame(tmp_path, capsys, monkeypatch):
+    monkeypatch.setattr(sys, "stdin", _BadUtf8Stdin())
+    with pytest.raises(SystemExit) as exc:
+        plan_cli.cli(["--state-dir", str(tmp_path), "batch"])
+    assert exc.value.code == 1
+    out = capsys.readouterr().out
+    assert "not valid UTF-8" in out  # framed, not a raw codec traceback
+    assert "Traceback" not in out
+
+
+def test_qr_cli_batch_non_utf8_clean_frame(tmp_path, capsys, monkeypatch):
+    monkeypatch.setattr(sys, "stdin", _BadUtf8Stdin())
+    with pytest.raises(SystemExit):
+        qr_cli.cli(["--state-dir", str(tmp_path), "--qr-phase", "impl-code", "batch"])
+    out = capsys.readouterr().out
+    assert "not valid UTF-8" in out
+    assert "Traceback" not in out
+
+
+# --- Review #2: list_methods surfaces create-requiredness -------------------
+
+
+def test_list_methods_surfaces_create_required():
+    """Dual create/update commands look fieldless in the signature; list-methods must
+    still tell an agent what a CREATE needs (else: emit a create -> runtime rejection)."""
+    from skills.planner.cli.dispatch import list_methods
+
+    listed = list_methods(discover_methods(pc))
+    assert listed["set-intent"]["required"] == []  # signature-derived stays empty
+    assert listed["set-intent"]["create_required"] == ["behavior", "file", "milestone"]
+    assert listed["set-milestone"]["create_required"] == ["name"]
+    # read-only / non-create methods carry no create_required key
+    assert "create_required" not in listed["list-decisions"]
+
+
+# --- Review #5: CSV_PARAM_NAMES drift guard is introspective -----------------
+
+
+def test_csv_param_names_matches_parse_csv_call_sites():
+    """CSV_PARAM_NAMES must equal the params actually passed to parse_csv.
+
+    Introspective drift guard (replaces the comment's prior false assurance): a new
+    parse_csv-backed param added to a command but not to CSV_PARAM_NAMES would let
+    _normalize_params unwrap its single-element list and parse_csv comma-split it --
+    silent corruption. This fails the moment the two disagree.
+    """
+    import ast
+    import inspect
+
+    from skills.planner.cli.plan_common import CSV_PARAM_NAMES
+
+    tree = ast.parse(inspect.getsource(pc))
+    csv_args: set[str] = set()
+    non_name_calls: list[str] = []
+    for node in ast.walk(tree):
+        if (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "parse_csv"
+        ):
+            arg = node.args[0] if node.args else None
+            if isinstance(arg, ast.Name):
+                csv_args.add(arg.id)
+            else:
+                # A non-bare-Name arg -- parse_csv(self.x), parse_csv(x or []) -- can't be
+                # mapped to a param name, so it would silently bypass this drift guard.
+                # Fail loudly so a future call-style change can't defeat the check.
+                non_name_calls.append(ast.dump(arg) if arg is not None else "<no args>")
+    assert not non_name_calls, (
+        f"parse_csv called with a non-Name first arg; extend this guard: {non_name_calls}"
+    )
+    assert csv_args == set(CSV_PARAM_NAMES), (
+        f"CSV_PARAM_NAMES {set(CSV_PARAM_NAMES)} != parse_csv call-site params {csv_args}"
+    )
+
+
+# --- Review #2/#7: CREATE_REQUIRED is pinned to the runtime create guards ----
+
+
+def test_create_required_matches_runtime_guards(tmp_path: Path):
+    """CREATE_REQUIRED must match the runtime create guards in BOTH directions.
+
+    Pins the declarative CREATE_REQUIRED (consumed by list_methods + the architect
+    catalog prose) to the runtime create-branch guards so the discoverability surfaces
+    can't advertise a create shape the code doesn't enforce:
+      - necessity: omitting any listed field makes the create raise (every advertised
+        field is actually enforced);
+      - sufficiency: a create with EXACTLY the listed fields succeeds (the guard requires
+        nothing the surface fails to advertise -- the harmful under-claim direction, which
+        a necessity-only check misses).
+    `complete[method]` holds exactly CREATE_REQUIRED[method]'s fields (asserted), so the
+    success path is the sufficiency check.
+    """
+    from skills.planner.cli.plan_common import CREATE_REQUIRED
+
+    complete = {
+        "set-decision": {"decision": "d", "reasoning": "r"},
+        "set-milestone": {"name": "m"},
+        "set-intent": {"milestone": "M-001", "file": "a.py", "behavior": "b"},
+        "set-wave": {"milestones": "M-001"},
+    }
+    assert set(complete) == set(CREATE_REQUIRED)  # every method covered
+    methods = discover_methods(pc)
+
+    def _fresh_ctx(tag: str) -> pc.PlanContext:
+        # Fresh state dir per case: a successful create mutates the plan, so necessity
+        # and sufficiency can't share one ctx (unlike the all-raising necessity loop).
+        d = tmp_path / tag
+        d.mkdir()
+        ctx = _seed_plan(d)
+        pc.set_milestone(ctx, name="m0", files="a.py")  # M-001 for set-intent / set-wave
+        return ctx
+
+    for method, fields in CREATE_REQUIRED.items():
+        assert set(complete[method]) == set(fields)  # fixture mirrors the map exactly
+
+        nec_ctx = _fresh_ctx(f"nec-{method}")
+        for field in fields:
+            params = {k: v for k, v in complete[method].items() if k != field}
+            with pytest.raises(ValueError):
+                dispatch(methods, method, params, nec_ctx)
+
+        suf_ctx = _fresh_ctx(f"suf-{method}")
+        result = dispatch(methods, method, dict(complete[method]), suf_ctx)
+        assert result.get("operation") == "created"

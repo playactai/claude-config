@@ -137,11 +137,10 @@ def _check_version(entity, provided: int | None, entity_id: str) -> None:
     """
     if provided is None:
         return
-    if isinstance(provided, bool):
-        raise ValueError(
-            f"Version for {entity_id} must be an integer, got {provided!r}"
-        )
-    if isinstance(provided, float):
+    # Reject bool (an int subclass, so this must precede the int() coercion that
+    # would turn True into 1) and float (incl. whole-valued 1.0) together -- both
+    # carry the identical "must be an integer" rejection.
+    if isinstance(provided, (bool, float)):
         raise ValueError(
             f"Version for {entity_id} must be an integer, got {provided!r}"
         )
@@ -214,13 +213,15 @@ def set_milestone(
     if files_list:
         files_list = [validate_relpath(f, "set-milestone files") for f in files_list]
 
-    # Validate documentation_only type before create/update branch.
-    # Mirror _check_version's strict rejection: only actual bools or the
-    # JSON boolean strings "true"/"false" are accepted. Everything else
-    # (int, float, non-boolean string, dict, list) raises cleanly.
+    # Validate documentation_only type before the create/update branch: accept only
+    # actual bools or the exact JSON boolean strings "true"/"false" (any case); int,
+    # float, other strings, dict, and list all raise cleanly. This is close to
+    # _check_version's strict rejection but stricter on whitespace -- " true " is
+    # rejected here, whereas _check_version accepts " 1 " because int() strips it.
     if documentation_only is not None and not isinstance(documentation_only, bool):
-        if isinstance(documentation_only, str) and documentation_only.lower() in ("true", "false"):
-            documentation_only = documentation_only.lower() == "true"
+        lowered = documentation_only.lower() if isinstance(documentation_only, str) else None
+        if lowered in ("true", "false"):
+            documentation_only = lowered == "true"
         else:
             raise ValueError(
                 f"documentation_only must be a boolean, got "
@@ -311,9 +312,6 @@ def _validated_decision_refs(plan, decision_refs: str | None) -> list[str]:
         if not plan.get_decision(ref):
             raise ValueError(f"Decision {ref} not found")
     return refs_list
-
-
-
 
 
 def set_intent(

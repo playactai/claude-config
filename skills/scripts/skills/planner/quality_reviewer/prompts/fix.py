@@ -12,9 +12,8 @@ self-contained (decompose's larger content lives in content.py).
 
 Step-2/step-3 bodies are a list[str] when static, or a (state_dir) -> list[str] builder
 when they need runtime composition (impl-docs injects temporal.md; plan-design shell-
-quotes state_dir into its validate command). pin_cwd-wrapped commands that take a literal
-$STATE_DIR are static (pin_cwd only prefixes a fixed cd), so plan-design's apply body is
-a constant built at import.
+quotes state_dir into its validate command). plan-design's apply and validate bodies are
+both builders that import architect preambles at call time, matching impl-docs's pattern.
 """
 
 from __future__ import annotations

@@ -140,16 +140,13 @@ def _check_version(entity, provided: int | None, entity_id: str) -> None:
     # Reject bool (an int subclass, so this must precede the int() coercion that
     # would turn True into 1) and float (incl. whole-valued 1.0) together -- both
     # carry the identical "must be an integer" rejection.
+    version_err = f"Version for {entity_id} must be an integer, got {provided!r}"
     if isinstance(provided, (bool, float)):
-        raise ValueError(
-            f"Version for {entity_id} must be an integer, got {provided!r}"
-        )
+        raise ValueError(version_err)
     try:
         provided = int(provided)
     except (TypeError, ValueError) as err:
-        raise ValueError(
-            f"Version for {entity_id} must be an integer, got {provided!r}"
-        ) from err
+        raise ValueError(version_err) from err
     current = getattr(entity, "version", 1)
     if provided != current:
         raise ValueError(
@@ -361,6 +358,18 @@ def set_intent(
             raise ValueError(
                 f"intent {id} belongs to milestone {ms.id}, not {milestone}; "
                 f"omit milestone on update (it is inferred from the intent id)"
+            )
+
+        # Doc-only milestones carry no code_intents (exclusive relationship -- see
+        # Plan.validate_completeness). Guard UPDATE the same way CREATE is guarded so
+        # an externally-written plan.json can't wedge an intent under a doc-only
+        # milestone via this path (DL-004 defense-in-depth; the CREATE path's
+        # rejection and apply_documentation_only_toggle's intent-clear are the
+        # primary gates).
+        if ms.is_documentation_only:
+            raise ValueError(
+                f"milestone {ms.id} is documentation-only; set documentation_only=false "
+                f"on it via set-milestone before updating intents under it"
             )
 
         _check_version(ci, version, id)

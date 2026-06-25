@@ -192,6 +192,16 @@ def batch(methods: dict, requests: list[dict], ctx) -> list[dict]:
         rid = req.get("id")
         if rid is None:
             continue
+        # Guard the dedup scan against unhashable id types (list, dict) so direct
+        # callers get the same clean ValueError that read_batch_requests provides
+        # for the stdin path. str/int/float are the three JSON number/string types;
+        # bool is rejected explicitly because isinstance(True, int) is True and
+        # would cause a silent collision with integer id 1 in the dedup scan.
+        if not isinstance(rid, (str, int, float)) or isinstance(rid, bool):
+            raise ValueError(
+                f"id must be a string, number, or null, got {type(rid).__name__} "
+                f"in request method={req.get('method')!r}"
+            )
         if rid in seen_ids:
             if rid not in duplicate_ids:
                 duplicate_ids.append(rid)
@@ -375,9 +385,10 @@ def read_batch_requests(inline_arg: str | None, usage: str) -> list[dict]:
                 f"in request id={r.get('id')!r}"
             )
         rid = r.get("id")
-        # str/int/float/bool are hashable scalars (bool subclasses int); only a list or
-        # dict id is unhashable JSON, so reject exactly those. None means "no id".
-        if rid is not None and not isinstance(rid, (str, int, float)):
+        # str/int/float are the three JSON number/string types; bool is rejected
+        # explicitly because isinstance(True, int) is True and would cause a silent
+        # collision with integer id 1 in batch()'s dedup scan. None means "no id".
+        if rid is not None and (not isinstance(rid, (str, int, float)) or isinstance(rid, bool)):
             raise ValueError(
                 f"id must be a string, number, or null, got {type(rid).__name__} "
                 f"in request method={method!r}"

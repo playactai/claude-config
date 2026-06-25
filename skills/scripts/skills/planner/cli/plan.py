@@ -462,6 +462,16 @@ class SetIntentCommand(Command):
                     f"omit --milestone on update (it is inferred from --id)"
                 )
 
+            # Doc-only milestones carry no code_intents (exclusive relationship -- see
+            # Plan.validate_completeness). Guard UPDATE the same way CREATE is guarded
+            # (DL-004 defense-in-depth; the CREATE path and toggle are the primary gates).
+            if ms.is_documentation_only:
+                error_exit(
+                    f"milestone {ms.id} is documentation-only; clear it with "
+                    f"'set-milestone --id {ms.id} --no-documentation-only' "
+                    f"before updating intents under it"
+                )
+
             try:
                 check_version(ci, args.version, args.id)
             except VersionMismatchError as e:

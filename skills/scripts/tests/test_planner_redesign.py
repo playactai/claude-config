@@ -519,6 +519,64 @@ def test_plan_design_step5_mandates_sweep_token():
     assert "Test-sweep:" in PLAN_DESIGN_STEP_5_GENERATE
 
 
+def test_plan_design_call_site_incomplete_verify_guidance():
+    # CALL_SITE_INCOMPLETE checks must route to the call-site enumeration
+    # verification block, not fall through to generic guidance. Guards the
+    # predicate fix that adds "call_site" matching.
+    from skills.planner.quality_reviewer.prompts.content import (
+        PLAN_DESIGN_STEP_5_GENERATE,
+        PlanDesignVerify,
+    )
+
+    assert "CALL_SITE_INCOMPLETE" in PLAN_DESIGN_STEP_5_GENERATE
+    guidance = "\n".join(
+        PlanDesignVerify().get_verification_guidance(
+            {"scope": "call_site_incomplete",
+             "check": "CALL_SITE_INCOMPLETE: helper missing enumeration"},
+            "/tmp/x",
+        )
+    )
+    assert "CALL-SITE ENUMERATION VERIFICATION:" in guidance
+
+
+def test_plan_design_call_site_incomplete_not_shadowed_by_code_intent():
+    # First-match ordering: the call_site rule sits before code_intent.
+    # The check text mentions "code_intent" but the CALL_SITE_INCOMPLETE
+    # category token routes to call-site guidance before the broader
+    # code_intent predicate can match.
+    from skills.planner.quality_reviewer.prompts.content import PlanDesignVerify
+
+    guidance = "\n".join(
+        PlanDesignVerify().get_verification_guidance(
+            {"scope": "call_site_incomplete",
+             "check": "CALL_SITE_INCOMPLETE: code_intent CI-001 modifies helper without enumerating call sites"},
+            "/tmp/x",
+        )
+    )
+    assert "CALL-SITE ENUMERATION VERIFICATION:" in guidance
+    assert "CODE INTENT VERIFICATION:" not in guidance
+
+
+def test_plan_design_blast_radius_unverified_verify_guidance():
+    # BLAST_RADIUS_UNVERIFIED checks must route to the gating-anchor
+    # verification block, not fall through to generic guidance. Guards the
+    # predicate fix that adds "blast_radius"/"blast radius" matching.
+    from skills.planner.quality_reviewer.prompts.content import (
+        PLAN_DESIGN_STEP_5_GENERATE,
+        PlanDesignVerify,
+    )
+
+    assert "BLAST_RADIUS_UNVERIFIED" in PLAN_DESIGN_STEP_5_GENERATE
+    guidance = "\n".join(
+        PlanDesignVerify().get_verification_guidance(
+            {"scope": "blast_radius_unverified",
+             "check": "BLAST_RADIUS_UNVERIFIED: risk claims path safe without citing gate function"},
+            "/tmp/x",
+        )
+    )
+    assert "BLAST-RADIUS / GATING CLAIM VERIFICATION:" in guidance
+
+
 def test_impl_code_dead_params_verify_guidance():
     # DEAD_PARAMS check routes to its block, not the broad "code quality" block.
     from skills.planner.quality_reviewer.prompts.content import (

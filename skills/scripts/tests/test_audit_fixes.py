@@ -931,7 +931,7 @@ class TestCwdPinnedCommands:
         invoke = ET.fromstring(rendered).find("invoke")
         assert invoke is not None
         assert invoke.get("cmd") == f"cd {_SKILLS_DIR_Q} && uv run python -m skills.foo --step 1"
-        assert ".claude/skills/scripts" not in rendered
+        assert "cd .claude/skills/scripts" not in rendered  # relative form — absolute cd pin uses the resolved path
 
     def test_executor_verify_start_line_is_pinned(self, tmp_path: Path):
         _write_qr(

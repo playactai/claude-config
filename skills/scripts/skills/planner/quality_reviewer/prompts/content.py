@@ -118,6 +118,13 @@ Brainstorm concerns specific to PLAN STRUCTURE:
   - Incomplete test sweep: a code_intent changes an existing function but
     milestone.tests covers only the obvious coupled test (sibling tests on the
     same behavior missed)
+  - Missing call-site enumeration: a code_intent modifies a pass-through,
+    transform, filter, or gate helper function; call sites not enumerated mean
+    the same defect re-seeds at each remaining call site
+  - Unverified blast-radius claim: a risk mitigation claims certain paths or
+    actors are safe ("only affects X", "guarded by Y") but the anchor cites
+    only the containing file, not the actual gating function and its
+    allowlist/guard logic
 
 DO NOT brainstorm code or documentation concerns (out of scope)."""
 
@@ -159,6 +166,11 @@ SEVERITY ASSIGNMENT (per conventions/severity.md, plan-design scope):
       * DECISION_LOG_MISSING: non-trivial choice without logged rationale
       * POLICY_UNJUSTIFIED: policy default without Tier 1 backing
       * ASSUMPTION_UNVALIDATED: architectural assumption without citation
+      * CALL_SITE_INCOMPLETE: code_intent modifies a pass-through/transform/gate
+        helper; call sites not enumerated (defect re-seeds at every missed site)
+      * BLAST_RADIUS_UNVERIFIED: risk mitigation claims a path/actor is safe
+        ("only affects X", "guarded by Y") but the anchor does not cite the
+        actual gating function and quote its allowlist/guard logic
 
   SHOULD (iterations 1-3):
     - Shallow reasoning chains (premise without implication)
@@ -519,6 +531,39 @@ class PlanDesignVerify(VerifyBase):
                     "  - Policy defaults affect user/org (lifecycle, capacity, failure handling)",
                     "  - Must have Tier 1 (user-specified) backing in decision_log",
                     "  - Technical defaults can use Tier 2-3 backing",
+                    "",
+                ],
+            ),
+            (
+                lambda c: "call-site" in c or "call site" in c or "call_site" in c,
+                [
+                    "CALL-SITE ENUMERATION VERIFICATION:",
+                    "  For a code_intent modifying a pass-through/transform/gate helper,",
+                    "  confirm the plan enumerates EVERY call site (not just the one being",
+                    "  fixed). Missing call sites let the same defect re-seed.",
+                    "  - Read the helper function.",
+                    "  - Search the codebase for ALL call sites (trace_path, grep for the",
+                    "    function name).",
+                    "  - For each call site: is it listed in the code_intent behavior or",
+                    "    milestone requirements with a classification (needs-same-fix /",
+                    "    needs-variant / safe-as-is) and evidence?",
+                    "  - FAIL if any call site is unaccounted for.",
+                    "",
+                ],
+            ),
+            (
+                lambda c: "blast-radius" in c or "blast radius" in c or "blast_radius" in c or "gating" in c or "allowlist" in c,
+                [
+                    "BLAST-RADIUS / GATING CLAIM VERIFICATION:",
+                    "  When a risk mitigation claims certain paths/actors are safe",
+                    "  (\"only affects X\", \"guarded by Y\"), verify the anchor cites the",
+                    "  actual gating function and quotes its allowlist/guard logic.",
+                    "  - Read the anchor location.",
+                    "  - Confirm it IS the gating function (not a file that merely contains it).",
+                    "  - Confirm the allowlist/gate logic is quoted or summarized in the risk",
+                    "    entry — the claim is unverifiable without seeing what the gate allows.",
+                    "  - FAIL if the anchor cites only a file without the gate function, or if",
+                    "    the gate logic is not shown.",
                     "",
                 ],
             ),

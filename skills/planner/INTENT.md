@@ -766,6 +766,10 @@ This applies to both execute and fix workflows. After the architect writes plan.
 
 **Adaptive item generation**. Decomposition creates as many items as the content requires. No fixed counts or caps. The 8-step workflow naturally terminates when structural enumeration is exhausted and coverage is validated. Item count varies by plan complexity.
 
+**Call-site enumeration for pass-through helpers**. When a Code Intent modifies a pass-through, transform, filter, or gate function, the architect must enumerate every call site in the plan before the plan-design QR phase. A pass-through helper is any function where the same defect pattern at one call site replicates at others (URL rewriters, auth checks, validators, allowlist primitives, data mappers, sanitizers). QR decompose must verify completeness; missing call sites are MUST-severity findings.
+
+**Blast-radius claims verified against gating primitives**. When a plan claims that certain code paths or actors are unaffected ("all production writers are safe", "only affects X"), the claim must be anchored to the actual gating function and its allowlist/guard logic — not assumed. A claim about what passes through a gate is unverifiable without quoting the gate. QR verify must treat unverified blast-radius claims as MUST-severity findings.
+
 **QR decompose output contract**. Decompose scripts MUST output a `<parallel_dispatch>` block that orchestrator parses to launch N verify agents. Dispatch blocks are generated via the AST module at `lib/workflow/ast/` using three node types:
 
 - `SubagentDispatchNode`: Single agent dispatch (sequential workflows)

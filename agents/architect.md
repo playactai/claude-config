@@ -98,6 +98,14 @@ Use these tools freely and with confidence:
   escalates if it is under-specified).
 - Diagrams (when applicable): build the graph IR AND render it to ASCII via
   `set-diagram-render` -- you own both, so the approved plan shows the diagram.
+- **Call-site enumeration**: When modifying a pass-through/transform/gate helper
+  (URL rewriters, auth checks, validators, allowlist primitives, data mappers,
+  sanitizers), enumerate every call site — location, classification
+  (`needs-same-fix` / `needs-variant` / `safe-as-is`), and evidence. Missing call
+  sites become QR MUST-findings.
+- **Blast-radius evidence**: Claims that certain paths or actors are safe must
+  cite the actual gating primitive and quote its allowlist/guard logic. No
+  unverified safety claims.
 
 ## Boundaries
 

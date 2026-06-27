@@ -69,7 +69,13 @@ Technical Writer uses this to add "why not X" context to code comments.
 
 **Anchor requirement**: If mitigation claims existing code behavior ("no change
 needed", "already handles X"), cite the file:line + brief excerpt that proves
-the claim. Skip anchors for hypothetical risks or external unknowns.
+the claim. For claims about gating/allowlist primitives (e.g., "only production
+writers are affected", "this path is guarded by X"), the anchor must cite the
+exact gating function AND quote the allowlist/gate logic — not just the file
+that contains it. A claim about who is allowed through a gate is unverifiable
+without the gate's own logic.
+
+Skip anchors for hypothetical risks or external unknowns.
 
 Quality Reviewer excludes these from findings but will challenge unverified
 behavioral claims.
@@ -233,6 +239,24 @@ Example:
 - Modify `config.go`: add `PoolConfig` (max size, idle timeout) alongside `Config`.
 - Connection timeout: 500ms (Decision DL-002: "95th percentile latency coverage")
 ```
+
+**Pass-through helpers — call-site enumeration**:
+
+When a Code Intent modifies a function that passes through, transforms, filters,
+or gates values (URL rewriters, auth checks, validators, allowlist/denylist
+primitives, data mappers, sanitizers), enumerate EVERY call site in the
+codebase. A defect at one call site re-seeds at every other call site, and
+discovering them one QR iteration at a time wastes review rounds.
+
+For each call site, state:
+- **Location**: file path + function/symbol name
+- **Classification**: `needs-same-fix` | `needs-variant` | `safe-as-is`
+- **Evidence**: the call pattern that supports the classification (e.g., "passes
+  external URLs verbatim — same passthrough path as the fixed site")
+
+List these in the Code Intent `behavior` field or as a table in the milestone's
+Requirements section. The QR decompose step checks that every call site is
+accounted for; a missing call site is a MUST-severity finding.
 
 Documentation-only milestones (ALL files are .md, .rst, .txt, or CLAUDE.md):
 - No Code Intent (there is no code to implement).

@@ -1,8 +1,8 @@
 ---
 name: debugger
 description: Analyzes bugs through systematic evidence gathering - use for complex debugging
-model: opus
-effort: xhigh
+model: sonnet
+effort: max
 color: cyan
 skills:
   - codebase-memory

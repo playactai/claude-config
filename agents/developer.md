@@ -1,8 +1,8 @@
 ---
 name: developer
 description: Implements your specs with tests - delegate for writing code
-model: opus
-effort: high
+model: sonnet
+effort: max
 color: blue
 ---
 

@@ -170,7 +170,7 @@ Recognize and exclude:
 ## Comment Handling by Workflow
 
 <plan_based_workflow>
-When implementing from a plan (via /plan-execution):
+When implementing from a plan:
 
 ### Implement from Code Intent
 

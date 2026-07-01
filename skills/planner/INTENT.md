@@ -542,7 +542,7 @@ Step 2: context-verify
 Step 3: plan-design-work
   Agent: architect
   Script: architect/plan_design.py (router)
-  Routing: If qr-plan-design.json has FAIL items -> architect/plan_design_qr_fix.py
+  Routing: If qr-plan-design.json has FAIL items -> quality_reviewer/exec_qr_fix.py --phase plan-design
            Otherwise -> architect/plan_design_execute.py
   Output: plan.json with overview, milestones, code_intents (binding contract),
           decisions, diagram_graphs (IR + ascii_render)
@@ -580,7 +580,7 @@ Step 1: exec-init
 Step 2: impl-code-work
   Agent: developer (up to 4 parallel per wave)
   Script: developer/exec_implement.py (router)
-  Routing: If qr-impl-code.json has FAIL items -> developer/exec_implement_qr_fix.py
+  Routing: If qr-impl-code.json has FAIL items -> quality_reviewer/exec_qr_fix.py --phase impl-code
            Otherwise -> developer/exec_implement_execute.py
   Dispatch carries: files, acceptance_criteria, Code Intent (code_intents[]),
                     decision/IK context -- NOT code_changes[].diff (no diffs exist)
@@ -607,7 +607,7 @@ Step 5: impl-code-qr-route
 Step 6: impl-docs-work
   Agent: technical-writer (exec-docs)
   Script: technical_writer/exec_docs.py (router)
-  Routing: If qr-impl-docs.json has FAIL items -> technical_writer/exec_docs_qr_fix.py
+  Routing: If qr-impl-docs.json has FAIL items -> quality_reviewer/exec_qr_fix.py --phase impl-docs
            Otherwise -> technical_writer/exec_docs_execute.py
   Output: All documentation authored directly in source: inline comments, docstrings
           (sourced from Decision Log + Invisible Knowledge), CLAUDE.md, README.md
@@ -670,21 +670,20 @@ skills/planner/
   architect/
     plan_design.py            -- router (detects state, dispatches)
     plan_design_execute.py    -- first execution (6 steps)
-    plan_design_qr_fix.py     -- post-QR fix workflow
   developer/
     exec_implement.py         -- router
     exec_implement_execute.py -- implementation (4 steps)
-    exec_implement_qr_fix.py  -- post-QR fix workflow
   technical_writer/
     exec_docs.py              -- router
     exec_docs_execute.py      -- impl-docs (6 steps)
-    exec_docs_qr_fix.py       -- post-QR fix workflow
   quality_reviewer/
     qr_decompose.py             -- decompose runner (--phase {plan-design|impl-code|impl-docs})
     qr_verify.py                -- single-item verify runner (--phase ...)
     qr_verify_base.py           -- shared verification base + verify_main
+    exec_qr_fix.py              -- unified post-QR fix runner (--phase {plan-design|impl-code|impl-docs})
     prompts/content.py          -- per-phase decompose prompts + verifier classes
     prompts/decompose.py        -- shared 13-step decompose flow
+    prompts/fix.py              -- shared 3-step fix flow + per-phase fix content
   shared/
     schema.py         -- Pydantic v2 schemas (context, plan, qr), validation
     resources.py      -- Path helpers, resource provider

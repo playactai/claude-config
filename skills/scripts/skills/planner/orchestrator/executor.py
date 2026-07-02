@@ -127,12 +127,19 @@ def format_step_1(state_dir: str, reconciliation_check: bool) -> str:
         "  a documentation-only milestone has is_documentation_only:true and NO",
         "  code_intents (exec-docs authors its deliverables at step 6).",
         "",
-        "  Do NOT add planning_context (decisions/rejected_alternatives/constraints/risks)",
-        "  or diagram_graphs to this plan.json -- the shape above is complete. No later",
-        "  step reads either field from here, and both are already durably captured in",
-        "  the approved plan.md ($PLAN_FILE) for anything that needs them (e.g. the final",
-        "  review reads $PLAN_FILE directly). Hand-retyping them from memory only adds a",
-        "  schema-mismatch risk with no reader on the other end.",
+        "  Do NOT add planning_context.rejected_alternatives, planning_context.constraints,",
+        "  planning_context.risks, or diagram_graphs to this plan.json -- no executor step",
+        "  reads any of them, and all four are already durably captured in the approved",
+        "  plan.md ($PLAN_FILE) for anything that needs them (e.g. the final review reads",
+        "  $PLAN_FILE directly). Hand-retyping them from memory only adds a schema-mismatch",
+        "  risk with no reader on the other end.",
+        "",
+        "  DECISIONS EXCEPTION: when a code_intent carries decision_refs (the durable",
+        "  contract shown to developer sub-agents), include a top-level planning_context",
+        "  holding ONLY the Decision entries those refs point to -- matching ids, each",
+        "  entry with id, decision, and reasoning_chain, under planning_context.decision_log",
+        "  -- so validate_refs resolves them. Do NOT copy the full decision log; a",
+        "  code_intent with decision_refs: [] needs no planning_context at all.",
         "",
         "WORKFLOW:",
         "  This step is ANALYSIS + STATE SETUP. Do NOT delegate yet.",
@@ -742,17 +749,34 @@ def main():
             sys.exit("Plan completeness failed: " + "; ".join(errors))
 
         # Structural backstop for the format_step_1 instruction above: nothing in the
-        # executor ever reads planning_context or diagram_graphs (grepped, zero
-        # hits), so non-empty here is unambiguous evidence the orchestrator
-        # hand-transcribed fields it was told to omit -- the exact mistake that
-        # caused a 28-error schema failure in the audited session. A prompt
-        # instruction is advisory; this makes the omission enforced, not requested.
+        # executor ever reads rejected_alternatives/constraints/risks/diagram_graphs
+        # (grepped, zero hits), so non-empty here is unambiguous evidence the
+        # orchestrator hand-transcribed fields it was told to omit -- hand-retyping a
+        # schema whose fields the transcriber never reads reliably drops required
+        # fields and fails validation. A prompt instruction is advisory; this makes
+        # the omission enforced, not requested. planning_context.decisions carries
+        # one exception: a code_intent.decision_refs is the durable contract shown to developer
+        # sub-agents, so decisions are allowed through when at least one code_intent
+        # actually references one. Decisions present with no code_intent referencing
+        # any of them is still the same hand-transcription mistake and stays rejected.
         pc = plan.planning_context
-        if pc.decisions or pc.rejected_alternatives or pc.constraints or pc.risks or plan.diagram_graphs:
+        has_decision_refs = any(
+            ci.decision_refs for ms in plan.milestones for ci in ms.code_intents
+        )
+        if (
+            (pc.decisions and not has_decision_refs)
+            or pc.rejected_alternatives
+            or pc.constraints
+            or pc.risks
+            or plan.diagram_graphs
+        ):
             sys.exit(
-                "Error: plan.json must not carry planning_context or diagram_graphs -- "
+                "Error: plan.json must not carry planning_context.rejected_alternatives, "
+                "planning_context.constraints, planning_context.risks, or diagram_graphs -- "
                 "the executor never reads them (see format_step_1's instructions). "
-                "Re-run step 1 and omit them; overview/milestones/waves are all it needs."
+                "planning_context.decisions is permitted only when referenced by a "
+                "code_intent.decision_refs; otherwise re-run step 1 and omit it too. "
+                "overview/milestones/waves are all a conforming plan.json needs."
             )
 
     print(format_output(args.step, state_dir, args.qr_status, args.reconciliation_check, plan, qr_states))

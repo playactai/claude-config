@@ -324,6 +324,76 @@ def test_diagram_render_gaps_clean_when_no_render_or_all_nodes_present():
     assert plan_fresh._diagram_render_gaps() == []
 
 
+def test_diagram_render_gaps_label_match_covers_missing_id():
+    # id 'client' (lowercase) is absent -- the render only has 'Client' -- but the
+    # label 'Client' IS present. Either signal covering the node is enough; a node
+    # is flagged only when NEITHER id nor label appears.
+    from skills.planner.shared.schema import DiagramGraph, DiagramNode, Overview, Plan
+
+    plan = Plan(
+        overview=Overview(problem="p", approach="a"),
+        diagram_graphs=[
+            DiagramGraph(
+                id="DIAG-001",
+                type="architecture",
+                scope="overview",
+                title="Services",
+                nodes=[DiagramNode(id="client", label="Client")],
+                ascii_render="+--Client--+",
+            )
+        ],
+    )
+    assert plan._diagram_render_gaps() == []
+
+
+def test_diagram_render_gaps_flags_missing_id_with_empty_label():
+    # An empty-string label must not degrade to the degenerate r"\b\b" pattern,
+    # which matches at any word boundary and would spuriously "cover" a
+    # genuinely-missing node -- the bool(node.label) guard forces label_present
+    # False instead.
+    from skills.planner.shared.schema import DiagramGraph, DiagramNode, Overview, Plan
+
+    plan = Plan(
+        overview=Overview(problem="p", approach="a"),
+        diagram_graphs=[
+            DiagramGraph(
+                id="DIAG-001",
+                type="architecture",
+                scope="overview",
+                title="Services",
+                nodes=[DiagramNode(id="missing-node", label="")],
+                ascii_render="+--other--+",
+            )
+        ],
+    )
+    errors = plan._diagram_render_gaps()
+    assert any("missing node 'missing-node'" in e for e in errors)
+
+
+def test_diagram_render_gaps_escapes_regex_metacharacters_in_label():
+    # A label containing regex metacharacters (parens) must match literally, same
+    # as id. Without re.escape, '(L1)' parses as a capture group, so 'Cache (L1)'
+    # would falsely match the paren-free text 'Cache L1' -- silently treating a
+    # label that was never actually rendered as present.
+    from skills.planner.shared.schema import DiagramGraph, DiagramNode, Overview, Plan
+
+    plan = Plan(
+        overview=Overview(problem="p", approach="a"),
+        diagram_graphs=[
+            DiagramGraph(
+                id="DIAG-001",
+                type="architecture",
+                scope="overview",
+                title="Services",
+                nodes=[DiagramNode(id="cache-l1", label="Cache (L1)")],
+                ascii_render="+--Cache L1--+",  # near-miss: parens missing
+            )
+        ],
+    )
+    errors = plan._diagram_render_gaps()
+    assert any("missing node 'cache-l1'" in e for e in errors)
+
+
 # --- Doc-only milestones: settable, exclusive, and excluded from impl-code QR ---
 def test_set_milestone_documentation_only_is_settable_and_valid(tmp_path):
     from skills.planner.cli import plan_commands as pc
@@ -1039,6 +1109,142 @@ def test_executor_main_rejects_transcribed_planning_context(tmp_path):
     assert "planning_context" in (result.stdout + result.stderr)
 
 
+def test_executor_step2_accepts_decision_referenced_by_code_intent(tmp_path):
+    # The decisions carve-out: a code_intent.decision_refs is the durable contract
+    # shown to developer sub-agents, so the orchestrator may include ONLY the
+    # Decision entries those refs point to. This must NOT trip the backstop that
+    # rejects hand-transcribed planning_context.
+    import json
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    scripts_dir = Path(__file__).parent.parent
+    (tmp_path / "plan.json").write_text(
+        json.dumps(
+            {
+                "overview": {"problem": "p", "approach": "a"},
+                "planning_context": {
+                    "decision_log": [{"id": "DL-001", "decision": "d", "reasoning_chain": "r"}]
+                },
+                "milestones": [
+                    {
+                        "id": "M-001",
+                        "number": 1,
+                        "name": "m",
+                        "files": ["a.py"],
+                        "code_intents": [
+                            {
+                                "id": "CI-1",
+                                "file": "a.py",
+                                "behavior": "do x",
+                                "decision_refs": ["DL-001"],
+                            }
+                        ],
+                    }
+                ],
+                "waves": [{"id": "W-001", "milestones": ["M-001"]}],
+            }
+        )
+    )
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "skills.planner.orchestrator.executor",
+            "--step",
+            "2",
+            "--state-dir",
+            str(tmp_path),
+        ],
+        capture_output=True,
+        text=True,
+        timeout=30,
+        cwd=scripts_dir,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_executor_step2_carveout_is_decisions_only(tmp_path):
+    # The carve-out is narrow: a code_intent.decision_refs excuses ONLY
+    # planning_context.decisions. rejected_alternatives / constraints / risks /
+    # diagram_graphs must each still trip the backstop even when decision_refs
+    # is set -- verified independently, one non-decisions field at a time.
+    import json
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    scripts_dir = Path(__file__).parent.parent
+    base_milestones = [
+        {
+            "id": "M-001",
+            "number": 1,
+            "name": "m",
+            "files": ["a.py"],
+            "code_intents": [
+                {"id": "CI-1", "file": "a.py", "behavior": "do x", "decision_refs": ["DL-001"]}
+            ],
+        }
+    ]
+    waves = [{"id": "W-001", "milestones": ["M-001"]}]
+    decision_log = [{"id": "DL-001", "decision": "d", "reasoning_chain": "r"}]
+
+    def run_case(name: str, plan: dict) -> subprocess.CompletedProcess:
+        case_dir = tmp_path / name
+        case_dir.mkdir()
+        (case_dir / "plan.json").write_text(json.dumps(plan))
+        return subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "skills.planner.orchestrator.executor",
+                "--step",
+                "2",
+                "--state-dir",
+                str(case_dir),
+            ],
+            capture_output=True,
+            text=True,
+            timeout=30,
+            cwd=scripts_dir,
+        )
+
+    planning_context_cases = {
+        "rejected_alternatives": [
+            {
+                "id": "RA-1",
+                "alternative": "alt",
+                "rejection_reason": "why",
+                "decision_ref": "DL-001",
+            }
+        ],
+        "constraints": ["must be fast"],
+        "risks": [{"id": "R-1", "risk": "r", "mitigation": "m"}],
+    }
+    for field, value in planning_context_cases.items():
+        plan = {
+            "overview": {"problem": "p", "approach": "a"},
+            "planning_context": {"decision_log": decision_log, field: value},
+            "milestones": base_milestones,
+            "waves": waves,
+        }
+        result = run_case(field, plan)
+        assert result.returncode != 0, f"{field}: {result.stdout + result.stderr}"
+
+    diagram_plan = {
+        "overview": {"problem": "p", "approach": "a"},
+        "planning_context": {"decision_log": decision_log},
+        "milestones": base_milestones,
+        "waves": waves,
+        "diagram_graphs": [
+            {"id": "DIAG-1", "type": "architecture", "scope": "overview", "title": "T"}
+        ],
+    }
+    result = run_case("diagram_graphs", diagram_plan)
+    assert result.returncode != 0, result.stdout + result.stderr
+
+
 def test_executor_step2_requires_plan_json(tmp_path):
     # Fail closed: a step>1 run whose state dir lacks plan.json must error, not
     # silently dispatch an empty implementation with no completeness check
@@ -1750,6 +1956,19 @@ def test_executor_step1_forbids_planning_context_and_diagram_transcription(tmp_p
     assert "planning_context" in out
     assert "diagram_graphs" in out
     assert "Do NOT add" in out
+
+
+def test_executor_step1_states_decisions_carveout_positively(tmp_path):
+    # The substring-STAY test above only pins 'planning_context' / 'diagram_graphs'
+    # / 'Do NOT add' staying present -- a silent revert to a blanket "forbid all
+    # planning_context" would still satisfy it. This positively asserts the
+    # decisions carve-out wording itself: decisions may be included ONLY for
+    # Decision entries a code_intent.decision_refs actually references.
+    from skills.planner.orchestrator import executor
+
+    out = executor.format_output(1, str(tmp_path), None, False)
+    assert "decision_refs" in out
+    assert "holding ONLY the Decision entries those refs point to" in out
 
 
 def test_save_plan_rolls_back_rejected_mutation(tmp_path):

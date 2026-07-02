@@ -505,8 +505,18 @@ if True:
                 for node in dg.nodes:
                     # Word-boundary match, not bare substring: id 'w1' is a substring
                     # of 'w10', so a render mentioning only 'w10' would otherwise
-                    # look like it already covers a genuinely-missing 'w1'.
-                    if not re.search(rf"\b{re.escape(node.id)}\b", dg.ascii_render):
+                    # look like it already covers a genuinely-missing 'w1'. Label is
+                    # free-form hand-authored text, so it gets the identical
+                    # re.escape + word-boundary safety as id (e.g. a label containing
+                    # '(' must match literally, not as a regex group). bool(node.label)
+                    # guards an empty label from degrading to the pattern r"\b\b",
+                    # which matches at any word boundary and would spuriously mark a
+                    # genuinely-missing node as covered.
+                    id_present = bool(re.search(rf"\b{re.escape(node.id)}\b", dg.ascii_render))
+                    label_present = bool(node.label) and bool(
+                        re.search(rf"\b{re.escape(node.label)}\b", dg.ascii_render)
+                    )
+                    if not id_present and not label_present:
                         errors.append(
                             f"diagram {dg.id} ascii_render is missing node '{node.id}' "
                             f"({node.label!r}) -- regenerate the render to match the current graph"

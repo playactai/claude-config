@@ -498,24 +498,43 @@ if True:
             validate_refs, so an in-progress hand-edit isn't blocked mid-authoring;
             the plan-design QR gate is where staleness should surface.
             """
+            def _token_present(text: str, render: str) -> bool:
+                # Word-boundary match, not bare substring: id 'w1' is a substring of
+                # 'w10', so a render mentioning only 'w10' would otherwise look like
+                # it already covers a genuinely-missing 'w1'. But \b only fires at a
+                # transition between a word char and a non-word char -- two adjacent
+                # non-word chars (e.g. ')' next to '-') are never a boundary, so
+                # requiring \b on an edge that's already punctuation wrongly rejects
+                # a correctly-delimited literal match (label 'Cache (L1)' flanked by
+                # ASCII-art borders). \b is only meaningful -- and only needed to
+                # block the w1/w10 case -- when text's own edge char is a word
+                # character, so it's asserted only there.
+                #
+                # Known accepted gap: when BOTH edges are non-word (id '-', label
+                # '(TBD)'), this drops to a bare literal search with no boundary at
+                # all, so text could collide with ASCII-art border noise or another
+                # glued-on annotation. Narrow and not closable with a local per-edge
+                # rule: adjacent-with-no-separator is legitimate ASCII art (e.g.
+                # '[A][B]'), so a rule rejecting glued punctuation would also reject
+                # genuinely correct adjacent-node renders. See
+                # test_diagram_render_gaps_accepts_gap_when_both_edges_are_punctuation.
+                #
+                # Empty text is guarded so text[0] can't IndexError and so it can't
+                # degrade to r"\b\b", which matches at any boundary in render and
+                # would spuriously mark a genuinely-missing node as covered.
+                if not text:
+                    return False
+                left = r"\b" if re.match(r"\w", text[0]) else ""
+                right = r"\b" if re.match(r"\w", text[-1]) else ""
+                return bool(re.search(f"{left}{re.escape(text)}{right}", render))
+
             errors = []
             for dg in self.diagram_graphs:
                 if not dg.ascii_render:
                     continue
                 for node in dg.nodes:
-                    # Word-boundary match, not bare substring: id 'w1' is a substring
-                    # of 'w10', so a render mentioning only 'w10' would otherwise
-                    # look like it already covers a genuinely-missing 'w1'. Label is
-                    # free-form hand-authored text, so it gets the identical
-                    # re.escape + word-boundary safety as id (e.g. a label containing
-                    # '(' must match literally, not as a regex group). bool(node.label)
-                    # guards an empty label from degrading to the pattern r"\b\b",
-                    # which matches at any word boundary and would spuriously mark a
-                    # genuinely-missing node as covered.
-                    id_present = bool(re.search(rf"\b{re.escape(node.id)}\b", dg.ascii_render))
-                    label_present = bool(node.label) and bool(
-                        re.search(rf"\b{re.escape(node.label)}\b", dg.ascii_render)
-                    )
+                    id_present = _token_present(node.id, dg.ascii_render)
+                    label_present = _token_present(node.label, dg.ascii_render)
                     if not id_present and not label_present:
                         errors.append(
                             f"diagram {dg.id} ascii_render is missing node '{node.id}' "

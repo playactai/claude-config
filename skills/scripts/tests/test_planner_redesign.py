@@ -394,6 +394,151 @@ def test_diagram_render_gaps_escapes_regex_metacharacters_in_label():
     assert any("missing node 'cache-l1'" in e for e in errors)
 
 
+def test_diagram_render_gaps_label_present_when_flanked_by_punctuation():
+    # Label 'Cache (L1)' ends in ')', a non-word char, so requiring \b there means
+    # asserting a boundary between ')' and the render's next border char '-' -- two
+    # non-word chars are never a \b boundary in Python regex, so a
+    # correctly-delimited literal render would be false-flagged as stale if \b were
+    # asserted on that edge. \b is only required on an edge that is itself a word
+    # character.
+    from skills.planner.shared.schema import DiagramGraph, DiagramNode, Overview, Plan
+
+    plan = Plan(
+        overview=Overview(problem="p", approach="a"),
+        diagram_graphs=[
+            DiagramGraph(
+                id="DIAG-001",
+                type="architecture",
+                scope="overview",
+                title="Services",
+                nodes=[DiagramNode(id="cache-l1", label="Cache (L1)")],
+                ascii_render="+--Cache (L1)--+",  # exact render, parens present
+            )
+        ],
+    )
+    assert plan._diagram_render_gaps() == []
+
+
+def test_diagram_render_gaps_id_present_when_flanked_by_punctuation():
+    # Same construct, id side: id_present shares _token_present with label_present,
+    # so an id ending in punctuation (flanked by more punctuation in the render) is
+    # subject to the identical edge rule -- just less likely to surface since ids
+    # are conventionally slug-like and nothing enforces that.
+    from skills.planner.shared.schema import DiagramGraph, DiagramNode, Overview, Plan
+
+    plan = Plan(
+        overview=Overview(problem="p", approach="a"),
+        diagram_graphs=[
+            DiagramGraph(
+                id="DIAG-001",
+                type="architecture",
+                scope="overview",
+                title="Services",
+                nodes=[DiagramNode(id="cache(L1)", label="Cache L1 Store")],
+                ascii_render="+--cache(L1)--+",  # id flanked by punctuation; label absent
+            )
+        ],
+    )
+    assert plan._diagram_render_gaps() == []
+
+
+def test_diagram_render_gaps_flags_missing_label_with_empty_id():
+    # Mirrors the empty-label guard (test above) on the id side: an empty id must
+    # not degenerate to r"\b\b", which matches at the first word boundary anywhere
+    # in the render and would spuriously resolve id_present True for every node
+    # whose id was never set.
+    from skills.planner.shared.schema import DiagramGraph, DiagramNode, Overview, Plan
+
+    plan = Plan(
+        overview=Overview(problem="p", approach="a"),
+        diagram_graphs=[
+            DiagramGraph(
+                id="DIAG-001",
+                type="architecture",
+                scope="overview",
+                title="Services",
+                nodes=[DiagramNode(id="", label="missing-label")],
+                ascii_render="+--other--+",
+            )
+        ],
+    )
+    errors = plan._diagram_render_gaps()
+    assert any("'missing-label'" in e for e in errors)
+
+
+def test_diagram_render_gaps_accepts_gap_when_both_edges_are_punctuation():
+    # Known, accepted trade-off: when BOTH the first and last char of id/label are
+    # non-word, _token_present has no edge to anchor a \b on and degrades to a bare
+    # (escaped) literal search -- id '-' collides with the ASCII-art border's own
+    # dashes and reads as "present" though no such node was ever authored into this
+    # render. Narrow in practice (ids are conventionally slug-like) and not cleanly
+    # closable with a local per-edge rule: adjacent-with-no-separator is legitimate
+    # ASCII art (e.g. '[A][B]'), so a rule rejecting glued-together punctuation
+    # would also reject genuinely correct adjacent-node renders.
+    from skills.planner.shared.schema import DiagramGraph, DiagramNode, Overview, Plan
+
+    plan = Plan(
+        overview=Overview(problem="p", approach="a"),
+        diagram_graphs=[
+            DiagramGraph(
+                id="DIAG-001",
+                type="architecture",
+                scope="overview",
+                title="Services",
+                nodes=[DiagramNode(id="-", label="Dash Node")],
+                ascii_render="+--+",  # only ASCII-art border dashes; '-' never authored
+            )
+        ],
+    )
+    assert plan._diagram_render_gaps() == []  # documents the accepted gap
+
+
+def test_diagram_render_gaps_present_when_left_edge_is_punctuation_right_is_word():
+    # Mirror of label/id_present_when_flanked_by_punctuation on the opposite edge:
+    # text starts with punctuation and ends with a word char -- the remaining
+    # untested combination of _token_present's independently-computed left/right
+    # \b logic (word/word, word/nonword, and nonword/nonword are covered above).
+    from skills.planner.shared.schema import DiagramGraph, DiagramNode, Overview, Plan
+
+    plan = Plan(
+        overview=Overview(problem="p", approach="a"),
+        diagram_graphs=[
+            DiagramGraph(
+                id="DIAG-001",
+                type="architecture",
+                scope="overview",
+                title="Services",
+                nodes=[DiagramNode(id="(v2)cache", label="Cache V2")],
+                ascii_render="+--(v2)cache--+",
+            )
+        ],
+    )
+    assert plan._diagram_render_gaps() == []
+
+
+def test_diagram_render_gaps_flags_missing_node_with_punctuation_prefixed_id():
+    # A punctuation-prefixed id/label that is genuinely absent from the render must
+    # still be flagged: nothing about a non-word first character should make
+    # _token_present resolve True independent of whether the text actually appears.
+    from skills.planner.shared.schema import DiagramGraph, DiagramNode, Overview, Plan
+
+    plan = Plan(
+        overview=Overview(problem="p", approach="a"),
+        diagram_graphs=[
+            DiagramGraph(
+                id="DIAG-001",
+                type="architecture",
+                scope="overview",
+                title="Services",
+                nodes=[DiagramNode(id="(missing)", label="also-absent")],
+                ascii_render="+--other--+",  # neither id nor label appears
+            )
+        ],
+    )
+    errors = plan._diagram_render_gaps()
+    assert any("'also-absent'" in e for e in errors)
+
+
 # --- Doc-only milestones: settable, exclusive, and excluded from impl-code QR ---
 def test_set_milestone_documentation_only_is_settable_and_valid(tmp_path):
     from skills.planner.cli import plan_commands as pc

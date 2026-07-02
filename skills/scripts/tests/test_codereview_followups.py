@@ -30,6 +30,8 @@ from skills.planner.shared.schema import (
     Milestone,
     Overview,
     Plan,
+    RejectedAlternative,
+    Risk,
 )
 
 
@@ -147,11 +149,124 @@ def test_validate_refs_flags_duplicate_entity_ids():
         Decision(id="DL-001", decision="a", reasoning_chain="b"),
         Decision(id="DL-001", decision="c", reasoning_chain="d"),
     ]
+    plan.planning_context.risks = [
+        Risk(id="R-001", risk="a", mitigation="b"),
+        Risk(id="R-001", risk="c", mitigation="d"),
+    ]
+    plan.planning_context.rejected_alternatives = [
+        RejectedAlternative(id="RA-001", alternative="a", rejection_reason="b", decision_ref="DL-001"),
+        RejectedAlternative(id="RA-001", alternative="c", rejection_reason="d", decision_ref="DL-001"),
+    ]
     errors = plan.validate_refs()
     assert any("duplicate milestone id 'M-001'" in e for e in errors)
     assert any("duplicate intent id 'CI-1'" in e for e in errors)
     assert any("duplicate decision id 'DL-001'" in e for e in errors)
     assert any("duplicate diagram id 'DIAG-001'" in e for e in errors)
+    assert any("duplicate risk id 'R-001'" in e for e in errors)
+    assert any("duplicate rejected_alternative id 'RA-001'" in e for e in errors)
+
+
+def test_next_risk_id_skips_gap():
+    plan = _plan()
+    plan.planning_context.risks = [
+        Risk(id="R-001", risk="a", mitigation="b"),
+        Risk(id="R-003", risk="c", mitigation="d"),
+    ]
+    assert plan.next_risk_id() == "R-004"
+
+
+def test_next_rejected_alternative_id_skips_gap():
+    plan = _plan()
+    plan.planning_context.rejected_alternatives = [
+        RejectedAlternative(id="RA-001", alternative="a", rejection_reason="b", decision_ref="DL-001"),
+        RejectedAlternative(id="RA-003", alternative="c", rejection_reason="d", decision_ref="DL-001"),
+    ]
+    assert plan.next_rejected_alternative_id() == "RA-004"
+
+
+def test_set_risk_create_then_update_round_trip(tmp_path):
+    ctx = pc.PlanContext(state_dir=tmp_path)
+    pc.init(ctx, task="t")
+    pc.set_decision(ctx, decision="d", reasoning="r")  # DL-001
+
+    created = pc.set_risk(ctx, risk="drift", mitigation="pin version")
+    assert created["id"] == "R-001"
+    assert created["operation"] == "created"
+
+    plan = ctx.load_plan()
+    assert plan.planning_context.risks[0].anchor is None
+    assert plan.planning_context.risks[0].decision_ref is None
+
+    updated = pc.set_risk(ctx, id="R-001", anchor="a.py:1-2", decision_ref="DL-001")
+    assert updated["operation"] == "updated"
+
+    plan = ctx.load_plan()
+    r = plan.planning_context.risks[0]
+    assert r.risk == "drift"  # unchanged (not passed on update)
+    assert r.anchor == "a.py:1-2"
+    assert r.decision_ref == "DL-001"
+
+
+def test_set_risk_update_clears_anchor_and_decision_ref_to_none(tmp_path):
+    # anchor/decision_ref are optional (Risk.anchor/.decision_ref: str | None) -- once
+    # set, an empty-string update must clear them back to None, matching the
+    # established is-not-None + empty-clears-to-None convention CodeIntent.function
+    # already uses (plan_commands.py's set_intent), not silently no-op on a falsy value.
+    ctx = pc.PlanContext(state_dir=tmp_path)
+    pc.init(ctx, task="t")
+    pc.set_decision(ctx, decision="d", reasoning="r")  # DL-001
+    pc.set_risk(ctx, risk="drift", mitigation="pin version")
+    pc.set_risk(ctx, id="R-001", anchor="a.py:1-2", decision_ref="DL-001")
+
+    pc.set_risk(ctx, id="R-001", anchor="", decision_ref="")
+
+    r = ctx.load_plan().planning_context.risks[0]
+    assert r.anchor is None
+    assert r.decision_ref is None
+    assert r.risk == "drift"  # untouched: risk/mitigation are required, not clearable
+
+
+def test_set_risk_create_requires_risk_and_mitigation(tmp_path):
+    ctx = pc.PlanContext(state_dir=tmp_path)
+    pc.init(ctx, task="t")
+    with pytest.raises(ValueError, match="risk and mitigation required"):
+        pc.set_risk(ctx, risk="drift")
+
+
+def test_set_risk_update_unknown_id_raises(tmp_path):
+    ctx = pc.PlanContext(state_dir=tmp_path)
+    pc.init(ctx, task="t")
+    with pytest.raises(ValueError, match="Risk R-999 not found"):
+        pc.set_risk(ctx, id="R-999", risk="x")
+
+
+def test_set_rejected_alternative_create_then_update_round_trip(tmp_path):
+    ctx = pc.PlanContext(state_dir=tmp_path)
+    pc.init(ctx, task="t")
+    pc.set_decision(ctx, decision="d", reasoning="r")  # DL-001
+
+    created = pc.set_rejected_alternative(
+        ctx, alternative="use X", rejection_reason="too slow", decision_ref="DL-001"
+    )
+    assert created["id"] == "RA-001"
+    assert created["operation"] == "created"
+
+    updated = pc.set_rejected_alternative(ctx, id="RA-001", rejection_reason="too complex")
+    assert updated["operation"] == "updated"
+
+    plan = ctx.load_plan()
+    ra = plan.planning_context.rejected_alternatives[0]
+    assert ra.alternative == "use X"  # unchanged (not passed on update)
+    assert ra.rejection_reason == "too complex"
+    assert ra.decision_ref == "DL-001"
+
+
+def test_set_rejected_alternative_create_requires_all_three_fields(tmp_path):
+    ctx = pc.PlanContext(state_dir=tmp_path)
+    pc.init(ctx, task="t")
+    pc.set_decision(ctx, decision="d", reasoning="r")  # DL-001
+    with pytest.raises(ValueError, match="alternative, rejection_reason, and decision_ref required"):
+        pc.set_rejected_alternative(ctx, alternative="use X", rejection_reason="too slow")
 
 
 # ---------------------------------------------------------------------------

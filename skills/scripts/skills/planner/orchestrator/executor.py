@@ -127,6 +127,13 @@ def format_step_1(state_dir: str, reconciliation_check: bool) -> str:
         "  a documentation-only milestone has is_documentation_only:true and NO",
         "  code_intents (exec-docs authors its deliverables at step 6).",
         "",
+        "  Do NOT add planning_context (decisions/rejected_alternatives/constraints/risks)",
+        "  or diagram_graphs to this plan.json -- the shape above is complete. No later",
+        "  step reads either field from here, and both are already durably captured in",
+        "  the approved plan.md ($PLAN_FILE) for anything that needs them (e.g. the final",
+        "  review reads $PLAN_FILE directly). Hand-retyping them from memory only adds a",
+        "  schema-mismatch risk with no reader on the other end.",
+        "",
         "WORKFLOW:",
         "  This step is ANALYSIS + STATE SETUP. Do NOT delegate yet.",
         "  Record wave groupings for step 2 (Implementation).",
@@ -733,6 +740,20 @@ def main():
         errors = plan.validate_structural_executability()
         if errors:
             sys.exit("Plan completeness failed: " + "; ".join(errors))
+
+        # Structural backstop for the format_step_1 instruction above: nothing in the
+        # executor ever reads planning_context or diagram_graphs (grepped, zero
+        # hits), so non-empty here is unambiguous evidence the orchestrator
+        # hand-transcribed fields it was told to omit -- the exact mistake that
+        # caused a 28-error schema failure in the audited session. A prompt
+        # instruction is advisory; this makes the omission enforced, not requested.
+        pc = plan.planning_context
+        if pc.decisions or pc.rejected_alternatives or pc.constraints or pc.risks or plan.diagram_graphs:
+            sys.exit(
+                "Error: plan.json must not carry planning_context or diagram_graphs -- "
+                "the executor never reads them (see format_step_1's instructions). "
+                "Re-run step 1 and omit them; overview/milestones/waves are all it needs."
+            )
 
     print(format_output(args.step, state_dir, args.qr_status, args.reconciliation_check, plan, qr_states))
 

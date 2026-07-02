@@ -115,6 +115,12 @@ def test_batch_unknown_param_rolls_back_clean(tmp_path: Path):
         ("set-milestone", {}, "name required for create"),
         ("set-intent", {"milestone": "M-001"}, "file and behavior required for create"),
         ("set-decision", {}, "decision and reasoning required for create"),
+        ("set-risk", {}, "risk and mitigation required for create"),
+        (
+            "set-rejected-alternative",
+            {},
+            "alternative, rejection_reason, and decision_ref required for create",
+        ),
         ("set-wave", {"milestones": ""}, "milestones required for create"),
     ],
 )
@@ -928,6 +934,12 @@ def test_create_required_matches_runtime_guards(tmp_path: Path):
         "set-milestone": {"name": "m"},
         "set-intent": {"milestone": "M-001", "file": "a.py", "behavior": "b"},
         "set-wave": {"milestones": "M-001"},
+        "set-risk": {"risk": "it might drift", "mitigation": "pin it"},
+        "set-rejected-alternative": {
+            "alternative": "a",
+            "rejection_reason": "b",
+            "decision_ref": "DL-001",
+        },
     }
     assert set(complete) == set(CREATE_REQUIRED)  # every method covered
     methods = discover_methods(pc)
@@ -939,6 +951,7 @@ def test_create_required_matches_runtime_guards(tmp_path: Path):
         d.mkdir()
         ctx = _seed_plan(d)
         pc.set_milestone(ctx, name="m0", files="a.py")  # M-001 for set-intent / set-wave
+        pc.set_decision(ctx, decision="d", reasoning="r")  # DL-001 for set-rejected-alternative
         return ctx
 
     for method, fields in CREATE_REQUIRED.items():

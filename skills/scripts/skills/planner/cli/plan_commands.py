@@ -36,6 +36,8 @@ def _get_schema():
         Milestone,
         Overview,
         Plan,
+        RejectedAlternative,
+        Risk,
         Wave,
     )
 
@@ -45,6 +47,8 @@ def _get_schema():
         "Milestone": Milestone,
         "CodeIntent": CodeIntent,
         "Decision": Decision,
+        "RejectedAlternative": RejectedAlternative,
+        "Risk": Risk,
         "DiagramGraph": DiagramGraph,
         "DiagramNode": DiagramNode,
         "DiagramEdge": DiagramEdge,
@@ -190,22 +194,22 @@ def set_milestone(
     name: str | None = None,
     id: str | None = None,
     version: int | None = None,
-    files: str | None = None,
-    flags: str | None = None,
-    requirements: str | None = None,
-    acceptance_criteria: str | None = None,
-    tests: str | None = None,
+    files: str | list[str] | None = None,
+    flags: str | list[str] | None = None,
+    requirements: str | list[str] | None = None,
+    acceptance_criteria: str | list[str] | None = None,
+    tests: str | list[str] | None = None,
     documentation_only: bool | None = None,
 ) -> dict:
     """Create or update milestone."""
     schema = _get_schema()
     plan = ctx.load_plan()
 
-    files_list = parse_csv(files)
-    flags_list = parse_csv(flags)
-    requirements_list = parse_csv(requirements)
-    acceptance_list = parse_csv(acceptance_criteria)
-    tests_list = parse_csv(tests)
+    files_list = parse_csv(files, reject_comma_string=True)
+    flags_list = parse_csv(flags, reject_comma_string=True)
+    requirements_list = parse_csv(requirements, reject_comma_string=True)
+    acceptance_list = parse_csv(acceptance_criteria, reject_comma_string=True)
+    tests_list = parse_csv(tests, reject_comma_string=True)
 
     if files_list:
         files_list = [validate_relpath(f, "set-milestone files") for f in files_list]
@@ -297,14 +301,14 @@ def set_milestone(
         return {"id": mid, "version": 1, "operation": "created"}
 
 
-def _validated_decision_refs(plan, decision_refs: str | None) -> list[str]:
+def _validated_decision_refs(plan, decision_refs: str | list[str] | None) -> list[str]:
     """Parse a decision_refs CSV and confirm every ref exists; returns the list.
 
     Shared by set_intent's create and update paths so each validates refs at the
     point where a bad ref should surface relative to its own checks (create: after
     the milestone, so a bad milestone is reported first).
     """
-    refs_list = parse_csv(decision_refs)
+    refs_list = parse_csv(decision_refs, reject_comma_string=True)
     for ref in refs_list:
         if not plan.get_decision(ref):
             raise ValueError(f"Decision {ref} not found")
@@ -319,7 +323,7 @@ def set_intent(
     id: str | None = None,
     version: int | None = None,
     function: str | None = None,
-    decision_refs: str | None = None,
+    decision_refs: str | list[str] | None = None,
 ) -> dict:
     """Create or update a code intent (RPC surface; auto-discovered as 'set-intent').
 
@@ -472,6 +476,108 @@ def set_decision(
         return {"id": did, "version": 1, "operation": "created"}
 
 
+def set_risk(
+    ctx: PlanContext,
+    risk: str | None = None,
+    mitigation: str | None = None,
+    anchor: str | None = None,
+    decision_ref: str | None = None,
+    id: str | None = None,
+) -> dict:
+    """Create or update a known risk.
+
+    No CAS version (Risk carries no version field, unlike Decision/Milestone/
+    CodeIntent) -- an UPDATE overwrites only the fields explicitly passed.
+    """
+    schema = _get_schema()
+    plan = ctx.load_plan()
+
+    if id:
+        # UPDATE
+        r = plan.get_risk(id)
+        if not r:
+            rids = [x.id for x in plan.planning_context.risks]
+            raise ValueError(f"Risk {id} not found. Valid: {rids}")
+
+        if risk:
+            r.risk = risk
+        if mitigation:
+            r.mitigation = mitigation
+        if anchor is not None:
+            r.anchor = anchor if anchor else None
+        if decision_ref is not None:
+            r.decision_ref = decision_ref if decision_ref else None
+
+        ctx.save_plan(plan)
+        return {"id": r.id, "operation": "updated"}
+    else:
+        # CREATE
+        if not risk or not mitigation:
+            raise ValueError("risk and mitigation required for create")
+
+        rid = plan.next_risk_id()
+
+        r = schema["Risk"](
+            id=rid, risk=risk, mitigation=mitigation, anchor=anchor, decision_ref=decision_ref
+        )
+        plan.planning_context.risks.append(r)
+        ctx.save_plan(plan)
+        return {"id": rid, "operation": "created"}
+
+
+def set_rejected_alternative(
+    ctx: PlanContext,
+    alternative: str | None = None,
+    rejection_reason: str | None = None,
+    decision_ref: str | None = None,
+    id: str | None = None,
+) -> dict:
+    """Create or update a rejected alternative.
+
+    No CAS version (RejectedAlternative carries no version field) -- an UPDATE
+    overwrites only the fields explicitly passed. decision_ref is required (not
+    optional, unlike Risk.decision_ref): every rejected alternative traces back
+    to the decision that superseded it.
+    """
+    schema = _get_schema()
+    plan = ctx.load_plan()
+
+    if id:
+        # UPDATE
+        ra = plan.get_rejected_alternative(id)
+        if not ra:
+            raids = [x.id for x in plan.planning_context.rejected_alternatives]
+            raise ValueError(f"Rejected alternative {id} not found. Valid: {raids}")
+
+        if alternative:
+            ra.alternative = alternative
+        if rejection_reason:
+            ra.rejection_reason = rejection_reason
+        if decision_ref:
+            ra.decision_ref = decision_ref
+
+        ctx.save_plan(plan)
+        return {"id": ra.id, "operation": "updated"}
+    else:
+        # CREATE
+        if not alternative or not rejection_reason or not decision_ref:
+            raise ValueError(
+                "alternative, rejection_reason, and decision_ref required for create"
+            )
+
+        raid = plan.next_rejected_alternative_id()
+
+        ra = schema["RejectedAlternative"](
+            id=raid,
+            alternative=alternative,
+            rejection_reason=rejection_reason,
+            decision_ref=decision_ref,
+        )
+        plan.planning_context.rejected_alternatives.append(ra)
+        ctx.save_plan(plan)
+        return {"id": raid, "operation": "created"}
+
+
 def set_diagram(ctx: PlanContext, type: str, scope: str, title: str, id: str | None = None) -> dict:
     """Create or update diagram graph."""
     schema = _get_schema()
@@ -573,7 +679,7 @@ def set_diagram_render(ctx: PlanContext, diagram: str, content_file: str) -> dic
 
 def set_wave(
     ctx: PlanContext,
-    milestones: str,
+    milestones: str | list[str],
     id: str | None = None,
 ) -> dict:
     """Create or update an execution wave (milestones that run in parallel).
@@ -589,7 +695,7 @@ def set_wave(
     schema = _get_schema()
     plan = ctx.load_plan()
 
-    milestones_list = parse_csv(milestones)
+    milestones_list = parse_csv(milestones, reject_comma_string=True)
 
     # Doc-only milestones route to exec-docs and must never enter a wave; the
     # executor's validate_structural_executability rejects it later, but fail at

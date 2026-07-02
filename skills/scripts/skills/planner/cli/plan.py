@@ -28,6 +28,8 @@ from ..shared.schema import (
     Milestone,
     Overview,
     Plan,
+    RejectedAlternative,
+    Risk,
     SchemaValidationError,
     Wave,
 )
@@ -57,6 +59,8 @@ ROLE_PERMISSIONS = {
         "set-milestone",
         "set-intent",
         "set-decision",
+        "set-risk",
+        "set-rejected-alternative",
         "set-diagram",
         "add-diagram-node",
         "add-diagram-edge",
@@ -609,6 +613,126 @@ class SetDecisionCommand(Command):
             print_entity_result(EntityResult(id=did, version=1, operation="created"))
 
 
+class SetRiskCommand(Command):
+    name = "set-risk"
+    help = "Create or update a known risk"
+    role = "architect"
+
+    @classmethod
+    def add_arguments(cls, parser: argparse.ArgumentParser) -> None:
+        parser.add_argument("--id", help="Risk ID (omit for create)")
+        parser.add_argument("--risk", help="Risk text (required for create)")
+        parser.add_argument("--mitigation", help="Mitigation text (required for create)")
+        parser.add_argument("--anchor", help="file:L###-L### line anchor (optional)")
+        parser.add_argument("--decision-ref", help="DL-XXX cross-reference (optional)")
+
+    @classmethod
+    def run(cls, args: argparse.Namespace) -> None:
+        state_dir = get_state_dir()
+        plan = load_plan(state_dir)
+
+        if args.id:
+            # UPDATE path
+            r = plan.get_risk(args.id)
+            if not r:
+                rids = [x.id for x in plan.planning_context.risks]
+                validation_error(
+                    "risk.id",
+                    "Valid risk ID",
+                    args.id,
+                    f"Use existing: {', '.join(rids) or 'none'}",
+                )
+
+            if args.risk:
+                r.risk = args.risk
+            if args.mitigation:
+                r.mitigation = args.mitigation
+            if args.anchor is not None:
+                r.anchor = args.anchor if args.anchor else None
+            if args.decision_ref is not None:
+                r.decision_ref = args.decision_ref if args.decision_ref else None
+
+            save_plan(state_dir, plan)
+            print_entity_result(EntityResult(id=r.id, version=1, operation="updated"))
+
+        else:
+            # CREATE path
+            if not args.risk or not args.mitigation:
+                error_exit("--risk and --mitigation required for create")
+
+            rid = plan.next_risk_id()
+
+            r = Risk(
+                id=rid,
+                risk=args.risk,
+                mitigation=args.mitigation,
+                anchor=args.anchor,
+                decision_ref=args.decision_ref,
+            )
+            plan.planning_context.risks.append(r)
+
+            save_plan(state_dir, plan)
+            print_entity_result(EntityResult(id=rid, version=1, operation="created"))
+
+
+class SetRejectedAlternativeCommand(Command):
+    name = "set-rejected-alternative"
+    help = "Create or update a rejected alternative"
+    role = "architect"
+
+    @classmethod
+    def add_arguments(cls, parser: argparse.ArgumentParser) -> None:
+        parser.add_argument("--id", help="Rejected alternative ID (omit for create)")
+        parser.add_argument("--alternative", help="Alternative considered (required for create)")
+        parser.add_argument("--rejection-reason", help="Why rejected (required for create)")
+        parser.add_argument("--decision-ref", help="DL-XXX cross-reference (required for create)")
+
+    @classmethod
+    def run(cls, args: argparse.Namespace) -> None:
+        state_dir = get_state_dir()
+        plan = load_plan(state_dir)
+
+        if args.id:
+            # UPDATE path
+            ra = plan.get_rejected_alternative(args.id)
+            if not ra:
+                raids = [x.id for x in plan.planning_context.rejected_alternatives]
+                validation_error(
+                    "rejected_alternative.id",
+                    "Valid rejected alternative ID",
+                    args.id,
+                    f"Use existing: {', '.join(raids) or 'none'}",
+                )
+
+            if args.alternative:
+                ra.alternative = args.alternative
+            if args.rejection_reason:
+                ra.rejection_reason = args.rejection_reason
+            if args.decision_ref:
+                ra.decision_ref = args.decision_ref
+
+            save_plan(state_dir, plan)
+            print_entity_result(EntityResult(id=ra.id, version=1, operation="updated"))
+
+        else:
+            # CREATE path
+            if not args.alternative or not args.rejection_reason or not args.decision_ref:
+                error_exit("--alternative, --rejection-reason, and --decision-ref required for create")
+
+            raid = plan.next_rejected_alternative_id()
+
+            ra = RejectedAlternative(
+                id=raid,
+                alternative=args.alternative,
+                rejection_reason=args.rejection_reason,
+                decision_ref=args.decision_ref,
+            )
+            plan.planning_context.rejected_alternatives.append(ra)
+
+            save_plan(state_dir, plan)
+            print_entity_result(EntityResult(id=raid, version=1, operation="created"))
+
+
 class SetDiagramCommand(Command):
     name = "set-diagram"
     help = "Create or update diagram graph"
@@ -820,6 +944,16 @@ class SetWaveCommand(Command):
 # =============================================================================
 
 
+def _escape_table_cell(text: str) -> str:
+    """Escape a literal '|' so prose can't shift a GFM table's columns.
+
+    A decision/rejection reason legitimately containing '||' (boolean OR) or a
+    TS union type ('string|null') would otherwise be read as an extra column
+    delimiter by any Markdown table parser.
+    """
+    return text.replace("|", "\\|")
+
+
 def translate_to_markdown(plan: Plan) -> str:
     """Generate Markdown from plan.json."""
     lines = []
@@ -856,7 +990,9 @@ def translate_to_markdown(plan: Plan) -> str:
         lines.append("| ID | Decision | Reasoning Chain |")
         lines.append("|---|---|---|")
         for dl in plan.planning_context.decisions:
-            lines.append(f"| {dl.id} | {dl.decision} | {dl.reasoning} |")
+            lines.append(
+                f"| {dl.id} | {_escape_table_cell(dl.decision)} | {_escape_table_cell(dl.reasoning)} |"
+            )
         lines.append("")
 
     if plan.planning_context.rejected_alternatives:
@@ -865,7 +1001,10 @@ def translate_to_markdown(plan: Plan) -> str:
         lines.append("| Alternative | Why Rejected |")
         lines.append("|---|---|")
         for ra in plan.planning_context.rejected_alternatives:
-            lines.append(f"| {ra.alternative} | {ra.rejection_reason} (ref: {ra.decision_ref}) |")
+            lines.append(
+                f"| {_escape_table_cell(ra.alternative)} | "
+                f"{_escape_table_cell(ra.rejection_reason)} (ref: {ra.decision_ref}) |"
+            )
         lines.append("")
 
     if plan.planning_context.constraints:
@@ -879,7 +1018,12 @@ def translate_to_markdown(plan: Plan) -> str:
         lines.append("### Known Risks")
         lines.append("")
         for r in plan.planning_context.risks:
-            lines.append(f"- **{r.risk}**: {r.mitigation}")
+            suffix = ""
+            if r.decision_ref:
+                suffix += f" (ref: {r.decision_ref})"
+            if r.anchor:
+                suffix += f" [{r.anchor}]"
+            lines.append(f"- **{r.risk}**: {r.mitigation}{suffix}")
         lines.append("")
 
     # Invisible Knowledge
@@ -925,7 +1069,7 @@ def translate_to_markdown(plan: Plan) -> str:
     lines.append("")
 
     for ms in plan.milestones:
-        lines.append(f"### Milestone {ms.number}: {ms.name}")
+        lines.append(f"### Milestone {ms.number} ({ms.id}): {ms.name}")
         lines.append("")
 
         # Surface the doc-only flag so it survives the plan.json -> plan.md -> plan.json
@@ -1114,6 +1258,8 @@ COMMANDS: list[type[Command]] = [
     SetMilestoneCommand,
     SetIntentCommand,
     SetDecisionCommand,
+    SetRiskCommand,
+    SetRejectedAlternativeCommand,
     SetDiagramCommand,
     AddDiagramNodeCommand,
     AddDiagramEdgeCommand,

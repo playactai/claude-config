@@ -1764,8 +1764,11 @@ class TestRelpathNormalizedAndStored:
             plan_commands.set_intent(ctx, milestone="M-001", file="a/../../shared.py", behavior="b")
 
     def test_rpc_set_milestone_create_normalizes_files(self, tmp_path: Path):
+        # Array, not a comma string: parse_csv rejects a comma-bearing string on the
+        # RPC surface (it always has this array alternative); each element still
+        # gets normalized independently.
         ctx = _init_plan(tmp_path)
-        plan_commands.set_milestone(ctx, name="Code", files="./src/a.py, src/b.py")
+        plan_commands.set_milestone(ctx, name="Code", files=["./src/a.py", " src/b.py"])
         files = json.loads(ctx.plan_path().read_text())["milestones"][0]["files"]
         assert files == ["src/a.py", "src/b.py"]
 
@@ -2301,10 +2304,84 @@ class TestCsvParsingShared:
         assert parse_csv("   ") == []
         assert parse_csv(None) == []
 
+    def test_parse_csv_default_still_splits_comma_string(self):
+        # reject_comma_string defaults to False -- the live CLI's call sites (which
+        # never pass it) keep comma-splitting unchanged; only opted-in callers reject.
+        from skills.planner.cli.plan_common import parse_csv
+
+        assert parse_csv("do X, do Y") == ["do X", "do Y"]
+
+    def test_parse_csv_reject_comma_string_raises_on_comma(self):
+        from skills.planner.cli.plan_common import parse_csv
+
+        with pytest.raises(ValueError, match="contains a comma") as exc:
+            parse_csv("do X, do Y", reject_comma_string=True)
+        assert "JSON array" in str(exc.value)
+
+    def test_parse_csv_reject_comma_string_allows_comma_free_string(self):
+        from skills.planner.cli.plan_common import parse_csv
+
+        assert parse_csv("do X", reject_comma_string=True) == ["do X"]
+
+    def test_parse_csv_reject_comma_string_allows_array_with_internal_commas(self):
+        # An array already bypasses splitting entirely -- reject_comma_string only
+        # gates the ambiguous bare-string form, never the unambiguous array form.
+        from skills.planner.cli.plan_common import parse_csv
+
+        assert parse_csv(["do X, and Y", "do Z"], reject_comma_string=True) == [
+            "do X, and Y",
+            "do Z",
+        ]
+
+    def test_rpc_set_milestone_rejects_comma_bearing_requirement_string(self, tmp_path: Path):
+        # The exact failure mode from the audit: a comma inside one prose requirement
+        # silently fractured it into bogus fragments on the RPC/batch surface. Now
+        # rejected with guidance to use an array instead.
+        ctx = _init_plan(tmp_path)
+        with pytest.raises(ValueError, match="contains a comma") as exc:
+            plan_commands.set_milestone(
+                ctx, name="Code", files="a.py", requirements="returns X, and Y for Z"
+            )
+        assert "JSON array" in str(exc.value)
+        assert ctx.load_plan().milestones == []
+
+    def test_rpc_set_milestone_accepts_requirements_array_with_internal_commas(
+        self, tmp_path: Path
+    ):
+        ctx = _init_plan(tmp_path)
+        plan_commands.set_milestone(
+            ctx, name="Code", files="a.py", requirements=["returns X, and Y for Z", "handles W"]
+        )
+        reqs = json.loads(ctx.plan_path().read_text())["milestones"][0]["requirements"]
+        assert reqs == ["returns X, and Y for Z", "handles W"]
+
+    def test_cli_set_milestone_still_accepts_comma_string_for_requirements(
+        self, tmp_path: Path, monkeypatch
+    ):
+        # The live CLI has no array alternative (argparse only ever yields a string),
+        # so it must keep comma-splitting unchanged -- reject_comma_string is RPC-only.
+        monkeypatch.setenv("PLAN_AGENT_ROLE", "architect")
+        cli_dir = tmp_path / "cli"
+        cli_dir.mkdir()
+        plan_cli.cli(["--state-dir", str(cli_dir), "init", "--task", "t"])
+        plan_cli.cli(
+            [
+                "--state-dir", str(cli_dir), "set-milestone", "--name", "Code",
+                "--files", "a.py", "--requirements", "do X, do Y",
+            ]
+        )
+        reqs = json.loads((cli_dir / "plan.json").read_text())["milestones"][0]["requirements"]
+        assert reqs == ["do X", "do Y"]
+
     def test_cli_and_rpc_tokenize_files_identically(self, tmp_path: Path, monkeypatch):
         # Pre-existing drift: plan.py kept empty tokens ('a,,b' -> ['a','','b']) while
         # the RPC's parse_csv dropped them. Both now route through the shared parse_csv,
         # so a doubled comma yields the same files list on each path.
+        #
+        # The RPC side submits an array, not a comma string: parse_csv now rejects a
+        # comma-bearing string on the RPC/batch surface (a caller mistake there always
+        # has a safe array alternative), while the live CLI keeps comma-splitting since
+        # argparse has no array form. Parity is about the OUTCOME, not the input shape.
         monkeypatch.setenv("PLAN_AGENT_ROLE", "architect")
         cli_dir = tmp_path / "cli"
         cli_dir.mkdir()
@@ -2317,7 +2394,7 @@ class TestCsvParsingShared:
         rpc_dir = tmp_path / "rpc"
         rpc_dir.mkdir()
         ctx = _init_plan(rpc_dir)
-        plan_commands.set_milestone(ctx, name="M", files="a.py,,b.py")
+        plan_commands.set_milestone(ctx, name="M", files=["a.py", "b.py"])
         rpc_files = json.loads(ctx.plan_path().read_text())["milestones"][0]["files"]
 
         assert cli_files == rpc_files == ["a.py", "b.py"]

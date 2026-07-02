@@ -79,10 +79,12 @@ CREATE_REQUIRED: dict[str, list[str]] = {
     "set-milestone": ["name"],
     "set-intent": ["milestone", "file", "behavior"],
     "set-wave": ["milestones"],
+    "set-risk": ["risk", "mitigation"],
+    "set-rejected-alternative": ["alternative", "rejection_reason", "decision_ref"],
 }
 
 
-def parse_csv(value: str | list[str] | None) -> list[str]:
+def parse_csv(value: str | list[str] | None, *, reject_comma_string: bool = False) -> list[str]:
     """Split a comma-separated CLI value into stripped, non-empty tokens.
 
     Shared by plan.py and plan_commands.py so the two CLI mirrors tokenize a
@@ -99,6 +101,17 @@ def parse_csv(value: str | list[str] | None) -> list[str]:
     Raises ValueError when a list element is not a string (e.g. a bare number
     like 123) so the caller sees a clear error rather than a silent str()-coercion
     that masks the mis-typed RPC value.
+
+    reject_comma_string: set by batch/RPC call sites only (plan_commands.py),
+    never by the live-CLI mirror (plan.py). A comma INSIDE one prose item (e.g.
+    a requirement reading "returns X, and Y for Z") is indistinguishable from a
+    separator here, so it silently splits one item into two-plus bogus
+    fragments -- confirmed to corrupt an approved plan.json this way. The
+    batch/RPC surface can always express the unambiguous form (a JSON array,
+    which this function already never re-splits), so a comma-bearing string
+    there is a caller mistake worth failing loudly on rather than silently
+    shredding. The live CLI has no array alternative (argparse only ever yields
+    a string), so it keeps comma-splitting as its only option.
     """
     # Only None short-circuits to [] here. Empty collections fall through but still
     # yield []: "" via the str branch, [] via the list branch. Falsy non-None
@@ -113,6 +126,12 @@ def parse_csv(value: str | list[str] | None) -> list[str]:
     if not isinstance(value, str):
         raise ValueError(
             f"expected a string or list of strings, got {type(value).__name__} {value!r}"
+        )
+    if reject_comma_string and "," in value:
+        raise ValueError(
+            f"value contains a comma, which would be silently split into separate "
+            f"items: {value!r} -- pass a JSON array of the separate items instead "
+            f"(wrap a single item containing a legitimate comma in a one-element array)"
         )
     return [v.strip() for v in value.split(",") if v.strip()]
 

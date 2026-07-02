@@ -7,6 +7,7 @@ Pydantic is a required dependency (pydantic>=2.0 in pyproject.toml).
 import itertools
 import json
 import os
+import re
 import sys
 from datetime import UTC, datetime
 from pathlib import Path
@@ -244,6 +245,18 @@ if True:
                     return dl
             return None
 
+        def get_risk(self, risk_id: str) -> Risk | None:
+            for r in self.planning_context.risks:
+                if r.id == risk_id:
+                    return r
+            return None
+
+        def get_rejected_alternative(self, ra_id: str) -> RejectedAlternative | None:
+            for ra in self.planning_context.rejected_alternatives:
+                if ra.id == ra_id:
+                    return ra
+            return None
+
         def code_milestones(self) -> list[Milestone]:
             """Milestones that produce code (not is_documentation_only).
 
@@ -295,6 +308,14 @@ if True:
         def next_intent_id(self, ms) -> str:
             return self._next_numeric_id((ci.id for ci in ms.code_intents), f"CI-{ms.id}")
 
+        def next_risk_id(self) -> str:
+            return self._next_numeric_id((r.id for r in self.planning_context.risks), "R")
+
+        def next_rejected_alternative_id(self) -> str:
+            return self._next_numeric_id(
+                (ra.id for ra in self.planning_context.rejected_alternatives), "RA"
+            )
+
         def validate_diagram_edges(self, diagram_id: str) -> list[str]:
             """Validate edges for a specific diagram."""
             errors = []
@@ -332,6 +353,10 @@ if True:
             errors += _dup_id_errors((dl.id for dl in self.planning_context.decisions), "decision")
             errors += _dup_id_errors((ci.id for ms in self.milestones for ci in ms.code_intents), "intent")
             errors += _dup_id_errors((dg.id for dg in self.diagram_graphs), "diagram")
+            errors += _dup_id_errors((r.id for r in self.planning_context.risks), "risk")
+            errors += _dup_id_errors(
+                (ra.id for ra in self.planning_context.rejected_alternatives), "rejected_alternative"
+            )
 
             # Per-wave invariants in a single pass (id uniqueness, milestone refs,
             # intra-wave file overlap). Each milestone's file set is the union of its
@@ -462,20 +487,48 @@ if True:
                     )
             return errors
 
+        def _diagram_render_gaps(self) -> list[str]:
+            """Node ids missing from a diagram's hand-authored ascii_render.
+
+            ascii_render is free text set via set-diagram-render, fully decoupled
+            from nodes/edges with no auto-regeneration -- add a node to the graph
+            after the render was authored and nothing else catches the render
+            silently going stale (confirmed: a milestone node added late never made
+            it into the rendered diagram). Checked here (completeness), not in
+            validate_refs, so an in-progress hand-edit isn't blocked mid-authoring;
+            the plan-design QR gate is where staleness should surface.
+            """
+            errors = []
+            for dg in self.diagram_graphs:
+                if not dg.ascii_render:
+                    continue
+                for node in dg.nodes:
+                    # Word-boundary match, not bare substring: id 'w1' is a substring
+                    # of 'w10', so a render mentioning only 'w10' would otherwise
+                    # look like it already covers a genuinely-missing 'w1'.
+                    if not re.search(rf"\b{re.escape(node.id)}\b", dg.ascii_render):
+                        errors.append(
+                            f"diagram {dg.id} ascii_render is missing node '{node.id}' "
+                            f"({node.label!r}) -- regenerate the render to match the current graph"
+                        )
+            return errors
+
         def validate_completeness(self, phase: str) -> list[str]:
             """Phase-specific completeness validation.
 
-            For plan-design this is the prose check (overview.problem) plus the
+            For plan-design this is the prose check (overview.problem), the
             phase-independent structural invariant in
-            validate_structural_executability(). Other phases have no rule and
-            return []. Error ordering is unchanged from the inlined version:
-            overview.problem first, then the structural errors.
+            validate_structural_executability(), and diagram render/graph staleness
+            (_diagram_render_gaps()). Other phases have no rule and return []. Error
+            ordering is unchanged from the inlined version for the first two:
+            overview.problem first, then the structural errors, then diagram gaps.
             """
             errors = []
             if phase == "plan-design":
                 if not self.overview.problem:
                     errors.append("overview.problem required")
                 errors.extend(self.validate_structural_executability())
+                errors.extend(self._diagram_render_gaps())
             return errors
 
 

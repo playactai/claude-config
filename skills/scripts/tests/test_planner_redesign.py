@@ -216,6 +216,114 @@ def test_rendered_diagram_surfaces_in_plan_markdown():
     assert "Code Changes" not in md  # the diff block is gone
 
 
+def test_plan_design_completeness_flags_stale_diagram_render():
+    # ascii_render is hand-authored free text decoupled from nodes/edges -- add a
+    # node to the graph after the render was authored and nothing else catches the
+    # render silently going stale (confirmed: a milestone node added late never
+    # made it into the diagram). Caught at plan-design completeness time.
+    from skills.planner.shared.schema import DiagramGraph, DiagramNode, Overview, Plan
+
+    plan = Plan(
+        overview=Overview(problem="p", approach="a"),
+        diagram_graphs=[
+            DiagramGraph(
+                id="DIAG-001",
+                type="architecture",
+                scope="overview",
+                title="Waves",
+                nodes=[DiagramNode(id="w1", label="Wave 1"), DiagramNode(id="w2", label="Wave 2")],
+                ascii_render="+--w1--+",  # w2 never made it into the render
+            )
+        ],
+    )
+    errors = plan.validate_completeness("plan-design")
+    assert any("diagram DIAG-001 ascii_render is missing node 'w2'" in e for e in errors)
+    assert not any("'w1'" in e for e in errors)  # w1 IS present, not flagged
+
+
+def test_diagram_render_gaps_uses_word_boundary_not_bare_substring():
+    # 'w1' is a literal substring of 'w10' -- a bare `in` check would wrongly treat
+    # a render that only mentions 'w10' as already covering a genuinely-missing 'w1'.
+    from skills.planner.shared.schema import DiagramGraph, DiagramNode, Overview, Plan
+
+    plan = Plan(
+        overview=Overview(problem="p", approach="a"),
+        diagram_graphs=[
+            DiagramGraph(
+                id="DIAG-001",
+                type="architecture",
+                scope="overview",
+                title="Waves",
+                nodes=[DiagramNode(id="w1", label="Wave 1"), DiagramNode(id="w10", label="Wave 10")],
+                ascii_render="+--w10--+",  # w1 never made it in, despite the substring match
+            )
+        ],
+    )
+    errors = plan._diagram_render_gaps()
+    assert any("missing node 'w1' (" in e for e in errors)  # trailing "(" excludes a 'w1' -> 'w10' partial match
+    assert not any("missing node 'w10'" in e for e in errors)  # w10 IS present, not flagged
+
+
+def test_diagram_render_gaps_escapes_regex_metacharacters_in_node_id():
+    # A node id containing a regex metacharacter (e.g. '.') must be matched literally --
+    # without re.escape, 'svc.a' would match 'svcXa' too (via '.' as a wildcard),
+    # silently treating a genuinely-missing node as present (a false negative).
+    from skills.planner.shared.schema import DiagramGraph, DiagramNode, Overview, Plan
+
+    plan = Plan(
+        overview=Overview(problem="p", approach="a"),
+        diagram_graphs=[
+            DiagramGraph(
+                id="DIAG-001",
+                type="architecture",
+                scope="overview",
+                title="Services",
+                nodes=[DiagramNode(id="svc.a", label="Service A")],
+                ascii_render="+--svcXa--+",  # 'svc.a' absent; only a '.'-wildcard match exists
+            )
+        ],
+    )
+    errors = plan._diagram_render_gaps()
+    assert any("missing node 'svc.a'" in e for e in errors)
+
+
+def test_diagram_render_gaps_clean_when_no_render_or_all_nodes_present():
+    # Isolates _diagram_render_gaps() from the unrelated "at least one milestone"
+    # structural rule that validate_completeness("plan-design") also enforces.
+    from skills.planner.shared.schema import DiagramGraph, DiagramNode, Overview, Plan
+
+    # No render set at all -- nothing to check staleness against, not an error.
+    plan_no_render = Plan(
+        overview=Overview(problem="p", approach="a"),
+        diagram_graphs=[
+            DiagramGraph(
+                id="DIAG-001",
+                type="architecture",
+                scope="overview",
+                title="Waves",
+                nodes=[DiagramNode(id="w1", label="Wave 1")],
+            )
+        ],
+    )
+    assert plan_no_render._diagram_render_gaps() == []
+
+    # Render mentions every node -- fresh, not flagged.
+    plan_fresh = Plan(
+        overview=Overview(problem="p", approach="a"),
+        diagram_graphs=[
+            DiagramGraph(
+                id="DIAG-001",
+                type="architecture",
+                scope="overview",
+                title="Waves",
+                nodes=[DiagramNode(id="w1", label="Wave 1")],
+                ascii_render="+--w1--+",
+            )
+        ],
+    )
+    assert plan_fresh._diagram_render_gaps() == []
+
+
 # --- Doc-only milestones: settable, exclusive, and excluded from impl-code QR ---
 def test_set_milestone_documentation_only_is_settable_and_valid(tmp_path):
     from skills.planner.cli import plan_commands as pc
@@ -886,6 +994,51 @@ def test_executor_main_rejects_plan_missing_code_intents(tmp_path):
     assert "completeness" in (result.stdout + result.stderr).lower()
 
 
+def test_executor_main_rejects_transcribed_planning_context(tmp_path):
+    # Structural backstop for format_step_1's "do NOT add planning_context or
+    # diagram_graphs" instruction: a prompt instruction is advisory, so this makes
+    # the omission enforced. An otherwise-complete, structurally valid plan.json
+    # that carries a non-empty planning_context must still be rejected -- its mere
+    # presence is unambiguous evidence of the exact hand-transcription mistake that
+    # caused a 28-error schema failure in the audited session.
+    import json
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    scripts_dir = Path(__file__).parent.parent
+    (tmp_path / "plan.json").write_text(
+        json.dumps(
+            {
+                "overview": {"problem": "p", "approach": "a"},
+                "planning_context": {"decision_log": [{"id": "DL-001", "decision": "d", "reasoning_chain": "r"}]},
+                "milestones": [
+                    {"id": "M-001", "number": 1, "name": "m", "files": ["a.py"],
+                     "code_intents": [{"id": "CI-1", "file": "a.py", "behavior": "do x"}]}
+                ],
+                "waves": [{"id": "W-001", "milestones": ["M-001"]}],
+            }
+        )
+    )
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "skills.planner.orchestrator.executor",
+            "--step",
+            "2",
+            "--state-dir",
+            str(tmp_path),
+        ],
+        capture_output=True,
+        text=True,
+        timeout=30,
+        cwd=scripts_dir,
+    )
+    assert result.returncode != 0
+    assert "planning_context" in (result.stdout + result.stderr)
+
+
 def test_executor_step2_requires_plan_json(tmp_path):
     # Fail closed: a step>1 run whose state dir lacks plan.json must error, not
     # silently dispatch an empty implementation with no completeness check
@@ -954,7 +1107,11 @@ def test_set_wave_cli_happy_path(tmp_path):
     waves = ctx.load_plan().waves
     assert [(w.id, w.milestones) for w in waves] == [("W-001", ["M-001"]), ("W-002", ["M-002"])]
     # Upsert: --id replaces the wave's milestone list (architect iterates).
-    pc.set_wave(ctx, id="W-001", milestones="M-001,M-002")
+    # RPC surface takes an array here: parse_csv rejects a comma-bearing string on
+    # this surface (it always has the array alternative); the live CLI (a
+    # different surface, exercised elsewhere) keeps the comma-string form since
+    # argparse has no array form.
+    pc.set_wave(ctx, id="W-001", milestones=["M-001", "M-002"])
     assert ctx.load_plan().waves[0].milestones == ["M-001", "M-002"]
 
 
@@ -985,7 +1142,7 @@ def test_set_wave_accepts_valid_multi_milestone_wave(tmp_path):
     pc.set_milestone(ctx, name="users", files="b.py")
     pc.set_intent(ctx, milestone="M-001", file="a.py", behavior="x")
     pc.set_intent(ctx, milestone="M-002", file="b.py", behavior="y")
-    pc.set_wave(ctx, milestones="M-001,M-002")
+    pc.set_wave(ctx, milestones=["M-001", "M-002"])
 
     plan = ctx.load_plan()
     assert [(w.id, w.milestones) for w in plan.waves] == [("W-001", ["M-001", "M-002"])]
@@ -1511,6 +1668,64 @@ def test_execution_waves_render_in_markdown():
     assert "- W-001: M-001, M-002" in md
 
 
+def test_known_risks_render_anchor_and_decision_ref():
+    # Known Risks used to render only risk+mitigation, silently dropping anchor and
+    # decision_ref even though both are populated -- unlike the sibling Rejected
+    # Alternatives table, which does render its decision_ref as "(ref: ...)".
+    from skills.planner.cli.plan import translate_to_markdown
+    from skills.planner.shared.schema import Decision, Overview, Plan, Risk
+
+    plan = Plan(overview=Overview(problem="p", approach="a"))
+    plan.planning_context.decisions = [Decision(id="DL-001", decision="d", reasoning_chain="r")]
+    plan.planning_context.risks = [
+        Risk(id="R-001", risk="it might drift", mitigation="pin it", anchor="a.py:1-2", decision_ref="DL-001"),
+        Risk(id="R-002", risk="no ref or anchor", mitigation="n/a"),
+    ]
+    md = translate_to_markdown(plan)
+    assert "- **it might drift**: pin it (ref: DL-001) [a.py:1-2]" in md
+    # Exact full-line match (not a bare substring check): a hypothetical regression that
+    # unconditionally appends the "(ref: ...) [...]" suffix would still contain this
+    # string as a strict prefix of "- **no ref or anchor**: n/a (ref: None) [None]" --
+    # asserting the line ends right after "n/a" is what actually catches that.
+    assert "- **no ref or anchor**: n/a\n" in md
+    assert "(ref: None)" not in md
+    assert "[None]" not in md
+
+
+def test_decision_and_rejected_alternative_tables_escape_pipe():
+    # A literal '|' or '||' in prose (e.g. "a || b", "string|null") used to shift a
+    # GFM table's columns since neither loop escaped it before interpolating.
+    from skills.planner.cli.plan import translate_to_markdown
+    from skills.planner.shared.schema import Decision, Overview, Plan, RejectedAlternative
+
+    plan = Plan(overview=Overview(problem="p", approach="a"))
+    plan.planning_context.decisions = [
+        Decision(id="DL-001", decision="use string|null", reasoning_chain="a || b"),
+    ]
+    plan.planning_context.rejected_alternatives = [
+        RejectedAlternative(
+            id="RA-001", alternative="a || b", rejection_reason="needs string|null", decision_ref="DL-001"
+        ),
+    ]
+    md = translate_to_markdown(plan)
+    assert "| DL-001 | use string\\|null | a \\|\\| b |" in md
+    assert "| a \\|\\| b | needs string\\|null (ref: DL-001) |" in md
+    # Unescaped forms must not appear -- proves the raw pipe never reaches the table.
+    assert "| use string|null |" not in md
+    assert "| a || b | needs" not in md
+
+
+def test_milestone_heading_includes_its_own_id():
+    # Every other id type (DL-/R-/CI-/W-) is grep-able at its own definition site;
+    # milestone headings used to show only the ordinal ("Milestone 1: ..."), so
+    # cross-references from Risks/Code-Intent prose to "M-010" had zero hits here.
+    from skills.planner.cli.plan import translate_to_markdown
+
+    plan = _plan_with_waves([("M-001", ["a.py"], False)], [("W-001", ["M-001"])])
+    md = translate_to_markdown(plan)
+    assert "### Milestone 1 (M-001): M-001" in md
+
+
 def test_executor_step1_transcribes_waves_no_diagram_parse(tmp_path):
     # The executor must COPY the plan's explicit wave list, not re-derive waves by
     # hand-parsing an ASCII dependency diagram (audit §2 leak 1).
@@ -1521,6 +1736,20 @@ def test_executor_step1_transcribes_waves_no_diagram_parse(tmp_path):
     assert "same depth" not in out
     assert "## Execution Waves" in out
     assert "transcribe" in out.lower() or "verbatim" in out.lower()
+
+
+def test_executor_step1_forbids_planning_context_and_diagram_transcription(tmp_path):
+    # Hand-retyping planning_context/diagram_graphs into the executor's plan.json is
+    # unread by every later step and was the actual source of a 28-error Pydantic
+    # failure (risks/rejected_alternatives/diagram_graphs all malformed at once) plus
+    # a separate decisions-missing-id failure in another session. Nothing should
+    # invite that transcription in the first place.
+    from skills.planner.orchestrator import executor
+
+    out = executor.format_output(1, str(tmp_path), None, False)
+    assert "planning_context" in out
+    assert "diagram_graphs" in out
+    assert "Do NOT add" in out
 
 
 def test_save_plan_rolls_back_rejected_mutation(tmp_path):

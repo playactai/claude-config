@@ -27,7 +27,6 @@ QR Block Pattern (matching planner's 4-step pattern per phase):
 import argparse
 import sys
 import tempfile
-from pathlib import Path
 from typing import TYPE_CHECKING
 
 from skills.lib.workflow.prompts import subagent_dispatch
@@ -107,9 +106,14 @@ def format_step_1(state_dir: str, reconciliation_check: bool) -> str:
         f"  State directory created: {state_dir}",
         f"  Write plan context to: {state_dir}/plan.json",
         "",
-        "  After analyzing the plan, use the Write tool to create plan.json. It must",
-        "  conform to the plan schema -- each milestone carries its code_intents (the",
-        "  durable contract) and is_documentation_only flag; waves are objects:",
+        "  After analyzing the plan, use the Write tool to create plan.json (author it",
+        "  fresh). plan.json is a REDUCED SUBSET of the plan",
+        "  schema, NOT the full planner plan.json: only overview, milestones, and waves",
+        "  (plus a minimal planning_context.decision_log, below). Do NOT copy the",
+        "  planner's source plan.json verbatim -- it carries planning_context/",
+        "  diagram_graphs fields the executor rejects at step 2. Each milestone carries",
+        "  its code_intents (the durable contract) and is_documentation_only flag;",
+        "  waves are objects:",
         "  {",
         '    "overview": {"problem": "<from plan>", "approach": "<from plan>"},',
         '    "milestones": [',
@@ -696,13 +700,11 @@ def main():
             sys.exit(
                 f"Error: failed to create executor state directory (tempdir={tempfile.gettempdir()}): {e}"
             )
-        plan_path = Path(state_dir) / "plan.json"
-        try:
-            from skills.planner.shared.schema import Overview, Plan
-
-            plan_path.write_text(Plan(overview=Overview(problem="", approach="")).model_dump_json(indent=2))
-        except OSError as e:
-            sys.exit(f"Error: failed to write plan skeleton to {plan_path}: {e}")
+        # No plan.json skeleton is pre-written. format_step_1 has the orchestrator
+        # author plan.json fresh via Write; a pre-existing FULL-schema skeleton
+        # (planning_context/diagram_graphs keys present) both contradicts the reduced
+        # subset the agent is told to produce and forces a read-before-write. If the
+        # agent skips the Write, step 2 fails closed ("plan.json not found").
 
     # Validate state_dir for steps 2+
     if args.step > 1 and not state_dir:

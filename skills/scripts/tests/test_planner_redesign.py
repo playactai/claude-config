@@ -2116,6 +2116,35 @@ def test_executor_step1_states_decisions_carveout_positively(tmp_path):
     assert "holding ONLY the Decision entries those refs point to" in out
 
 
+def test_executor_step1_warns_against_verbatim_source_copy(tmp_path):
+    # A live session read the pre-written full-schema skeleton and concluded "copy the
+    # planner's source plan.json verbatim" -- which the step-2 backstop then rejects.
+    # The step-1 prompt must name the reduced-subset contract and forbid verbatim copy.
+    from skills.planner.orchestrator import executor
+
+    out = executor.format_output(1, str(tmp_path), None, False)
+    assert "REDUCED SUBSET" in out
+    assert "verbatim" in out
+
+
+def test_executor_step1_writes_no_skeleton_plan_json(tmp_path, monkeypatch):
+    # main() must NOT pre-write a full-schema plan.json skeleton on a fresh step 1: a
+    # pre-existing skeleton (planning_context/diagram_graphs keys) both contradicted the
+    # reduced-subset contract and forced read-before-write. The orchestrator authors
+    # plan.json fresh via Write instead. Pin mkdtemp so the fresh (no --state-dir)
+    # branch runs against a pytest-managed dir -- no stdout parsing, no tmp leak.
+    import tempfile
+
+    from skills.planner.orchestrator.executor import main as executor_main
+
+    state_dir = tmp_path / "executor-state"
+    state_dir.mkdir()
+    monkeypatch.setattr(tempfile, "mkdtemp", lambda *a, **k: str(state_dir))
+    monkeypatch.setattr("sys.argv", ["executor", "--step", "1"])
+    executor_main()
+    assert not (state_dir / "plan.json").exists()
+
+
 def test_save_plan_rolls_back_rejected_mutation(tmp_path):
     # The single-CLI save_plan validates THEN persists; a rejected mutation (here a
     # file-overlapping wave) must roll back, not leave bad state on disk + traceback.
